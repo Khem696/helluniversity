@@ -1,0 +1,541 @@
+@import url("https://fonts.googleapis.com/css2?family=Inter:ital,opsz,wght@0,14..32,100..900;1,14..32,100..900&display=swap");
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Import Helvetica-like web font */
+@import url('https://fonts.googleapis.com/css2?family=Inter:ital,opsz,wght@0,14..32,100..900;1,14..32,100..900&display=swap');
+
+/* KADE'S ARTISTIC ELEMENTS */
+@keyframes paint-texture-shift {
+  0%, 100% { 
+    background-position: 0% 0%;
+    opacity: 0.8;
+  }
+  50% { 
+    background-position: 100% 100%;
+    opacity: 0.9;
+  }
+}
+
+@keyframes brush-stroke-glow {
+  0%, 100% { 
+    filter: brightness(1) contrast(1);
+  }
+  50% { 
+    filter: brightness(1.1) contrast(1.05);
+  }
+}
+
+/* Artistic Color Palette from the collage */
+:root {
+  --kade-red: #d63031;
+  --kade-yellow: #fdcb6e;
+  --kade-purple: #6c5ce7;
+  --kade-black: #2d3436;
+  --kade-white: #f8f9fa;
+  --kade-dark-texture: #1e1e1e;
+  --kade-light-texture: #f1f2f6;
+}
+
+/* Textured Backgrounds inspired by the artwork panels */
+.kade-red-texture {
+  background: linear-gradient(45deg, 
+    var(--kade-red) 0%, 
+    #e74c3c 30%, 
+    var(--kade-red) 60%, 
+    #c0392b 100%
+  );
+  background-size: 200% 200%;
+  animation: paint-texture-shift 8s ease-in-out infinite;
+  position: relative;
+}
+
+.kade-red-texture::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: repeating-linear-gradient(
+    45deg,
+    transparent 0px,
+    rgba(0,0,0,0.1) 1px,
+    transparent 2px,
+    transparent 8px
+  );
+  pointer-events: none;
+}
+
+.kade-yellow-texture {
+  background: linear-gradient(135deg, 
+    var(--kade-yellow) 0%, 
+    #f39c12 25%, 
+    #e67e22 50%, 
+    var(--kade-yellow) 75%, 
+    #f1c40f 100%
+  );
+  background-size: 180% 180%;
+  animation: paint-texture-shift 10s ease-in-out infinite;
+  position: relative;
+}
+
+.kade-yellow-texture::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(
+    circle at 20% 80%, 
+    rgba(0,0,0,0.05) 0%, 
+    transparent 50%
+  ),
+  radial-gradient(
+    circle at 80% 20%, 
+    rgba(0,0,0,0.05) 0%, 
+    transparent 50%
+  );
+  pointer-events: none;
+}
+
+.kade-purple-texture {
+  background: linear-gradient(90deg, 
+    var(--kade-purple) 0%, 
+    #8e44ad 30%, 
+    #9b59b6 60%, 
+    var(--kade-purple) 100%
+  );
+  background-size: 220% 220%;
+  animation: paint-texture-shift 12s ease-in-out infinite;
+  position: relative;
+}
+
+.kade-dark-texture {
+  background: linear-gradient(180deg, 
+    var(--kade-dark-texture) 0%, 
+    #34495e 20%, 
+    #2c3e50 40%, 
+    var(--kade-black) 60%, 
+    var(--kade-dark-texture) 100%
+  );
+  background-size: 150% 150%;
+  animation: paint-texture-shift 15s ease-in-out infinite;
+  position: relative;
+}
+
+.kade-dark-texture::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: 
+    radial-gradient(circle at 30% 30%, rgba(255,255,255,0.03) 0%, transparent 50%),
+    radial-gradient(circle at 70% 70%, rgba(255,255,255,0.02) 0%, transparent 50%);
+  pointer-events: none;
+}
+
+.kade-light-texture {
+  background: linear-gradient(45deg, 
+    var(--kade-light-texture) 0%, 
+    #ffffff 25%, 
+    #ecf0f1 50%, 
+    var(--kade-white) 75%, 
+    var(--kade-light-texture) 100%
+  );
+  background-size: 160% 160%;
+  animation: paint-texture-shift 6s ease-in-out infinite;
+  position: relative;
+}
+
+/**
+ * KADE ARTISTIC FORM ELEMENTS
+ */
+.kade-input {
+  background: var(--kade-light-texture);
+  border: 3px solid var(--kade-black);
+  border-radius: 0;
+  padding: 12px 16px;
+  font-family: "Helvetica Neue", "Helvetica", "Arial", -apple-system, BlinkMacSystemFont, "Segoe UI", "Inter", sans-serif !important;
+  font-weight: 500 !important;
+  color: var(--kade-black);
+  position: relative;
+  transition: all 0.3s ease;
+  font-size: 0.875rem !important;
+  line-height: 1.4 !important;
+}
+
+.kade-input:focus {
+  outline: none;
+  border-color: var(--kade-red);
+  box-shadow: 0 0 0 3px rgba(214, 48, 49, 0.2);
+  transform: translateY(-2px);
+}
+
+.kade-input::placeholder {
+  color: rgba(45, 52, 54, 0.6);
+  font-style: oblique;
+}
+
+.kade-textarea {
+  background: var(--kade-light-texture);
+  border: 3px solid var(--kade-black);
+  border-radius: 0;
+  padding: 16px;
+  font-family: "Helvetica Neue", "Helvetica", "Arial", -apple-system, BlinkMacSystemFont, "Segoe UI", "Inter", sans-serif !important;
+  font-weight: 400 !important;
+  color: var(--kade-black);
+  resize: vertical;
+  min-height: 120px;
+  transition: all 0.3s ease;
+  font-size: 0.875rem !important;
+  line-height: 1.4 !important;
+}
+
+.kade-textarea:focus {
+  outline: none;
+  border-color: var(--kade-purple);
+  box-shadow: 0 0 0 3px rgba(108, 92, 231, 0.2);
+  transform: translateY(-2px);
+}
+
+.kade-button {
+  background: var(--kade-red);
+  color: var(--kade-white);
+  border: 3px solid var(--kade-black);
+  border-radius: 0;
+  padding: 14px 28px;
+  font-family: "Helvetica Neue", "Helvetica", "Arial", -apple-system, BlinkMacSystemFont, "Segoe UI", "Inter", sans-serif !important;
+  font-weight: 700 !important;
+  font-size: 0.75rem !important;
+  text-transform: uppercase !important;
+  letter-spacing: 0.05em !important;
+  position: relative;
+  transition: all 0.3s ease;
+  cursor: pointer;
+  overflow: hidden;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  line-height: 1 !important;
+  white-space: nowrap !important;
+  gap: 0.5rem !important;
+}
+
+.kade-button::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: -100%;
+  width: 100%;
+  height: 100%;
+  background: linear-gradient(90deg, transparent, rgba(255,255,255,0.2), transparent);
+  transition: left 0.5s;
+}
+
+.kade-button:hover::before {
+  left: 100%;
+}
+
+.kade-button:hover {
+  background: var(--kade-yellow);
+  color: var(--kade-black);
+  transform: translateY(-3px);
+  box-shadow: 0 6px 12px rgba(214, 48, 49, 0.3);
+}
+
+.kade-button:active {
+  transform: translateY(-1px);
+}
+
+.kade-button-secondary {
+  background: var(--kade-purple);
+  color: var(--kade-white);
+  border: 3px solid var(--kade-black);
+  border-radius: 0;
+  padding: 14px 28px;
+  font-family: "Helvetica Neue", "Helvetica", "Arial", -apple-system, BlinkMacSystemFont, "Segoe UI", "Inter", sans-serif !important;
+  font-weight: 700 !important;
+  font-size: 0.75rem !important;
+  text-transform: uppercase !important;
+  letter-spacing: 0.05em !important;
+  position: relative;
+  transition: all 0.3s ease;
+  cursor: pointer;
+  overflow: hidden;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  line-height: 1 !important;
+  white-space: nowrap !important;
+  gap: 0.5rem !important;
+}
+
+.kade-button-secondary:hover {
+  background: var(--kade-yellow);
+  color: var(--kade-black);
+  transform: translateY(-3px);
+  box-shadow: 0 6px 12px rgba(108, 92, 231, 0.3);
+}
+
+.kade-select {
+  background: var(--kade-light-texture);
+  border: 3px solid var(--kade-black);
+  border-radius: 0;
+  padding: 12px 16px;
+  font-family: "Helvetica Neue", "Helvetica", "Arial", -apple-system, BlinkMacSystemFont, "Segoe UI", "Inter", sans-serif !important;
+  font-weight: 500 !important;
+  color: var(--kade-black);
+  cursor: pointer;
+  transition: all 0.3s ease;
+  font-size: 0.875rem !important;
+  line-height: 1.4 !important;
+}
+
+.kade-select:focus {
+  outline: none;
+  border-color: var(--kade-yellow);
+  box-shadow: 0 0 0 3px rgba(253, 203, 110, 0.3);
+}
+
+.kade-card {
+  background: var(--kade-light-texture);
+  border: 4px solid var(--kade-black);
+  border-radius: 0;
+  padding: 24px;
+  position: relative;
+  box-shadow: 8px 8px 0 var(--kade-red);
+  transition: all 0.3s ease;
+}
+
+.kade-card:hover {
+  transform: translate(-2px, -2px);
+  box-shadow: 12px 12px 0 var(--kade-red);
+}
+
+.kade-label {
+  color: var(--kade-black);
+  font-family: "Helvetica Neue", "Helvetica", "Arial", -apple-system, BlinkMacSystemFont, "Segoe UI", "Inter", sans-serif !important;
+  font-weight: 700 !important;
+  font-size: 0.75rem !important;
+  text-transform: uppercase !important;
+  letter-spacing: 0.1em !important;
+  margin-bottom: 8px;
+  display: block;
+  position: relative;
+  line-height: 1.4 !important;
+}
+
+.kade-label::after {
+  content: '';
+  position: absolute;
+  bottom: -2px;
+  left: 0;
+  width: 30px;
+  height: 2px;
+  background: var(--kade-yellow);
+}
+
+/* Special form section backgrounds */
+.kade-form-section {
+  position: relative;
+  padding: 32px;
+  margin: 24px 0;
+}
+
+.kade-form-section-red {
+  background: var(--kade-red);
+  color: var(--kade-white);
+}
+
+.kade-form-section-red .kade-input,
+.kade-form-section-red .kade-textarea,
+.kade-form-section-red .kade-select {
+  background: var(--kade-white);
+  border-color: var(--kade-black);
+  color: var(--kade-black);
+}
+
+.kade-form-section-dark {
+  background: var(--kade-dark-texture);
+  color: var(--kade-white);
+}
+
+.kade-form-section-dark .kade-label {
+  color: var(--kade-white);
+}
+
+.kade-form-section-dark .kade-label::after {
+  background: var(--kade-yellow);
+}
+
+.kade-form-section-yellow {
+  background: var(--kade-yellow);
+  color: var(--kade-black);
+}
+
+.kade-form-section-yellow .kade-label {
+  color: var(--kade-black);
+}
+
+.kade-form-section-yellow .kade-label::after {
+  background: var(--kade-red);
+}
+
+/* Artistic paint stroke decorations */
+.kade-paint-stroke {
+  position: absolute;
+  z-index: 1;
+  pointer-events: none;
+}
+
+.kade-paint-stroke-red {
+  background: var(--kade-red);
+  width: 60px;
+  height: 8px;
+  transform: rotate(-5deg);
+  border-radius: 50%;
+}
+
+.kade-paint-stroke-yellow {
+  background: var(--kade-yellow);
+  width: 80px;
+  height: 6px;
+  transform: rotate(8deg);
+  border-radius: 50%;
+}
+
+.kade-paint-stroke-purple {
+  background: var(--kade-purple);
+  width: 45px;
+  height: 10px;
+  transform: rotate(-12deg);
+  border-radius: 50%;
+}
+
+@layer base {
+  :root {
+    --background: 0 0% 100%;
+    --foreground: 222.2 84% 4.9%;
+    --card: 0 0% 100%;
+    --card-foreground: 222.2 84% 4.9%;
+    --popover: 0 0% 100%;
+    --popover-foreground: 222.2 84% 4.9%;
+    --primary: 222.2 47.4% 11.2%;
+    --primary-foreground: 210 40% 98%;
+    --secondary: 210 40% 96%;
+    --secondary-foreground: 222.2 47.4% 11.2%;
+    --muted: 210 40% 96%;
+    --muted-foreground: 215.4 16.3% 46.9%;
+    --accent: 210 40% 96%;
+    --accent-foreground: 222.2 47.4% 11.2%;
+    --destructive: 0 84.2% 60.2%;
+    --destructive-foreground: 210 40% 98%;
+    --border: 214.3 31.8% 91.4%;
+    --input: 214.3 31.8% 91.4%;
+    --ring: 222.2 84% 4.9%;
+    --radius: 0.5rem;
+    --chart-1: 12 76% 61%;
+    --chart-2: 173 58% 39%;
+    --chart-3: 197 37% 24%;
+    --chart-4: 43 74% 66%;
+    --chart-5: 27 87% 67%;
+  }
+
+  .dark {
+    --background: 222.2 84% 4.9%;
+    --foreground: 210 40% 98%;
+    --card: 222.2 84% 4.9%;
+    --card-foreground: 210 40% 98%;
+    --popover: 222.2 84% 4.9%;
+    --popover-foreground: 210 40% 98%;
+    --primary: 210 40% 98%;
+    --primary-foreground: 222.2 47.4% 11.2%;
+    --secondary: 217.2 32.6% 17.5%;
+    --secondary-foreground: 210 40% 98%;
+    --muted: 217.2 32.6% 17.5%;
+    --muted-foreground: 215 20.2% 65.1%;
+    --accent: 217.2 32.6% 17.5%;
+    --accent-foreground: 210 40% 98%;
+    --destructive: 0 62.8% 30.6%;
+    --destructive-foreground: 210 40% 98%;
+    --border: 217.2 32.6% 17.5%;
+    --input: 217.2 32.6% 17.5%;
+    --ring: 212.7 26.8% 83.9%;
+    --chart-1: 220 70% 50%;
+    --chart-2: 160 60% 45%;
+    --chart-3: 30 80% 55%;
+    --chart-4: 280 65% 60%;
+    --chart-5: 340 75% 55%;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+  body {
+    @apply bg-background text-foreground;
+  }
+}
+
+/* Custom Hell University Styles */
+:root {
+  --font-size: 14px;
+  --font-family: "Helvetica Neue", "Helvetica", "Arial", -apple-system, BlinkMacSystemFont, "Segoe UI", "Inter", sans-serif;
+  --hell-beige: #f4f1ed;
+  --hell-cream: #faf8f5;
+  --hell-dusty-blue: #7ba3a3;
+  --hell-burgundy: #8b4b6b;
+  --hell-sage: #a8b5a5;
+  --hell-terracotta: #c4704a;
+  --hell-mint: #b8d4d1;
+  --hell-deep-blue: #6b8b8b;
+}
+
+html {
+  font-size: var(--font-size);
+  font-family: var(--font-family);
+}
+
+* {
+  font-family: var(--font-family);
+}
+
+.nav-item, .menu-item {
+  font-size: .75rem;
+  font-weight: 500;
+  letter-spacing: .05em;
+  text-transform: uppercase;
+}
+
+.accent-text {
+  font-style: oblique;
+  font-weight: 700;
+}
+
+.hero-text {
+  font-weight: 900;
+}
+
+.hell-university-header {
+  font-family: var(--font-family);
+  text-transform: uppercase;
+  line-height: 1.1;
+  font-size: 1.75rem !important;
+  font-weight: 900 !important;
+  color: #2a251f !important;
+  letter-spacing: .1em !important;
+}
+
+.hell-university-hero {
+  font-family: var(--font-family);
+  text-transform: uppercase;
+  text-shadow: 0 2px 4px #2a251f1a;
+  line-height: .9;
+  font-weight: 900 !important;
+  color: #1a1611 !important;
+  letter-spacing: .05em !important;
+  font-style: italic !important;
+}
+
+.sophisticated-text {
+  font-size: .8125rem;
+  line-height: 1.5;
+  font-weight: 400;
+}

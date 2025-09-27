@@ -1,0 +1,29 @@
+{
+  "name": "Hell University - Cultural House",
+  "short_name": "Hell University",
+  "description": "A Cultural House for Creative Expression. Promoting cultural activities and community engagement through art, music, and creativity.",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#f4f1ed",
+  "theme_color": "#7ba3a3",
+  "orientation": "portrait-primary",
+  "icons": [
+    {
+      "src": "/icon-192x192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "maskable any"
+    },
+    {
+      "src": "/icon-512x512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable any"
+    }
+  ],
+  "categories": ["culture", "art", "education", "lifestyle"],
+  "lang": "en",
+  "dir": "ltr",
+  "scope": "/",
+  "prefer_related_applications": false
+}
