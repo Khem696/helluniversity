@@ -29,18 +29,6 @@ export function Header() {
             Spaces
           </button>
           <button
-            onClick={() => scrollToSection('events')}
-            className="text-sm font-medium tracking-wide text-[#6b655c] transition-colors hover:text-[#7ba3a3] uppercase"
-          >
-            Events
-          </button>
-          <button
-            onClick={() => scrollToSection('workshops')}
-            className="text-sm font-medium tracking-wide text-[#6b655c] transition-colors hover:text-[#7ba3a3] uppercase"
-          >
-            Workshops
-          </button>
-          <button
             onClick={() => scrollToSection('ai-generator')}
             className="text-sm font-medium tracking-wide text-[#6b655c] transition-colors hover:text-[#7ba3a3] uppercase"
           >
