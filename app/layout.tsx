@@ -34,14 +34,14 @@ export const metadata: Metadata = {
     address: false,
     telephone: false,
   },
-  metadataBase: new URL('https://helluniversity.com'),
+  metadataBase: new URL(process.env.NODE_ENV === 'production' ? 'https://khem696.github.io/helluniversity' : 'http://localhost:3000'),
   alternates: {
     canonical: '/',
   },
   openGraph: {
     type: 'website',
     locale: 'en_US',
-    url: 'https://helluniversity.com',
+    url: process.env.NODE_ENV === 'production' ? 'https://khem696.github.io/helluniversity' : 'http://localhost:3000',
     title: 'Hell University - A Cultural House for Creative Expression',
     description: 'Promoting cultural activities and community engagement through art, music, and creativity.',
     siteName: 'Hell University',

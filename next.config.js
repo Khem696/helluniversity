@@ -53,7 +53,10 @@ const withPWA = require('next-pwa')({
 
 /** @type {import('next').NextConfig} */
 const nextConfig = {
+  output: 'export',
+  trailingSlash: true,
   images: {
+    unoptimized: true,
     domains: ['images.unsplash.com'],
     formats: ['image/webp', 'image/avif'],
   },
@@ -63,6 +66,8 @@ const nextConfig = {
   poweredByHeader: false,
   generateEtags: false,
   compress: true,
+  assetPrefix: process.env.NODE_ENV === 'production' ? '/helluniversity' : '',
+  basePath: process.env.NODE_ENV === 'production' ? '/helluniversity' : '',
 }
 
 module.exports = withPWA(nextConfig)

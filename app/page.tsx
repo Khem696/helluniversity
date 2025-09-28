@@ -18,7 +18,7 @@ export const metadata: Metadata = {
   openGraph: {
     title: 'Hell University - A Cultural House for Creative Expression',
     description: 'Promoting cultural activities and community engagement through art, music, and creativity.',
-    url: 'https://helluniversity.com',
+    url: process.env.NODE_ENV === 'production' ? 'https://khem696.github.io/helluniversity' : 'http://localhost:3000',
     siteName: 'Hell University',
     images: [
       {
@@ -38,7 +38,7 @@ export const metadata: Metadata = {
     images: ['/og-image.jpg'],
   },
   alternates: {
-    canonical: 'https://helluniversity.com',
+    canonical: process.env.NODE_ENV === 'production' ? 'https://khem696.github.io/helluniversity' : 'http://localhost:3000',
   },
 }
 

@@ -3,7 +3,7 @@ export const organizationStructuredData = {
   "@type": "Organization",
   "name": "Hell University",
   "description": "A Cultural House for Creative Expression. Promoting cultural activities and community engagement through art, music, and creativity.",
-  "url": "https://helluniversity.com",
+  "url": process.env.NODE_ENV === 'production' ? "https://khem696.github.io/helluniversity" : "http://localhost:3000",
   "logo": "https://helluniversity.com/logo.png",
   "image": "https://helluniversity.com/og-image.jpg",
   "address": {
@@ -34,10 +34,10 @@ export const websiteStructuredData = {
   "@type": "WebSite",
   "name": "Hell University",
   "description": "A Cultural House for Creative Expression",
-  "url": "https://helluniversity.com",
+  "url": process.env.NODE_ENV === 'production' ? "https://khem696.github.io/helluniversity" : "http://localhost:3000",
   "potentialAction": {
     "@type": "SearchAction",
-    "target": "https://helluniversity.com/search?q={search_term_string}",
+    "target": process.env.NODE_ENV === 'production' ? "https://khem696.github.io/helluniversity/search?q={search_term_string}" : "http://localhost:3000/search?q={search_term_string}",
     "query-input": "required name=search_term_string"
   }
 }
@@ -47,7 +47,7 @@ export const localBusinessStructuredData = {
   "@type": "LocalBusiness",
   "name": "Hell University",
   "description": "A Cultural House for Creative Expression. Promoting cultural activities and community engagement through art, music, and creativity.",
-  "url": "https://helluniversity.com",
+  "url": process.env.NODE_ENV === 'production' ? "https://khem696.github.io/helluniversity" : "http://localhost:3000",
   "telephone": "+1-555-123-4567",
   "email": "hello@helluniversity.com",
   "address": {
@@ -95,11 +95,11 @@ export const eventStructuredData = {
   "organizer": {
     "@type": "Organization",
     "name": "Hell University",
-    "url": "https://helluniversity.com"
+    "url": process.env.NODE_ENV === 'production' ? "https://khem696.github.io/helluniversity" : "http://localhost:3000"
   },
   "offers": {
     "@type": "Offer",
-    "url": "https://helluniversity.com/reservation",
+    "url": process.env.NODE_ENV === 'production' ? "https://khem696.github.io/helluniversity/reservation" : "http://localhost:3000/reservation",
     "price": "0",
     "priceCurrency": "USD",
     "availability": "https://schema.org/InStock"
