@@ -90,8 +90,8 @@ export function ReservationForm() {
               <div className="kade-form-section kade-form-section-red">
                 <h3 className="text-xl text-white mb-6 uppercase tracking-wide font-bold">Basic Information</h3>
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                  <div className="space-y-2">
-                    <label htmlFor="name" className="kade-label text-white">Full Name *</label>
+                  <div className="space-y-3">
+                    <label htmlFor="name" className="kade-label text-white block">Full Name *</label>
                     <input
                       id="name"
                       required
@@ -102,8 +102,8 @@ export function ReservationForm() {
                     />
                   </div>
                   
-                  <div className="space-y-2">
-                    <label htmlFor="email" className="kade-label text-white">Email Address *</label>
+                  <div className="space-y-3">
+                    <label htmlFor="email" className="kade-label text-white block">Email Address *</label>
                     <input
                       id="email"
                       type="email"
@@ -115,8 +115,8 @@ export function ReservationForm() {
                     />
                   </div>
                   
-                  <div className="space-y-2">
-                    <label htmlFor="phone" className="kade-label text-white">Phone Number *</label>
+                  <div className="space-y-3">
+                    <label htmlFor="phone" className="kade-label text-white block">Phone Number *</label>
                     <input
                       id="phone"
                       required
@@ -127,10 +127,10 @@ export function ReservationForm() {
                     />
                   </div>
                   
-                  <div className="space-y-2">
-                    <label htmlFor="guests" className="kade-label text-white">Number of Guests *</label>
+                  <div className="space-y-3">
+                    <label htmlFor="guests" className="kade-label text-white block">Number of Guests *</label>
                     <Select onValueChange={(value) => handleInputChange("guests", value)}>
-                      <SelectTrigger className="kade-select w-full">
+                      <SelectTrigger className="kade-select w-full h-[48px]">
                         <SelectValue placeholder="Select guest count" />
                       </SelectTrigger>
                       <SelectContent>
@@ -149,16 +149,18 @@ export function ReservationForm() {
               <div className="kade-form-section kade-form-section-yellow">
                 <h3 className="text-xl font-bold text-black mb-6 uppercase tracking-wide">Event Details</h3>
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                  <div className="space-y-2">
-                    <label className="kade-label text-black">Desired Date *</label>
+                  <div className="space-y-3">
+                    <label className="kade-label text-black block">Desired Date *</label>
                     <Popover>
                       <PopoverTrigger asChild>
                         <Button
                           variant="outline"
-                          className="w-full justify-start text-left font-normal kade-input border-black"
+                          className="w-full h-[48px] justify-start text-left font-normal border-black flex items-center px-4 bg-[var(--kade-light-texture)] border-3 border-solid text-[var(--kade-black)]"
                         >
-                          <CalendarIcon className="mr-2 h-4 w-4" />
-                          {selectedDate ? format(selectedDate, "PPP") : "Pick a date"}
+                          <CalendarIcon className="h-4 w-4" style={{ marginTop: '1px' }} />
+                          <span className="ml-1" style={{ marginTop: '1px' }}>
+                            {selectedDate ? format(selectedDate, "PPP") : "Pick a date"}
+                          </span>
                         </Button>
                       </PopoverTrigger>
                       <PopoverContent className="w-auto p-0" align="start">
@@ -173,10 +175,10 @@ export function ReservationForm() {
                     </Popover>
                   </div>
                   
-                  <div className="space-y-2">
-                    <label htmlFor="eventType" className="kade-label text-black">Event Type *</label>
+                  <div className="space-y-3">
+                    <label htmlFor="eventType" className="kade-label text-black block">Event Type *</label>
                     <Select onValueChange={(value) => handleInputChange("eventType", value)}>
-                      <SelectTrigger className="kade-select w-full">
+                      <SelectTrigger className="kade-select w-full h-[48px]">
                         <SelectValue placeholder="Select event type" />
                       </SelectTrigger>
                       <SelectContent>
@@ -207,8 +209,8 @@ export function ReservationForm() {
                 </div>
                 
                 <div className="space-y-6">
-                  <div className="space-y-2">
-                    <label htmlFor="introduction" className="kade-label text-white">Brief Introduction *</label>
+                  <div className="space-y-3">
+                    <label htmlFor="introduction" className="kade-label text-white block">Brief Introduction *</label>
                     <textarea
                       id="introduction"
                       required
@@ -220,8 +222,8 @@ export function ReservationForm() {
                     />
                   </div>
                   
-                  <div className="space-y-2">
-                    <label htmlFor="biography" className="kade-label text-white">Background & Interests</label>
+                  <div className="space-y-3">
+                    <label htmlFor="biography" className="kade-label text-white block">Background & Interests</label>
                     <textarea
                       id="biography"
                       value={formData.biography}
@@ -232,23 +234,23 @@ export function ReservationForm() {
                     />
                   </div>
                   
-                  <div className="space-y-2">
-                    <label htmlFor="photo" className="kade-label text-white">Photo Upload (Optional)</label>
-                    <div className="border-4 border-dashed border-white/60 p-6 text-center hover:border-yellow-400 transition-colors bg-white/10 backdrop-blur-sm">
-                      <Upload className="mx-auto h-12 w-12 text-white/80" />
-                      <div className="mt-4">
+                  <div className="space-y-3">
+                    <label htmlFor="photo" className="kade-label text-white block">Photo Upload (Optional)</label>
+                    <div className="border-4 border-dashed border-white/60 p-6 hover:border-yellow-400 transition-colors bg-white/10 backdrop-blur-sm">
+                      <div className="flex flex-col items-center justify-center space-y-4">
+                        <Upload className="h-12 w-12 text-white/80" />
                         <button type="button" className="kade-button-secondary">
                           Choose File
                         </button>
-                        <p className="mt-2 text-sm text-gray-200">
+                        <p className="text-sm text-gray-200 text-center">
                           Upload a photo to help us get to know you better
                         </p>
                       </div>
                     </div>
                   </div>
                   
-                  <div className="space-y-2">
-                    <label htmlFor="specialRequests" className="kade-label text-white">Special Requests or Vision</label>
+                  <div className="space-y-3">
+                    <label htmlFor="specialRequests" className="kade-label text-white block">Special Requests or Vision</label>
                     <textarea
                       id="specialRequests"
                       value={formData.specialRequests}

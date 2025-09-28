@@ -10,7 +10,7 @@ export function StudioGallery() {
         <ImageWithFallback
           src="https://images.unsplash.com/photo-1733471073010-231da8a85e99?crop=entropy&cs=tinysrgb&fit=max&fm=jpg&ixid=M3w3Nzg4Nzd8MHwxfHNlYXJjaHwxfHxtb2Rlcm4lMjBjcmVhdGl2ZSUyMHN0dWRpbyUyMGdhbGxlcnklMjBzcGFjZXxlbnwxfHx8fDE3NTg3Nzc4ODh8MA&ixlib=rb-4.1.0&q=80&w=1080&utm_source=figma&utm_medium=referral"
           alt="Hell University Studio and Gallery Space"
-          className="w-full h-full object-cover"
+          className="w-full h-full object-cover blur-sm"
           width={1920}
           height={1080}
           priority={true}

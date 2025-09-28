@@ -9,8 +9,7 @@ export function Footer() {
           <div className="space-y-4">
             <h3 className="text-2xl" style={{ fontWeight: '700' }}>HELL UNIVERSITY</h3>
             <p className="text-gray-300 text-sm">
-              A boutique event & workshop space where Love, Fun & Joy come together. 
-              Creating intimate experiences for up to 15 guests.
+              The place where Love, Fun & Joy come together. 
             </p>
             <div className="flex space-x-2">
               <span className="bg-rose-500 px-3 py-1 rounded-full text-xs">Love</span>
@@ -62,11 +61,11 @@ export function Footer() {
           <div className="space-y-4">
             <h4 className="text-lg" style={{ fontWeight: '500' }}>Get in Touch</h4>
             <div className="space-y-2 text-sm text-gray-300">
-              <p>📧 hello@kadestudio.com</p>
-              <p>📞 +1 (555) 123-KADE</p>
+              <p>📧 hello@helluniversity.com</p>
+              <p>📞 +66 088 088 0888</p>
               <p>📍 Mae Taeng, Chiang Mai</p>
               <p className="text-xs text-gray-400 mt-4">
-                Intimate spaces • Maximum 15 guests • Curated experiences
+                Intimate spaces • Curated experiences
               </p>
             </div>
           </div>

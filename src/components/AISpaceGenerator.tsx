@@ -4,7 +4,7 @@ import { useState } from "react";
 import { Button } from "./ui/button";
 import { Textarea } from "./ui/textarea";
 import { Card } from "./ui/card";
-import { Sparkles, ArrowRight, SkipForward } from "lucide-react";
+import { Sparkles, SkipForward } from "lucide-react";
 import { ImageWithFallback } from "./figma/ImageWithFallback";
 
 export function AISpaceGenerator() {
@@ -107,22 +107,14 @@ export function AISpaceGenerator() {
               </div>
             </div>
 
-            {/* Action Buttons */}
+            {/* Action Button */}
             <div className="space-y-4">
-              <button
-                onClick={scrollToReservation}
-                className="kade-button w-full text-base py-4"
-              >
-                <ArrowRight className="w-4 h-4" />
-                {generatedImage ? "Proceed with Reservation" : "Begin Reservation"}
-              </button>
-              
               <button
                 onClick={scrollToReservation}
                 className="kade-button-secondary w-full text-base py-4"
               >
                 <SkipForward className="w-4 h-4" />
-                Continue to Booking
+                Continue to Reservation
               </button>
             </div>
           </div>
