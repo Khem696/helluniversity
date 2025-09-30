@@ -51,7 +51,7 @@ export function AISpaceGenerator() {
         <div className="absolute inset-0 bg-white/85 backdrop-blur-sm"></div>
       </div>
       
-      <div className="max-w-7xl mx-auto px-6 lg:px-8 relative z-10 w-full">
+      <div className="max-w-7xl mx-auto px-6 lg:px-8 relative z-10 w-full pt-4 md:pt-8 lg:pt-12">
         <div className="text-center mb-20">
           <div className="space-y-6">
             <div className="flex items-center justify-center space-x-3">
