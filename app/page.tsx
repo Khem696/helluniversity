@@ -46,7 +46,7 @@ export default function Home() {
   return (
     <div className="min-h-screen bg-[#f4f1ed]">
       <Header />
-      <main>
+      <main id="main-content">
         <Hero />
         <StudioGallery />
         {/* <Events /> */}

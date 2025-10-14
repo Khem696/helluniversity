@@ -11,7 +11,7 @@ export function Footer() {
             <p className="text-gray-300 text-sm">
               The place where Love, Fun & Joy come together. 
             </p>
-            <div className="flex space-x-2">
+            <div className="flex space-x-2" aria-label="Site values">
               <span className="bg-rose-500 px-3 py-1 rounded-full text-xs">Love</span>
               <span className="bg-orange-500 px-3 py-1 rounded-full text-xs">Fun</span>
               <span className="bg-yellow-500 px-3 py-1 rounded-full text-xs">Joy</span>
@@ -24,32 +24,36 @@ export function Footer() {
             <ul className="space-y-2 text-sm text-gray-300">
               <li>
                 <button 
-                  onClick={() => document.getElementById('events')?.scrollIntoView({ behavior: 'smooth' })}
+                  onClick={() => document.getElementById('spaces')?.scrollIntoView({ behavior: 'smooth' })}
                   className="hover:text-white transition-colors"
+                  aria-label="Jump to Spaces section"
                 >
-                  Events
+                  Spaces
                 </button>
               </li>
               <li>
                 <button 
-                  onClick={() => document.getElementById('workshops')?.scrollIntoView({ behavior: 'smooth' })}
+                  onClick={() => document.getElementById('ai-generator')?.scrollIntoView({ behavior: 'smooth' })}
                   className="hover:text-white transition-colors"
+                  aria-label="Jump to AI Generator section"
                 >
-                  Workshops
+                  AI Generator
                 </button>
               </li>
               <li>
                 <button 
-                  onClick={() => document.getElementById('gallery')?.scrollIntoView({ behavior: 'smooth' })}
+                  onClick={() => window.scrollTo({ top: 0, behavior: 'smooth' })}
                   className="hover:text-white transition-colors"
+                  aria-label="Back to top"
                 >
-                  Gallery
+                  Top
                 </button>
               </li>
               <li>
                 <button 
                   onClick={() => document.getElementById('reservation')?.scrollIntoView({ behavior: 'smooth' })}
                   className="hover:text-white transition-colors"
+                  aria-label="Jump to Reservation section"
                 >
                   Book Now
                 </button>

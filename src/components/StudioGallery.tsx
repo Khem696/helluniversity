@@ -20,9 +20,9 @@ export function StudioGallery() {
       </div>
 
       {/* Content Split */}
-      <div className="relative z-10 h-screen flex">
+      <div className="relative z-10 min-h-screen flex flex-col md:flex-row">
         {/* Left Half - Studio */}
-        <div className="w-1/2 flex items-center justify-center p-8 lg:p-16">
+        <div className="w-full md:w-1/2 flex items-center justify-center p-8 lg:p-16 py-20 md:py-0">
           <div className="text-center space-y-8">
             <div className="space-y-4">
               <h2 className="text-3xl sm:text-4xl md:text-5xl lg:text-6xl font-light tracking-wide text-[#faf8f5] font-helvetica">
@@ -43,7 +43,7 @@ export function StudioGallery() {
         </div>
 
         {/* Right Half - Gallery */}
-        <div className="w-1/2 flex items-center justify-center p-8 lg:p-16">
+        <div className="w-full md:w-1/2 flex items-center justify-center p-8 lg:p-16 pb-24 md:pb-0">
           <div className="text-center space-y-8">
             <div className="space-y-4">
               <h2 className="text-3xl sm:text-4xl md:text-5xl lg:text-6xl font-light tracking-wide text-[#faf8f5] font-helvetica">
@@ -65,7 +65,7 @@ export function StudioGallery() {
       </div>
 
       {/* Subtle dividing line */}
-      <div className="absolute top-1/4 bottom-1/4 left-1/2 w-px bg-gradient-to-b from-transparent via-[#faf8f5]/30 to-transparent transform -translate-x-1/2 z-20"></div>
+      <div className="hidden md:block absolute top-1/4 bottom-1/4 left-1/2 w-px bg-gradient-to-b from-transparent via-[#faf8f5]/30 to-transparent transform -translate-x-1/2 z-20"></div>
     </section>
   );
 }
