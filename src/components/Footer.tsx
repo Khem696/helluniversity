@@ -65,9 +65,21 @@ export function Footer() {
           <div className="space-y-4">
             <h4 className="text-lg" style={{ fontWeight: '500' }}>Get in Touch</h4>
             <div className="space-y-2 text-sm text-gray-300">
-              <p>📧 hello@helluniversity.com</p>
-              <p>📞 +66 088 088 0888</p>
-              <p>📍 Mae Taeng, Chiang Mai</p>
+              <p>📧 helluniversity.cm@gmail.com</p>
+              <a href="https://www.facebook.com/kadejavanalikhikara" target="_blank" rel="noopener noreferrer">
+                <p>
+                  <span role="img" aria-label="Facebook" className="mr-1">📘</span>
+                  Facebook: kadejavanalikhikara
+                </p>
+              </a>
+              <a href="https://haisang.wixsite.com/kade-javanalikhikara" target="_blank" rel="noopener noreferrer">
+                <p>
+                  <span role="img" aria-label="Wix" className="mr-1">🌐</span>
+                  Wix: kade-javanalikhikara
+                </p>
+              </a>
+              {/* <p>📞 +66 088 088 0888</p>
+              <p>📍 Mae Taeng, Chiang Mai</p> */}
               <p className="text-xs text-gray-400 mt-4">
                 Intimate spaces • Curated experiences
               </p>
