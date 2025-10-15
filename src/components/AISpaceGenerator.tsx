@@ -1,29 +1,67 @@
 'use client'
 
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { Button } from "./ui/button";
 import { Textarea } from "./ui/textarea";
 import { Card } from "./ui/card";
 import { Sparkles, SkipForward } from "lucide-react";
 import { ImageWithFallback } from "./figma/ImageWithFallback";
+import { GALLERY_IMAGES, HONGSEE_IMAGES } from "@/lib/aispaces";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogDescription,
+  DialogFooter,
+  DialogTrigger,
+  DialogClose,
+} from "./ui/dialog";
 
 export function AISpaceGenerator() {
   const [prompt, setPrompt] = useState("");
   const [isGenerating, setIsGenerating] = useState(false);
-  const [generatedImage, setGeneratedImage] = useState<string | null>(null);
+  const [selectedImages, setSelectedImages] = useState<string[]>([]);
+  const [generatedImages, setGeneratedImages] = useState<string[]>([]);
+  const [isPickerOpen, setIsPickerOpen] = useState(false);
 
   const handleGenerate = async () => {
-    if (!prompt.trim()) return;
-    
+    if (!prompt.trim() || selectedImages.length === 0) return;
     setIsGenerating(true);
-    
-    // Simulate AI generation delay
-    setTimeout(() => {
-      // Mock generated image - in real implementation, this would call an AI service
-      setGeneratedImage("https://images.unsplash.com/photo-1586023492125-27b2c045efd7?w=800&h=600&fit=crop");
+    setGeneratedImages([]);
+    try {
+      const res = await fetch("/api/generate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ images: selectedImages, prompt }),
+      });
+      if (!res.ok) {
+        const text = await res.text();
+        throw new Error(text || "Generation failed");
+      }
+      const data = await res.json();
+      if (Array.isArray(data?.images)) {
+        setGeneratedImages(data.images);
+      }
+    } catch (err) {
+      console.error(err);
+    } finally {
       setIsGenerating(false);
-    }, 3000);
+    }
   };
+
+  const toggleSelect = (url: string) => {
+    setSelectedImages((prev) => {
+      const exists = prev.includes(url);
+      if (exists) return prev.filter((u) => u !== url);
+      if (prev.length >= 10) return prev; // cap at 10
+      return [...prev, url];
+    });
+  };
+
+  const isValidToGenerate = useMemo(() => {
+    return prompt.trim().length > 0 && selectedImages.length > 0 && !isGenerating;
+  }, [prompt, selectedImages, isGenerating]);
 
   const scrollToReservation = () => {
     const reservationSection = document.getElementById('reservation');
@@ -73,6 +111,102 @@ export function AISpaceGenerator() {
           {/* Input Section */}
           <div className="space-y-8">
             <div className="kade-card">
+              <div className="space-y-6">
+                <label className="kade-label block text-black">Select Space Photos</label>
+                <Dialog open={isPickerOpen} onOpenChange={setIsPickerOpen}>
+                  <DialogTrigger asChild>
+                    <button className="kade-button-secondary w-full text-base py-3">
+                      Choose Photos (Selected: {selectedImages.length} / 10)
+                    </button>
+                  </DialogTrigger>
+                  <DialogContent className="max-w-3xl">
+                    <DialogHeader>
+                      <DialogTitle>Select Space Photos</DialogTitle>
+                      <DialogDescription>
+                        Pick at least 1 and up to 10 images from Hongsee Space and Archive Gallery.
+                      </DialogDescription>
+                    </DialogHeader>
+
+                    <div className="space-y-6">
+                      <div>
+                        <div className="text-sm font-semibold mb-2">Hongsee Space</div>
+                        <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+                          {HONGSEE_IMAGES.map((url) => {
+                            const selected = selectedImages.includes(url);
+                            return (
+                              <button
+                                type="button"
+                                key={url}
+                                onClick={() => toggleSelect(url)}
+                                className={`relative aspect-square overflow-hidden border ${selected ? "border-black ring-2 ring-black" : "border-transparent"}`}
+                                aria-pressed={selected}
+                                aria-label={selected ? "Deselect image" : "Select image"}
+                              >
+                                <ImageWithFallback
+                                  src={url}
+                                  alt="Hongsee Space"
+                                  className="w-full h-full object-cover"
+                                  width={400}
+                                  height={400}
+                                />
+                                {selected && <div className="absolute inset-0 bg-black/30" />}
+                              </button>
+                            );
+                          })}
+                        </div>
+                      </div>
+
+                      <div>
+                        <div className="text-sm font-semibold mb-2">Archive Gallery</div>
+                        <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+                          {GALLERY_IMAGES.map((url) => {
+                            const selected = selectedImages.includes(url);
+                            return (
+                              <button
+                                type="button"
+                                key={url}
+                                onClick={() => toggleSelect(url)}
+                                className={`relative aspect-square overflow-hidden border ${selected ? "border-black ring-2 ring-black" : "border-transparent"}`}
+                                aria-pressed={selected}
+                                aria-label={selected ? "Deselect image" : "Select image"}
+                              >
+                                <ImageWithFallback
+                                  src={url}
+                                  alt="Archive Gallery"
+                                  className="w-full h-full object-cover"
+                                  width={400}
+                                  height={400}
+                                />
+                                {selected && <div className="absolute inset-0 bg-black/30" />}
+                              </button>
+                            );
+                          })}
+                        </div>
+                      </div>
+
+                      <div className="flex items-center justify-between text-sm">
+                        <div>Selected: {selectedImages.length} / 10</div>
+                        <button
+                          type="button"
+                          className="underline"
+                          onClick={() => setSelectedImages([])}
+                        >
+                          Clear
+                        </button>
+                      </div>
+                    </div>
+
+                    <DialogFooter>
+                      <DialogClose asChild>
+                        <button className="kade-button w-full sm:w-auto">Done</button>
+                      </DialogClose>
+                    </DialogFooter>
+                  </DialogContent>
+                </Dialog>
+              </div>
+            </div>
+
+            <div className="kade-card">
               <div className="space-y-6 relative">
                 {/* Artistic decorations */}
                 <div className="absolute -top-2 -right-2 w-8 h-2 bg-yellow-400 transform rotate-12"></div>
@@ -89,7 +223,7 @@ export function AISpaceGenerator() {
                 />
                 <button
                   onClick={handleGenerate}
-                  disabled={!prompt.trim() || isGenerating}
+                  disabled={!isValidToGenerate}
                   className="kade-button w-full text-base py-4"
                 >
                   {isGenerating ? (
@@ -122,7 +256,7 @@ export function AISpaceGenerator() {
           {/* Preview Section */}
           <div className="space-y-8">
             <div className="kade-card overflow-hidden">
-              <div className="aspect-[4/3] bg-[#e8e3db]/30 flex items-center justify-center relative">
+              <div className="min-h-[300px] bg-[#e8e3db]/30 flex items-center justify-center relative p-4">
                 {isGenerating ? (
                   <div className="text-center space-y-6">
                     <div className="w-20 h-20 mx-auto">
@@ -133,16 +267,26 @@ export function AISpaceGenerator() {
                       <div className="text-sm text-[#6b655c]">Translating vision into reality</div>
                     </div>
                   </div>
-                ) : generatedImage ? (
-                  <div className="relative w-full h-full group">
-                    <ImageWithFallback
-                      src={generatedImage}
-                      alt="AI Generated Space Design"
-                      className="w-full h-full object-cover"
-                      width={800}
-                      height={600}
-                    />
-                    <div className="absolute inset-0 bg-gradient-to-t from-black/20 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-500" />
+                ) : generatedImages.length > 0 ? (
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 w-full">
+                    {generatedImages.map((url, idx) => (
+                      <div key={idx} className="relative">
+                        <ImageWithFallback
+                          src={url}
+                          alt="AI Generated Space Design"
+                          className="w-full h-full object-cover"
+                          width={800}
+                          height={600}
+                        />
+                        <a
+                          href={url}
+                          download
+                          className="absolute bottom-2 right-2 bg-black text-white text-xs px-2 py-1"
+                        >
+                          Download
+                        </a>
+                      </div>
+                    ))}
                   </div>
                 ) : (
                   <div className="text-center space-y-6 px-8">
@@ -151,14 +295,14 @@ export function AISpaceGenerator() {
                     </div>
                     <div className="space-y-3">
                       <div className="text-muted-foreground font-medium">Your curated design will appear here</div>
-                      <div className="text-sm text-muted-foreground/70">Share your vision to begin the transformation</div>
+                      <div className="text-sm text-muted-foreground/70">Share your vision and select images to begin</div>
                     </div>
                   </div>
                 )}
               </div>
             </div>
 
-            {generatedImage && (
+            {generatedImages.length > 0 && (
               <div className="kade-form-section kade-form-section-yellow relative">
                 <div className="absolute top-2 right-4 w-12 h-3 bg-red-500 transform rotate-6"></div>
                 <div className="text-center space-y-3">
