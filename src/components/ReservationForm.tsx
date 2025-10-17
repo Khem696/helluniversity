@@ -37,7 +37,7 @@ export function ReservationForm() {
   };
 
   return (
-    <section id="reservation" className="py-24 sm:py-32 kade-light-texture relative overflow-hidden">
+    <section id="reservation" className="py-24 sm:py-32 kade-blue-wash kade-no-anim relative overflow-hidden">
       {/* Kade's artwork inspired paint strokes and textures */}
       <div className="absolute inset-0">
         {/* Large textured panels inspired by the collage */}
@@ -54,17 +54,17 @@ export function ReservationForm() {
         <div className="absolute top-1/2 left-1/4 kade-paint-stroke kade-paint-stroke-red"></div>
         
         {/* Overlay for content readability */}
-        <div className="absolute inset-0 bg-white/80 backdrop-blur-sm"></div>
+        <div className="absolute inset-0 bg-white/10"></div>
       </div>
       
       <div className="container mx-auto px-6 lg:px-8 max-w-5xl relative z-10">
         <div className="text-center mb-20">
           <div className="space-y-6">
-            <h1 className="hell-university-hero" style={{ fontSize: 'clamp(2.5rem, 5vw, 4rem)' }}>
+            <h1 className="hell-university-hero kade-scribble-underline" style={{ fontSize: 'clamp(2.5rem, 5vw, 4rem)' }}>
               Begin Your Reservation
             </h1>
             <div className="w-24 h-px bg-[#7ba3a3] mx-auto"></div>
-            <p className="text-lg text-[#6b655c] leading-relaxed max-w-3xl mx-auto font-medium">
+            <p className="text-lg text-[#ffffff] leading-relaxed max-w-3xl mx-auto font-medium">
               Share your vision with us and allow our curators to craft 
               an extraordinary experience tailored to your unique sensibilities.
             </p>
@@ -74,10 +74,10 @@ export function ReservationForm() {
         <div className="kade-card">
           <div className="text-center pb-8 relative">
             {/* Artistic header decoration */}
-            <div className="absolute top-0 left-1/4 w-16 h-3 bg-red-500 transform -rotate-3"></div>
-            <div className="absolute top-2 right-1/4 w-12 h-2 bg-yellow-400 transform rotate-5"></div>
+            <div className="absolute top-0 left-1/4 w-16 h-3 kade-tape -rotate-3"></div>
+            <div className="absolute top-2 right-1/4 w-12 h-2 kade-tape rotate-5"></div>
             
-            <h2 className="hell-university-section-title text-3xl uppercase">Reservation Inquiry</h2>
+            <h2 className="hell-university-section-title text-3xl uppercase kade-scribble-underline">Reservation Inquiry</h2>
             <p className="text-sm text-black mt-4 max-w-2xl mx-auto font-medium">
               Each reservation is thoughtfully reviewed to ensure an exceptional experience 
               that aligns with our philosophy of intimate, curated gatherings.
@@ -146,7 +146,8 @@ export function ReservationForm() {
               </div>
 
               {/* Event Details - Yellow Section */}
-              <div className="kade-form-section kade-form-section-yellow">
+              <div className="kade-form-section kade-form-section-yellow relative">
+                <div className="kade-speckles kade-speckles--cobalt"></div>
                 <h3 className="text-xl font-bold text-black mb-6 uppercase tracking-wide">Event Details</h3>
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                   <div className="space-y-3">
@@ -200,7 +201,7 @@ export function ReservationForm() {
               {/* Personal Information - Dark Section */}
               <div className="kade-form-section kade-form-section-dark">
                 <div className="text-center mb-8">
-                  <h3 className="text-2xl font-bold text-white tracking-wide uppercase">
+                  <h3 className="text-2xl font-bold text-white tracking-wide uppercase kade-scribble-underline">
                     Share Your Story
                   </h3>
                   <p className="text-sm text-gray-200 font-medium mt-2">
@@ -266,12 +267,12 @@ export function ReservationForm() {
               {/* Submit Button */}
               <div className="flex flex-col items-center space-y-6 pt-8 relative">
                 {/* Artistic decorations around submit button */}
-                <div className="absolute top-4 left-1/4 w-20 h-4 bg-purple-600 transform -rotate-12"></div>
-                <div className="absolute top-6 right-1/4 w-16 h-3 bg-red-500 transform rotate-8"></div>
+                <div className="absolute top-4 left-1/4 w-20 h-4 kade-tape -rotate-12"></div>
+                <div className="absolute top-6 right-1/4 w-16 h-3 kade-tape rotate-8"></div>
                 
                 <button
                   type="submit"
-                  className="kade-button text-lg px-20 py-5"
+                  className="kade-button kade-cta-pulse text-lg px-20 py-5"
                 >
                   Submit Inquiry
                 </button>

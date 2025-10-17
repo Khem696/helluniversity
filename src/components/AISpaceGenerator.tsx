@@ -71,13 +71,13 @@ export function AISpaceGenerator() {
   };
 
   return (
-    <section id="ai-generator" className="min-h-screen flex items-center justify-center kade-light-texture relative overflow-hidden">
+    <section id="ai-generator" className="min-h-screen flex items-center justify-center kade-blue-wash kade-no-anim relative overflow-hidden">
       {/* Kade's artwork inspired background elements */}
       <div className="absolute inset-0">
         {/* Large textured panels */}
-        <div className="absolute top-0 left-0 w-1/4 h-2/3 kade-purple-texture opacity-60"></div>
+        <div className="absolute top-0 left-0 w-1/5 h-2/3 kade-purple-texture opacity-60"></div>
         <div className="absolute bottom-0 right-0 w-1/3 h-1/2 kade-red-texture opacity-70"></div>
-        <div className="absolute top-1/3 left-1/3 w-1/3 h-1/3 kade-yellow-texture opacity-50"></div>
+        <div className="absolute top-1/4 left-1/3 w-2/5 h-1/3 kade-yellow-texture opacity-50"></div>
         
         {/* Paint stroke decorations */}
         <div className="absolute top-24 right-40 kade-paint-stroke kade-paint-stroke-red"></div>
@@ -85,8 +85,11 @@ export function AISpaceGenerator() {
         <div className="absolute bottom-32 right-24 kade-paint-stroke kade-paint-stroke-purple"></div>
         <div className="absolute bottom-56 left-40 kade-paint-stroke kade-paint-stroke-yellow"></div>
         
+        {/* Back-layer speckles and noise */}
+        <div className="absolute inset-0 kade-speckles kade-speckles--cobalt kade-no-anim"></div>
+        <div className="absolute inset-0 kade-noise kade-no-anim"></div>
         {/* Overlay for content readability */}
-        <div className="absolute inset-0 bg-white/85 backdrop-blur-sm"></div>
+        <div className="absolute inset-0 bg-white/10"></div>
       </div>
       
       <div className="max-w-7xl mx-auto px-6 lg:px-8 relative z-10 w-full pt-4 md:pt-8 lg:pt-12">
@@ -94,13 +97,13 @@ export function AISpaceGenerator() {
           <div className="space-y-6">
             <div className="flex items-center justify-center space-x-3">
               <Sparkles className="w-6 h-6 text-[#7ba3a3]" />
-              <h1 className="hell-university-hero" style={{ fontSize: 'clamp(2.5rem, 5vw, 4rem)' }}>
+              <h1 className="hell-university-hero kade-scribble-underline" style={{ fontSize: 'clamp(2.5rem, 5vw, 4rem)' }}>
                 Visualize Your Vision
               </h1>
               <Sparkles className="w-6 h-6 text-[#7ba3a3]" />
             </div>
             <div className="w-24 h-px bg-[#7ba3a3] mx-auto"></div>
-            <p className="text-lg text-[#6b655c] max-w-4xl mx-auto leading-relaxed font-medium">
+            <p className="text-lg text-[#ffffff] max-w-4xl mx-auto leading-relaxed font-medium">
               Articulate your aesthetic vision and witness our AI curator transform 
               Hell University to reflect your unique sensibilities.
             </p>
@@ -149,7 +152,7 @@ export function AISpaceGenerator() {
                                   width={400}
                                   height={400}
                                 />
-                                {selected && <div className="absolute inset-0 bg-black/30" />}
+                                {selected && <div className="absolute inset-0 bg-black/25" />}
                               </button>
                             );
                           })}
@@ -177,7 +180,7 @@ export function AISpaceGenerator() {
                                   width={400}
                                   height={400}
                                 />
-                                {selected && <div className="absolute inset-0 bg-black/30" />}
+                                {selected && <div className="absolute inset-0 bg-black/25" />}
                               </button>
                             );
                           })}
@@ -208,23 +211,23 @@ export function AISpaceGenerator() {
 
             <div className="kade-card">
               <div className="space-y-6 relative">
-                {/* Artistic decorations */}
-                <div className="absolute -top-2 -right-2 w-8 h-2 bg-yellow-400 transform rotate-12"></div>
-                <div className="absolute top-4 -left-2 w-6 h-2 bg-red-500 transform -rotate-8"></div>
+                {/* Decorations moved behind; keep form clean */}
                 
                 <label className="kade-label block text-black">
                   Describe Your Aesthetic Vision
                 </label>
+                <div className="kade-bubble">
                 <textarea
                   placeholder="Share your design sensibilities: Perhaps bold artistic expressions with vibrant color contrasts, textured surfaces, experimental lighting, and avant-garde installations that speak to creative rebellion..."
                   value={prompt}
                   onChange={(e) => setPrompt(e.target.value)}
                   className="kade-textarea w-full min-h-40"
                 />
+                </div>
                 <button
                   onClick={handleGenerate}
                   disabled={!isValidToGenerate}
-                  className="kade-button w-full text-base py-4"
+                  className="kade-button kade-cta-pulse w-full text-base py-4"
                 >
                   {isGenerating ? (
                     <>
@@ -257,6 +260,7 @@ export function AISpaceGenerator() {
           <div className="space-y-8">
             <div className="kade-card overflow-hidden">
               <div className="min-h-[300px] bg-[#e8e3db]/30 flex items-center justify-center relative p-4">
+                {isGenerating && <div className="kade-drip-lines" />}
                 {isGenerating ? (
                   <div className="text-center space-y-6">
                     <div className="w-20 h-20 mx-auto">
@@ -270,7 +274,7 @@ export function AISpaceGenerator() {
                 ) : generatedImages.length > 0 ? (
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 w-full">
                     {generatedImages.map((url, idx) => (
-                      <div key={idx} className="relative">
+                      <div key={idx} className="relative kade-rough-edge">
                         <ImageWithFallback
                           src={url}
                           alt="AI Generated Space Design"
@@ -285,6 +289,8 @@ export function AISpaceGenerator() {
                         >
                           Download
                         </a>
+                        <div className="absolute -top-2 -left-2 w-10 h-3 kade-tape -rotate-6"></div>
+                        <div className="absolute -bottom-2 -right-2 w-10 h-3 kade-tape rotate-6"></div>
                       </div>
                     ))}
                   </div>
