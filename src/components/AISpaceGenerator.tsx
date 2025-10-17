@@ -25,6 +25,26 @@ export function AISpaceGenerator() {
   const [generatedImages, setGeneratedImages] = useState<string[]>([]);
   const [isPickerOpen, setIsPickerOpen] = useState(false);
 
+  const pollUntilComplete = async (pollingUrl: string): Promise<string[]> => {
+    const maxAttempts = 60; // ~2 minutes at 2s interval
+    const delayMs = 2000;
+    for (let attempt = 0; attempt < maxAttempts; attempt++) {
+      const res = await fetch(`/api/generate/status?pollingUrl=${encodeURIComponent(pollingUrl)}`, {
+        cache: "no-store",
+      });
+      if (!res.ok) {
+        const text = await res.text();
+        throw new Error(text || "Polling failed");
+      }
+      const data = await res.json();
+      if (Array.isArray(data?.images) && data.images.length > 0) {
+        return data.images as string[];
+      }
+      await new Promise((r) => setTimeout(r, delayMs));
+    }
+    throw new Error("Timed out waiting for generation");
+  };
+
   const handleGenerate = async () => {
     if (!prompt.trim() || selectedImages.length === 0) return;
     setIsGenerating(true);
@@ -40,8 +60,11 @@ export function AISpaceGenerator() {
         throw new Error(text || "Generation failed");
       }
       const data = await res.json();
-      if (Array.isArray(data?.images)) {
+      if (Array.isArray(data?.images) && data.images.length > 0) {
         setGeneratedImages(data.images);
+      } else if (data?.bfl?.pollingUrl) {
+        const images = await pollUntilComplete(data.bfl.pollingUrl as string);
+        setGeneratedImages(images);
       }
     } catch (err) {
       console.error(err);

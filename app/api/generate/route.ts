@@ -20,6 +20,12 @@ const SYSTEM_PROMPT =
 const RequestSchema = z.object({
   images: z.array(z.string()).min(1, "Select at least 1 image").max(10, "Select up to 10 images"),
   prompt: z.string().min(1, "Prompt is required").max(800, "Prompt too long"),
+  // Optional future knobs if needed by UI; ignored if not provided
+  seed: z.number().int().optional(),
+  aspectRatio: z.string().optional(), // e.g. "16:9", "1:1"
+  outputFormat: z.enum(["jpeg", "png"]).optional(),
+  promptUpsampling: z.boolean().optional(),
+  safetyTolerance: z.number().int().min(0).max(6).optional(),
 });
 
 function getClientIp(req: Request): string {
@@ -58,14 +64,75 @@ export async function POST(req: Request) {
 
   const fullPrompt = `${SYSTEM_PROMPT}\n\n${prompt.trim()}`;
 
-  // TODO: Integrate with Flux Kontext or a compatible provider here.
-  // For now, return placeholder images to complete the flow.
-  const placeholder = "https://images.unsplash.com/photo-1505693416388-ac5ce068fe85?w=1200&auto=format&fit=crop";
-  const result = {
-    images: images.map(() => placeholder),
+  // Build Flux Kontext Pro payload (Black Forest Labs)
+  // Docs: https://docs.bfl.ai/api-reference/tasks/edit-or-create-an-image-with-flux-kontext-pro
+  const apiKey = process.env.BFL_API_KEY || process.env.PROVIDER_API_KEY;
+  if (!apiKey) {
+    return NextResponse.json({ error: "Missing BFL_API_KEY (or PROVIDER_API_KEY) server env" }, { status: 500 });
+  }
+
+  const siteUrlFromEnv = process.env.NEXT_PUBLIC_SITE_URL;
+  function resolveAbsoluteUrl(relativePath: string): string {
+    // Prefer configured site URL; fall back to inferring from the request headers
+    if (siteUrlFromEnv) {
+      return `${siteUrlFromEnv.replace(/\/$/, "")}${relativePath}`;
+    }
+    const host = req.headers.get("x-forwarded-host") || req.headers.get("host") || "localhost:3000";
+    const proto = req.headers.get("x-forwarded-proto") || (host.startsWith("localhost") ? "http" : "https");
+    return `${proto}://${host}${relativePath}`;
+  }
+
+  // Map selected images to Flux Kontext Pro's input_image fields (up to 4 references)
+  const refs = images.slice(0, 4).map((p) => resolveAbsoluteUrl(p));
+  const [ref1, ref2, ref3, ref4] = refs;
+
+  const bodyJson: Record<string, unknown> = {
+    prompt: fullPrompt,
+    ...(ref1 ? { input_image: ref1 } : {}),
+    ...(ref2 ? { input_image_2: ref2 } : {}),
+    ...(ref3 ? { input_image_3: ref3 } : {}),
+    ...(ref4 ? { input_image_4: ref4 } : {}),
   };
 
-  return NextResponse.json(result, { status: 200 });
+  // Optional knobs passthrough if provided by client
+  const { seed, aspectRatio, outputFormat, promptUpsampling, safetyTolerance } = parsed.data as any;
+  if (typeof seed === "number") bodyJson.seed = seed;
+  if (aspectRatio) bodyJson.aspect_ratio = aspectRatio;
+  if (outputFormat) bodyJson.output_format = outputFormat; // 'jpeg' | 'png'
+  if (typeof promptUpsampling === "boolean") bodyJson.prompt_upsampling = promptUpsampling;
+  if (typeof safetyTolerance === "number") bodyJson.safety_tolerance = safetyTolerance;
+
+  let bflResponse: { id?: string; polling_url?: string } | null = null;
+  try {
+    const bflRes = await fetch("https://api.bfl.ai/v1/flux-kontext-pro", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-key": apiKey,
+      },
+      body: JSON.stringify(bodyJson),
+    });
+
+    if (!bflRes.ok) {
+      const errText = await bflRes.text();
+      return NextResponse.json({ error: "BFL request failed", details: errText }, { status: 502 });
+    }
+    bflResponse = await bflRes.json();
+  } catch (e: any) {
+    return NextResponse.json({ error: "Failed to call BFL API", details: e?.message || String(e) }, { status: 502 });
+  }
+
+  // Preserve existing response shape for UI compatibility and return BFL task info for client-side polling
+  return NextResponse.json(
+    {
+      images: [], // UI expects an array; generation is async via polling_url
+      bfl: {
+        id: bflResponse?.id,
+        pollingUrl: bflResponse?.polling_url,
+      },
+    },
+    { status: 200 }
+  );
 }
 
 
