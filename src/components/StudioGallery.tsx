@@ -5,67 +5,59 @@ import { ImageWithFallback } from "./figma/ImageWithFallback"
 export function StudioGallery() {
   return (
     <section id="spaces" className="relative min-h-screen w-full overflow-hidden">
-      {/* Background Image */}
-      <div className="absolute inset-0 z-0">
-        <ImageWithFallback
-          src="https://images.unsplash.com/photo-1733471073010-231da8a85e99?crop=entropy&cs=tinysrgb&fit=max&fm=jpg&ixid=M3w3Nzg4Nzd8MHwxfHNlYXJjaHwxfHxtb2Rlcm4lMjBjcmVhdGl2ZSUyMHN0dWRpbyUyMGdhbGxlcnklMjBzcGFjZXxlbnwxfHx8fDE3NTg3Nzc4ODh8MA&ixlib=rb-4.1.0&q=80&w=1080&utm_source=figma&utm_medium=referral"
-          alt="Hell University Studio and Gallery Space"
-          className="w-full h-full object-cover blur-sm"
-          width={1920}
-          height={1080}
-          priority={true}
-        />
-        {/* Overlay for better text readability */}
-        <div className="absolute inset-0 bg-gradient-to-r from-[#3a3530]/70 via-[#3a3530]/40 to-[#3a3530]/70"></div>
-      </div>
-
-      {/* Content Split */}
-      <div className="relative z-10 min-h-screen flex flex-col md:flex-row">
-        {/* Left Half - Studio */}
-        <div className="w-full md:w-1/2 flex items-center justify-center p-8 lg:p-16 py-20 md:py-0">
-          <div className="text-center space-y-8">
-            <div className="space-y-4">
-              <h2 className="text-3xl sm:text-4xl md:text-5xl lg:text-6xl font-light tracking-wide text-[#faf8f5] font-helvetica">
-                STUDIO
-              </h2>
-              <div className="w-16 h-px bg-[#7ba3a3] mx-auto"></div>
-            </div>
-            
-            <div className="space-y-6">
-              <h3 className="text-xl sm:text-2xl md:text-3xl font-light text-[#b8d4d1] tracking-wide font-helvetica">
-                Hongsee Creative Space
-              </h3>
-              <p className="text-base sm:text-lg text-[#faf8f5]/90 font-light leading-relaxed max-w-md mx-auto font-helvetica">
-                A dynamic hub dedicated to promoting cultural events and fostering connections within the artistic community
+      <div className="flex flex-col lg:flex-row min-h-screen">
+        {/* Left Side - Studio */}
+        <div className="w-full lg:w-1/2 relative bg-gradient-to-br from-[#6B5B4A] via-[#7A6854] to-[#5A4B3A] overflow-hidden">
+          <div 
+            className="absolute inset-0 opacity-30"
+            style={{
+              backgroundImage: 'url("data:image/svg+xml,%3Csvg width="100" height="100" xmlns="http://www.w3.org/2000/svg"%3E%3Cfilter id="noise"%3E%3CfeTurbulence type="fractalNoise" baseFrequency="0.7" numOctaves="3" /%3E%3C/filter%3E%3Crect width="100" height="100" filter="url(%23noise)" opacity="0.4"/%3E%3C/svg%3E")',
+              mixBlendMode: 'multiply'
+            }}
+          />
+          <div className="relative z-10 flex flex-col h-full px-8 lg:px-12 py-32 lg:py-24">
+            <div className="flex flex-col items-center mb-12">
+              <div className="bg-[#5B9AB8]/80 px-8 py-3 rounded-full mb-6">
+                <h2 className="text-white" style={{ fontSize: '24px', fontWeight: '400' }}>
+                  Studio
+                </h2>
+              </div>
+              <p className="text-[#87CEEB] text-center max-w-md mb-2" style={{ fontSize: '14px', fontWeight: '300', lineHeight: '1.6' }}>
+                Hongsee Culture House is a creative hub
+              </p>
+              <p className="text-[#87CEEB] text-center max-w-md" style={{ fontSize: '14px', fontWeight: '300', lineHeight: '1.6' }}>
+                for cultural events and the artistic community.
               </p>
             </div>
           </div>
         </div>
 
-        {/* Right Half - Gallery */}
-        <div className="w-full md:w-1/2 flex items-center justify-center p-8 lg:p-16 pb-24 md:pb-0">
-          <div className="text-center space-y-8">
-            <div className="space-y-4">
-              <h2 className="text-3xl sm:text-4xl md:text-5xl lg:text-6xl font-light tracking-wide text-[#faf8f5] font-helvetica">
-                GALLERY
-              </h2>
-              <div className="w-16 h-px bg-[#8b4b6b] mx-auto"></div>
-            </div>
-            
-            <div className="space-y-6">
-              <h3 className="text-xl sm:text-2xl md:text-3xl font-light text-[#b8d4d1] tracking-wide font-helvetica">
-                Archive and Gallery
-              </h3>
-              <p className="text-base sm:text-lg text-[#faf8f5]/90 font-light leading-relaxed max-w-md mx-auto font-helvetica">
-                A thoughtful archive and gallery space designed for research, education, and cultural preservation
+        {/* Right Side - Gallery */}
+        <div className="w-full lg:w-1/2 relative bg-gradient-to-br from-[#1a1a1a] via-[#2a2a2a] to-[#0a0a0a] overflow-hidden">
+          <div 
+            className="absolute inset-0 opacity-20"
+            style={{
+              backgroundImage: 'url("data:image/svg+xml,%3Csvg width="100" height="100" xmlns="http://www.w3.org/2000/svg"%3E%3Cfilter id="noise"%3E%3CfeTurbulence type="fractalNoise" baseFrequency="0.8" numOctaves="4" /%3E%3C/filter%3E%3Crect width="100" height="100" filter="url(%23noise)" opacity="0.5"/%3E%3C/svg%3E")',
+              mixBlendMode: 'overlay'
+            }}
+          />
+          <div className="relative z-10 flex flex-col h-full px-8 lg:px-12 py-32 lg:py-24">
+            <div className="flex flex-col items-center mb-12">
+              <div className="bg-[#5B9AB8]/80 px-8 py-3 rounded-full mb-6">
+                <h2 className="text-white" style={{ fontSize: '24px', fontWeight: '400' }}>
+                  Gallery
+                </h2>
+              </div>
+              <p className="text-[#87CEEB] text-center max-w-md mb-2" style={{ fontSize: '14px', fontWeight: '300', lineHeight: '1.6' }}>
+                Hell University, an archive and gallery
+              </p>
+              <p className="text-[#87CEEB] text-center max-w-md" style={{ fontSize: '14px', fontWeight: '300', lineHeight: '1.6' }}>
+                dedicated to research and education.
               </p>
             </div>
           </div>
         </div>
       </div>
-
-      {/* Subtle dividing line */}
-      <div className="hidden md:block absolute top-1/4 bottom-1/4 left-1/2 w-px bg-gradient-to-b from-transparent via-[#faf8f5]/30 to-transparent transform -translate-x-1/2 z-20"></div>
     </section>
   );
 }

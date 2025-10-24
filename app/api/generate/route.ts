@@ -5,7 +5,9 @@ import { Redis } from "@upstash/redis";
 import { ALL_ALLOWED_IMAGES } from "@/lib/aispaces";
 
 const RATE_LIMIT = parseInt(process.env.RATE_LIMIT || "2", 10);
-const RATE_WINDOW = process.env.RATE_WINDOW || "10 m";
+type WindowUnit = "s" | "m" | "h" | "d";
+type Duration = `${number} ${WindowUnit}`;
+const RATE_WINDOW = (process.env.RATE_WINDOW as Duration) || ("10 m" as Duration);
 
 const redis = Redis.fromEnv();
 const ratelimit = new Ratelimit({

@@ -3,6 +3,7 @@ import { Inter } from 'next/font/google'
 import { Analytics } from '@vercel/analytics/react'
 import { GoogleAnalytics } from '@next/third-parties/google'
 import { Toaster } from '@/components/ui/sonner'
+import { Header } from '@/components/Header'
 import { organizationStructuredData, websiteStructuredData, localBusinessStructuredData, eventStructuredData } from '@/lib/structured-data'
 import './globals.css'
 
@@ -126,6 +127,7 @@ export default function RootLayout({
         >
           Skip to content
         </a>
+        <Header />
         {children}
         <Toaster />
         <Analytics />

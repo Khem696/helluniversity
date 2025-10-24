@@ -1,88 +1,102 @@
-'use client'
+"use client"
 
-import { Button } from "./ui/button"
+import { Facebook, Twitter, Instagram } from "lucide-react"
 import { ImageWithFallback } from "./figma/ImageWithFallback"
 
-function SealIcon({ className = "" }: { className?: string }) {
-  return (
-    <svg
-      className={className}
-      viewBox="0 0 200 200"
-      xmlns="http://www.w3.org/2000/svg"
-      aria-hidden="true"
-    >
-      {/* Outer ring */}
-      <circle cx="100" cy="100" r="92" fill="none" stroke="#7a5050" strokeWidth="8" />
-      <circle cx="100" cy="100" r="76" fill="none" stroke="#7a5050" strokeWidth="4" />
-      {/* Inner badge */}
-      <circle cx="100" cy="100" r="58" fill="#7a5050" />
-      {/* Simple leaf-like mark */}
-      <g fill="#fff">
-        <ellipse cx="100" cy="92" rx="10" ry="18" />
-        <ellipse cx="80" cy="112" rx="10" ry="18" transform="rotate(-35 80 112)" />
-        <ellipse cx="120" cy="112" rx="10" ry="18" transform="rotate(35 120 112)" />
-      </g>
-    </svg>
-  );
-}
-
 export function Hero() {
-  const scrollToReservation = () => {
-    const element = document.getElementById('spaces');
-    element?.scrollIntoView({ behavior: 'smooth' });
-  };
-
   return (
-    <section className="relative min-h-screen flex items-center justify-center overflow-hidden bg-gradient-to-br from-[#0f8ed3] via-[#19a0de] to-[#20aeea]">
-      {/* Organic background elements inspired by Kade's artwork */}
-      <div className="absolute inset-0 z-0">
-        <div className="absolute inset-0" style={{ backgroundColor: "rgba(0, 120, 200, 0.25)", pointerEvents: "none" }}></div>
-        {/* <div className="absolute top-20 left-10 w-32 h-32 rounded-full bg-[#7ba3a3]/40 blur-sm"></div>
-        <div className="absolute top-40 right-20 w-24 h-24 rounded-full bg-[#8b4b6b]/35 blur-sm"></div>
-        <div className="absolute bottom-40 left-1/4 w-40 h-40 rounded-full bg-[#b8d4d1]/45 blur-md"></div>
-        <div className="absolute bottom-20 right-1/3 w-28 h-28 rounded-full bg-[#c4704a]/40 blur-sm"></div>
-        <div className="absolute top-1/3 left-1/2 w-36 h-36 rounded-full bg-[#a8b5a5]/35 blur-md"></div> */}
-        
-        {/* Additional smaller color spots for painterly effect */}
-        {/* <div className="absolute top-60 left-1/3 w-20 h-20 rounded-full bg-[#7ba3a3]/30 blur-sm"></div>
-        <div className="absolute bottom-60 right-1/4 w-16 h-16 rounded-full bg-[#8b4b6b]/25 blur-sm"></div>
-        <div className="absolute top-1/4 right-10 w-18 h-18 rounded-full bg-[#c4704a]/30 blur-sm"></div> */}
-        
-        {/* Subtle texture overlay */}
-        {/* <div className="absolute inset-0 bg-gradient-to-br from-transparent via-[#f4f1ed]/30 to-transparent opacity-40"></div> */}
-      </div>
+    <section className="relative min-h-screen">
+      <div className="flex flex-col lg:flex-row min-h-screen">
+        {/* Left Side - Blue */}
+        <div className="w-full lg:w-1/2 bg-[#5B9AB8] flex flex-col justify-center px-8 lg:px-16 py-16 lg:py-24">
+          <div className="max-w-xl">
+            {/* Main Title */}
+            <h1 className="mb-8 lg:mb-12" style={{ fontSize: 'clamp(48px, 8vw, 80px)', fontWeight: '900', lineHeight: '0.9', color: '#5a3a2a' }}>
+              Hell<br />University
+            </h1>
 
-      {/* Content */}
-      <div className="container relative z-10 text-[#3a3530] px-6 lg:px-8 mx-auto pb-24">
-        <div className="space-y-12">
-          <div className="space-y-6">
-            <div className="mx-auto w-fit flex flex-col items-start max-w-full">
-              <p className="hell-hero-topline text-left">
-                faculty of alcohol, drugs and firearms
+            {/* Culture House */}
+            <h2 className="text-white mb-12 lg:mb-16" style={{ fontSize: 'clamp(32px, 6vw, 48px)', fontWeight: '400', lineHeight: '1.2' }}>
+              Culture House
+            </h2>
+
+            {/* Studio Section */}
+            <div className="mb-8 lg:mb-12">
+              <h3 className="text-white mb-4" style={{ fontSize: 'clamp(24px, 4vw, 32px)', fontWeight: '400' }}>
+                Studio
+              </h3>
+              <p className="text-white/90" style={{ fontSize: '14px', fontWeight: '300', lineHeight: '1.6' }}>
+                Hongsee Culture House is a creative hub<br />
+                for cultural events and the artistic community.
               </p>
-              <div className="mt-2 relative inline-block">
-                <h1 className="hell-hero-title whitespace-normal block ml-0 sm:-ml-1 md:-ml-2">
-                  Hell University
-                </h1>
-                {/* <SealIcon className="hidden sm:block absolute left-full ml-2 sm:ml-3 top-1/2 -translate-y-1/2 h-16 w-16 md:h-24 md:w-24 lg:h-28 lg:w-28" /> */}
-              </div>
-              <p className="hell-hero-caption mt-4 text-left">
-                some knowledge seem to have no explanation but could only be percieved by an opening and extension of the mind.
+            </div>
+
+            {/* Gallery Section */}
+            <div>
+              <h3 className="text-white mb-4" style={{ fontSize: 'clamp(24px, 4vw, 32px)', fontWeight: '400' }}>
+                Gallery
+              </h3>
+              <p className="text-white/90" style={{ fontSize: '14px', fontWeight: '300', lineHeight: '1.6' }}>
+                Hell University, an archive and gallery<br />
+                dedicated to research and education.
               </p>
-            <div className="pt-8 pb-8 self-start">
-              <Button
-                onClick={scrollToReservation}
-                size="lg"
-                className="bg-[#7ba3a3] hover:bg-[#6b8b8b] text-[#faf8f5] px-12 py-4 text-base tracking-wide rounded-full shadow-lg hover:shadow-xl transition-all duration-300 font-medium"
-              >
-                Explore Our Spaces
-              </Button>
             </div>
           </div>
         </div>
-      </div>
-      </div>
 
+        {/* Right Side - Textured Red/Brown with Image */}
+        <div className="w-full lg:w-1/2 relative bg-gradient-to-br from-[#8B4B3B] via-[#A0563F] to-[#6B3B2F] overflow-hidden min-h-[500px] lg:min-h-screen">
+          {/* Texture Overlay */}
+          <div 
+            className="absolute inset-0 opacity-60"
+            style={{
+              backgroundImage: 'url("data:image/svg+xml,%3Csvg width="100" height="100" xmlns="http://www.w3.org/2000/svg"%3E%3Cfilter id="noise"%3E%3CfeTurbulence type="fractalNoise" baseFrequency="0.9" numOctaves="4" /%3E%3C/filter%3E%3Crect width="100" height="100" filter="url(%23noise)" opacity="0.3"/%3E%3C/svg%3E")',
+              mixBlendMode: 'multiply'
+            }}
+          />
+
+          {/* Portrait Image */}
+          <div className="absolute inset-0 flex items-center justify-center p-12">
+            <div className="relative w-full h-full max-w-lg">
+              <ImageWithFallback
+                src="https://images.unsplash.com/photo-1593382067395-ace3045a1547?crop=entropy&cs=tinysrgb&fit=max&fm=jpg&ixid=M3w3Nzg4Nzd8MHwxfHNlYXJjaHwxfHxwb3J0cmFpdCUyMGFydGlzdCUyMGNyZWF0aXZlfGVufDF8fHx8MTc2MTIyMTAxMHww&ixlib=rb-4.1.0&q=80&w=1080"
+                alt="Kade Javanalikikorn"
+                className="w-full h-full object-cover grayscale contrast-110"
+                width={1080}
+                height={1350}
+              />
+              
+              {/* Quote Overlay */}
+              <div className="absolute bottom-24 left-8 right-8">
+                <p className="text-[#D4AF37] mb-6" style={{ fontSize: '14px', fontWeight: '300', lineHeight: '1.8', fontStyle: 'italic' }}>
+                  Some wonders seem to have no explanation<br />
+                  but could only be perceived by an opening<br />
+                  and extension of the mind.
+                </p>
+                <p className="text-white" style={{ fontSize: '16px', fontWeight: '400' }}>
+                  Kade Javanalikikorn
+                </p>
+              </div>
+            </div>
+          </div>
+
+          {/* Social Icons */}
+          <div className="absolute bottom-12 right-12 flex flex-col gap-6">
+            <button className="text-white hover:text-[#D4AF37] transition-colors">
+              <Facebook size={20} />
+            </button>
+            <button className="text-white hover:text-[#D4AF37] transition-colors">
+              <Twitter size={20} />
+            </button>
+            <button className="text-white hover:text-[#D4AF37] transition-colors">
+              <Instagram size={20} />
+            </button>
+          </div>
+
+          {/* Paint Drip Effects */}
+          <div className="absolute bottom-0 left-0 right-0 h-32 bg-gradient-to-t from-[#D4AF37]/20 to-transparent" />
+        </div>
+      </div>
     </section>
-  );
+  )
 }

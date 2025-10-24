@@ -1,15 +1,4 @@
-import { Header } from "@/components/Header"
 import { Hero } from "@/components/Hero"
-import { StudioGallery } from "@/components/StudioGallery"
-// import { Events } from "@/components/Events"
-// import { Gallery } from "@/components/Gallery"
-// import { Workshops } from "@/components/Workshops"
-import { AISpaceGenerator } from "@/components/AISpaceGenerator"
-import { ReservationForm } from "@/components/ReservationForm"
-import { Footer } from "@/components/Footer"
-import { PWAInstallPrompt } from "@/components/PWAInstallPrompt"
-import { ScrollToTop } from "@/components/ScrollToTop"
-import { PerformanceMonitor } from "@/components/PerformanceMonitor"
 import { Metadata } from 'next'
 
 export const metadata: Metadata = {
@@ -45,20 +34,9 @@ export const metadata: Metadata = {
 export default function Home() {
   return (
     <div className="min-h-screen bg-[#f4f1ed]">
-      <Header />
       <main id="main-content">
         <Hero />
-        <StudioGallery />
-        {/* <Events /> */}
-        {/* <Gallery /> */}
-        {/* <Workshops /> */}
-        <AISpaceGenerator />
-        <ReservationForm />
       </main>
-      <Footer />
-      <PWAInstallPrompt />
-      <ScrollToTop />
-      <PerformanceMonitor />
     </div>
   )
 }
