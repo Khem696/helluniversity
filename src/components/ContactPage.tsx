@@ -3,8 +3,8 @@ import { ImageWithFallback } from "./figma/ImageWithFallback";
 
 export function ContactPage() {
   return (
-    <div className="flex flex-col lg:flex-row min-h-screen bg-[#3a3a3e]">
-      <div className="w-full lg:w-1/2 p-8 lg:p-12 flex items-center justify-center min-h-[400px]">
+    <div className="flex flex-col md:flex-row min-h-screen bg-[#3a3a3e]">
+      <div className="w-full md:w-1/2 p-4 xxs:p-6 phone:p-8 tablet-md:p-10 lg:p-12 flex items-center justify-center min-h-[320px] xxs:min-h-[360px] phone:min-h-[420px] tablet-md:min-h-[520px]">
         <div className="grid grid-cols-3 gap-0 w-full max-w-xl aspect-square">
           <div className="bg-[#4a4a4a] relative overflow-hidden">
             <div className="absolute inset-0 bg-gradient-to-br from-[#5a5a5a] to-[#3a3a3a]" />
@@ -58,13 +58,13 @@ export function ContactPage() {
         </div>
       </div>
 
-      <div className="w-full lg:w-1/2 flex flex-col justify-center px-8 lg:px-16 py-16 lg:py-24">
+      <div className="w-full md:w-1/2 flex flex-col justify-center px-4 xxs:px-6 phone:px-8 tablet-md:px-12 lg:px-16 py-10 xxs:py-12 phone:py-16 tablet-md:py-20 lg:py-24">
         <div className="max-w-md">
-          <h1 className="text-[#87CEEB] mb-12" style={{ fontSize: '72px', fontWeight: '700', letterSpacing: '0.05em' }}>
+          <h1 className="text-[#87CEEB] mb-8 phone:mb-12" style={{ fontSize: 'clamp(42px, 9vw, 72px)', fontWeight: '700', letterSpacing: '0.05em' }}>
             CONTACT
           </h1>
 
-          <div className="space-y-4 mb-16">
+          <div className="space-y-4 mb-12 phone:mb-16">
             <p className="text-white/80" style={{ fontSize: '16px', fontWeight: '300' }}>
               Text.
             </p>
@@ -77,15 +77,15 @@ export function ContactPage() {
             </div>
           </div>
 
-          <div className="flex gap-8 mb-12">
+          <div className="flex gap-5 xxs:gap-6 phone:gap-8 mb-8 phone:mb-12">
             <button className="text-white hover:text-[#87CEEB] transition-colors">
-              <Facebook size={24} />
+              <Facebook size={20} />
             </button>
             <button className="text-white hover:text-[#87CEEB] transition-colors">
-              <Twitter size={24} />
+              <Twitter size={20} />
             </button>
             <button className="text-white hover:text-[#87CEEB] transition-colors">
-              <Instagram size={24} />
+              <Instagram size={20} />
             </button>
           </div>
 

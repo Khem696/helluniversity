@@ -13,9 +13,9 @@ export function StudioGalleryPage() {
   ];
 
   return (
-    <div className="flex flex-col lg:flex-row min-h-screen">
+    <div className="flex flex-col md:flex-row min-h-screen">
       {/* Left Side - Studio */}
-      <div className="w-full lg:w-1/2 relative bg-gradient-to-br from-[#6B5B4A] via-[#7A6854] to-[#5A4B3A] overflow-hidden">
+      <div className="w-full md:w-1/2 relative bg-gradient-to-br from-[#6B5B4A] via-[#7A6854] to-[#5A4B3A] overflow-hidden">
         <div 
           className="absolute inset-0 opacity-30"
           style={{
@@ -24,9 +24,9 @@ export function StudioGalleryPage() {
           }}
         />
 
-        <div className="relative z-10 flex flex-col h-full px-8 lg:px-12 py-32 lg:py-24">
-          <div className="flex flex-col items-center mb-12">
-            <div className="bg-[#5B9AB8]/80 px-8 py-3 rounded-full mb-6">
+        <div className="relative z-10 flex flex-col h-full px-4 xxs:px-6 phone:px-8 tablet-md:px-10 lg:px-12 py-16 xxs:py-20 phone:py-24 tablet-md:py-28 lg:py-24">
+          <div className="flex flex-col items-center mb-8 xxs:mb-10 phone:mb-12">
+            <div className="bg-[#5B9AB8]/80 px-5 xxs:px-6 phone:px-8 py-2 phone:py-3 rounded-full mb-3 xxs:mb-4 phone:mb-6">
               <h2 className="text-white" style={{ fontSize: '24px', fontWeight: '400' }}>
                 Studio
               </h2>
@@ -44,7 +44,7 @@ export function StudioGalleryPage() {
             </div>
           </div>
 
-          <div className="grid grid-cols-2 lg:grid-cols-3 gap-4 mt-auto">
+          <div className="grid grid-cols-2 phone-lg:grid-cols-3 gap-2 xxs:gap-3 phone:gap-4 tablet-md:gap-5 mt-auto">
             <div className="aspect-square bg-[#E85D9C]/90 overflow-hidden border-4 border-white/20">
               <div className="w-full h-full flex items-center justify-center">
                 <span style={{ fontSize: '12px', fontWeight: '500', color: 'white' }}>Gallery 1</span>
@@ -88,7 +88,7 @@ export function StudioGalleryPage() {
       </div>
 
       {/* Right Side - Gallery */}
-      <div className="w-full lg:w-1/2 relative bg-gradient-to-br from-[#1a1a1a] via-[#2a2a2a] to-[#0a0a0a] overflow-hidden">
+      <div className="w-full md:w-1/2 relative bg-gradient-to-br from-[#1a1a1a] via-[#2a2a2a] to-[#0a0a0a] overflow-hidden">
         <div 
           className="absolute inset-0 opacity-20"
           style={{
@@ -97,9 +97,9 @@ export function StudioGalleryPage() {
           }}
         />
 
-        <div className="relative z-10 flex flex-col h-full px-8 lg:px-12 py-32 lg:py-24">
-          <div className="flex flex-col items-center mb-12">
-            <div className="bg-[#5B9AB8]/80 px-8 py-3 rounded-full mb-6">
+        <div className="relative z-10 flex flex-col h-full px-4 xxs:px-6 phone:px-8 tablet-md:px-10 lg:px-12 py-16 xxs:py-20 phone:py-24 tablet-md:py-28 lg:py-24">
+          <div className="flex flex-col items-center mb-8 xxs:mb-10 phone:mb-12">
+            <div className="bg-[#5B9AB8]/80 px-5 xxs:px-6 phone:px-8 py-2 phone:py-3 rounded-full mb-3 xxs:mb-4 phone:mb-6">
               <h2 className="text-white" style={{ fontSize: '24px', fontWeight: '400' }}>
                 Gallery
               </h2>
@@ -117,7 +117,7 @@ export function StudioGalleryPage() {
             </div>
           </div>
 
-          <div className="grid grid-cols-2 lg:grid-cols-3 gap-4 mt-auto">
+          <div className="grid grid-cols-2 phone-lg:grid-cols-3 gap-2 xxs:gap-3 phone:gap-4 tablet-md:gap-5 mt-auto">
             <div className="aspect-square bg-[#2C5F6F]/90 overflow-hidden border-4 border-white/10">
               <div className="w-full h-full flex items-center justify-center">
                 <span style={{ fontSize: '12px', fontWeight: '500', color: 'white' }}>Archive 1</span>
