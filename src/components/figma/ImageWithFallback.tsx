@@ -10,6 +10,8 @@ interface ImageWithFallbackProps {
   width?: number
   height?: number
   priority?: boolean
+  imgClassName?: string
+  objectPosition?: string
 }
 
 export function ImageWithFallback({ 
@@ -18,7 +20,9 @@ export function ImageWithFallback({
   className = '', 
   width, 
   height, 
-  priority = false 
+  priority = false,
+  imgClassName = '',
+  objectPosition
 }: ImageWithFallbackProps) {
   const [imgSrc, setImgSrc] = useState(src)
   const [isLoading, setIsLoading] = useState(true)
@@ -36,7 +40,7 @@ export function ImageWithFallback({
         width={width}
         height={height}
         priority={priority}
-        className={`transition-opacity duration-300 ${isLoading ? 'opacity-0' : 'opacity-100'}`}
+        className={`transition-opacity duration-300 ${isLoading ? 'opacity-0' : 'opacity-100'} ${imgClassName}`}
         onLoad={() => setIsLoading(false)}
         onError={() => {
           setImgSrc('/placeholder-image.jpg')
@@ -45,7 +49,8 @@ export function ImageWithFallback({
         style={{
           width: '100%',
           height: '100%',
-          objectFit: 'cover'
+          objectFit: 'cover',
+          objectPosition: objectPosition || 'center'
         }}
       />
     </div>

@@ -12,22 +12,20 @@ export function Header() {
       {/* Top Row */}
       <div className="flex items-center justify-between max-w-[1920px] mx-auto mb-3">
         {/* Logo */}
-        <Link 
-          href="/"
-          className="flex items-center justify-center w-10 h-10 lg:w-12 lg:h-12 rounded-full bg-white border-2 lg:border-4 border-[var(--hell-dusty-blue)]"
-          aria-label="Hell University Home"
-        >
-          <span className="text-[var(--hell-dusty-blue)] font-black text-lg lg:text-xl">H</span>
+        <Link href="/" aria-label="Hell University Home" className="flex items-center justify-center">
+          <div className="flex items-center justify-center w-14 h-14 lg:w-16 lg:h-16 rounded-full bg-white border-2 lg:border-4 border-[var(--hell-dusty-blue)]">
+            <img src="/assets/icons/icon_helluniversity.svg" alt="Hell University" width={48} height={48} className="w-12 h-12 lg:w-14 lg:h-14" />
+          </div>
         </Link>
 
         {/* Title */}
-        <h1 className="text-center" style={{ fontSize: 'clamp(18px, 4vw, 28px)', fontWeight: '900', letterSpacing: '0.05em' }}>
+        <h1 className="text-center" style={{ fontSize: 'clamp(34px, 5.5vw, 60px)', fontWeight: '900', letterSpacing: '0.05em' }}>
           <span className="text-[var(--hell-dusty-blue)]">Hell</span>{' '}
           <span className="text-[#2a1f1a]">University</span>
         </h1>
 
-        {/* Log In placeholder */}
-        <button className="hidden md:flex items-center gap-2 text-white/80 hover:text-white transition-colors">
+        {/* Log In placeholder - stacked icon above text */}
+        <button className="hidden md:flex flex-col items-center gap-1 text-white/80 hover:text-white transition-colors">
           <div className="w-8 h-8 rounded-full bg-white/20 flex items-center justify-center">
             <User size={16} className="text-white" />
           </div>
@@ -45,11 +43,11 @@ export function Header() {
       </div>
 
       {/* Bottom Row: Desktop Nav */}
-      <nav className="hidden md:flex items-center justify-center gap-6 lg:gap-12 max-w-[1920px] mx-auto">
-        <Link href="/" className="transition-colors text-white/80 hover:text-white" style={{ fontSize: '14px', fontWeight: '400' }}>Home</Link>
-        <Link href="/about" className="transition-colors text-white/80 hover:text-white" style={{ fontSize: '14px', fontWeight: '400' }}>About</Link>
-        <Link href="/studio-gallery" className="transition-colors text-white/80 hover:text-white" style={{ fontSize: '14px', fontWeight: '400' }}>Studio/Gallery</Link>
-        <Link href="/contact" className="transition-colors text-white/80 hover:text-white" style={{ fontSize: '14px', fontWeight: '400' }}>Contact</Link>
+      <nav className="hidden md:flex items-center justify-center gap-8 lg:gap-14 max-w-[1920px] mx-auto">
+        <Link href="/" className="transition-colors text-white hover:text-white" style={{ fontSize: '16px', fontWeight: '400' }}>Home</Link>
+        <Link href="/about" className="transition-colors text-white hover:text-white" style={{ fontSize: '16px', fontWeight: '400' }}>About</Link>
+        <Link href="/studio-gallery" className="transition-colors text-white hover:text-white" style={{ fontSize: '16px', fontWeight: '400' }}>Studio/Gallery</Link>
+        <Link href="/contact" className="transition-colors text-white hover:text-white" style={{ fontSize: '16px', fontWeight: '400' }}>Contact</Link>
       </nav>
 
       {/* Mobile Menu Overlay */}

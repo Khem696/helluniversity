@@ -752,6 +752,11 @@ html {
   font-family: var(--font-family);
 }
 
+/* Align hero left text to logo left edge */
+.hero-left-padding {
+  padding-left: max(3.5rem, calc((100vw - min(100vw, 1920px)) / 2 + 5rem));
+}
+
 .nav-item, .menu-item {
   font-size: .75rem;
   font-weight: 500;
