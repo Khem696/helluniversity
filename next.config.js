@@ -1,3 +1,4 @@
+const path = require('path')
 const withPWA = require('next-pwa')({
   dest: 'public',
   register: true,
@@ -85,6 +86,15 @@ const nextConfig = {
         '@upstash/ratelimit': false,
         '@upstash/redis': false,
       }
+    }
+    // Ensure path aliases work in all environments
+    config.resolve = config.resolve || {}
+    config.resolve.alias = {
+      ...(config.resolve.alias || {}),
+      '@': path.resolve(__dirname, 'src'),
+      '@/components': path.resolve(__dirname, 'src/components'),
+      '@/lib': path.resolve(__dirname, 'src/lib'),
+      '@/styles': path.resolve(__dirname, 'src/styles'),
     }
     return config
   },

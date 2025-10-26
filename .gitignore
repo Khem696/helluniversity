@@ -109,3 +109,9 @@ temp/
 *.njsproj
 *.sln
 *.sw?
+
+# PWA generated files (do not version control)
+public/sw.js
+public/workbox-*.js
+out/sw.js
+out/workbox-*.js
