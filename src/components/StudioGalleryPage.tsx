@@ -14,7 +14,7 @@ export function StudioGalleryPage() {
   ];
 
   return (
-    <div className="min-h-screen bg-[#7a2d28]">
+    <div className="min-h-vp bg-[#7a2d28]">
       {/* Section wrapper: limits background layers to the Studio/Gallery area only */}
       <section className="relative overflow-hidden pb-0">
         {/* Darker red stripe across this section only (start below header) */}

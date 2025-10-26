@@ -34,7 +34,7 @@ export const metadata: Metadata = {
 
 export default function Home() {
   return (
-    <div className="min-h-screen bg-[#f4f1ed]">
+    <div className="min-h-vp bg-[#f4f1ed] no-horiz-overflow">
       <main id="main-content">
         <Hero />
       </main>

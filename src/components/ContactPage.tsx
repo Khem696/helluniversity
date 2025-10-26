@@ -4,9 +4,9 @@ import { withBasePath } from "@/lib/utils";
 
 export function ContactPage() {
   return (
-    <div className="flex flex-col md:flex-row min-h-screen overflow-hidden bg-[#3a3a3e]">
+    <div className="flex flex-col md:flex-row min-h-vp overflow-hidden bg-[#3a3a3e] no-horiz-overflow">
       {/* Left: artwork as full background (half width) */}
-      <div className="w-full md:w-1/2 relative overflow-hidden flex items-center justify-center min-h-[520px] phone:min-h-[600px] tablet-md:min-h-[720px] lg:min-h-screen">
+      <div className="w-full md:w-1/2 relative overflow-hidden flex items-center justify-center min-h-[520px] phone:min-h-[600px] tablet-md:min-h-[720px] lg:min-h-vp">
         <div className="w-11/12 max-w-3xl aspect-[16/9]">
           <ImageWithFallback
             src={withBasePath('/assets/artwork/artwork_contact.png')}
@@ -20,7 +20,7 @@ export function ContactPage() {
       </div>
 
       {/* Right: contact content segment (half width) */}
-      <div className="w-full md:w-1/2 relative min-h-[520px] xxs:min-h-[600px] phone:min-h-[600px] tablet-md:min-h-[720px] lg:min-h-screen">
+      <div className="w-full md:w-1/2 relative min-h-[520px] xxs:min-h-[600px] phone:min-h-[600px] tablet-md:min-h-[720px] lg:min-h-vp">
         <div className="absolute inset-0" style={{ backgroundColor: '#3a3a3e' }} />
 
         <div className="absolute inset-0 flex flex-col justify-center px-4 xxs:px-6 phone:px-8 tablet-md:px-12 lg:px-16 py-10 xxs:py-12 phone:py-16 tablet-md:py-20 lg:py-24">

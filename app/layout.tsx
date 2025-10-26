@@ -91,7 +91,7 @@ export default function RootLayout({
         <link rel="apple-touch-icon" sizes="180x180" href={withBasePath('/assets/icons/icon_helluniversity.svg')} />
         <link rel="manifest" href={withBasePath('/site.webmanifest')} />
         <meta name="theme-color" content="#7ba3a3" />
-        <meta name="viewport" content="width=device-width, initial-scale=1" />
+        <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
         
         {/* Structured Data */}
         <script

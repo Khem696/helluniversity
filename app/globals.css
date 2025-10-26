@@ -5,6 +5,73 @@
 /* Import Helvetica-like web font */
  
 /* KADE'S ARTISTIC ELEMENTS */
+/* Responsive/overflow safety resets */
+html {
+  overflow-x: hidden;
+  width: 100%;
+}
+body {
+  overflow-x: hidden; /* prevent any horizontal scroll entirely */
+  max-width: 100%;
+}
+
+/* Use small viewport units to avoid mobile URL bar jumps */
+:root {
+  --vh: 1svh;
+  --safe-area-bottom: env(safe-area-inset-bottom, 0px);
+}
+
+/* Robust viewport height helpers (prefer dvh, fall back to svh, then vh) */
+.min-h-vp { min-height: 100vh; }
+.h-vp { height: 100vh; }
+@supports (height: 100svh) {
+  .min-h-vp { min-height: 100svh; }
+  .h-vp { height: 100svh; }
+}
+@supports (height: 100dvh) {
+  .min-h-vp { min-height: 100dvh; }
+  .h-vp { height: 100dvh; }
+}
+
+/* Media defaults to prevent overflow */
+img, picture, video, canvas {
+  max-width: 100%;
+  height: auto;
+  display: block;
+}
+
+/* Prevent 100vw gaps due to scrollbar width */
+.no-horiz-overflow {
+  overflow-x: clip;
+}
+
+/* Clamp body width on tiny devices to avoid fractional scrollbar */
+@media (max-width: 360px) {
+  html, body {
+    width: 100%;
+    max-width: 100%;
+    overflow-x: hidden; /* ensure mobile emulators with fractional device widths do not produce a 1px stripe */
+  }
+}
+
+/* Safe area helper to avoid bottom gap on iPad models */
+.pb-safe {
+  padding-bottom: var(--safe-area-bottom);
+}
+
+/* Small-device helpers (≤425px) */
+@media (max-width: 425px) {
+  .hide-425 { display: none !important; }
+  .show-425 { display: flex !important; }
+  /* Center the block on screen but keep text left-aligned */
+  .mobile-center {
+    padding-left: 0 !important;
+    margin-left: auto !important;
+    margin-right: auto !important;
+    align-items: flex-start !important;
+    text-align: left !important;
+  }
+}
 @keyframes paint-texture-shift {
   0%, 100% { 
     background-position: 0% 0%;
@@ -748,19 +815,21 @@ html {
 
 /* Align hero left text to logo left edge */
 .hero-left-padding {
-  padding-left: max(1.25rem, calc((100vw - min(100vw, 1920px)) / 2 + 3rem));
+  /* Align left text start with the right edge of the header logo */
+  padding-left: 132px; /* desktop default: header padding (32) + logo (83) + gap (~16) */
+  box-sizing: border-box; /* prevent width+padding overflow at small widths */
 }
 
 /* Responsive tweaks to align with common Chrome device widths */
 @media (max-width: 414px) {
-  .hero-left-padding { padding-left: 1rem; }
+  .hero-left-padding { padding-left: 88px; box-sizing: border-box; } /* header px ~8 + logo ~64 + gap */
 }
 @media (min-width: 415px) and (max-width: 767px) {
-  .hero-left-padding { padding-left: 1.25rem; }
+  .hero-left-padding { padding-left: 100px; box-sizing: border-box; }
 }
 /* Tablet-specific hero alignment for iPad widths */
 @media (min-width: 768px) and (max-width: 1180px) {
-  .hero-left-padding { padding-left: 2rem; }
+  .hero-left-padding { padding-left: 120px; box-sizing: border-box; }
   /* Ensure hero columns don't overlap on tablets by providing extra breathing room */
   .hero-left-padding + * { padding-right: 2rem; }
 }

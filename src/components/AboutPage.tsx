@@ -5,8 +5,8 @@ import PoemBook from "./PoemBook";
 
 export function AboutPage() {
   return (
-    <div className="flex flex-col md:flex-row min-h-screen lg:h-screen overflow-hidden">
-      <div className="w-full md:w-1/2 relative overflow-hidden min-h-[520px] phone:min-h-[600px] tablet-md:min-h-[720px] lg:h-screen">
+    <div className="flex flex-col lg:flex-row min-h-vp lg:h-vp overflow-hidden no-horiz-overflow lg:overflow-y-hidden">
+      <div className="w-full lg:w-1/2 relative overflow-hidden min-h-[520px] phone:min-h-[600px] tablet-md:min-h-[720px] lg:h-vp lg:overflow-hidden">
         <div 
           className="absolute inset-0 opacity-100"
           style={{
@@ -20,7 +20,7 @@ export function AboutPage() {
 
         {/* Removed colored blur overlays to preserve original artwork tones */}
 
-        <div className="relative z-10 flex flex-col justify-between h-full box-border hero-left-padding pr-4 xxs:pr-6 phone:pr-8 tablet-md:pr-12 lg:pr-16 py-10 xxs:py-12 phone:py-16 tablet-md:py-20 lg:py-24 pt-52 md:pt-56 lg:pt-60">
+        <div className="relative z-10 flex flex-col justify-between h-full box-border hero-left-padding pr-4 xxs:pr-6 phone:pr-8 tablet-md:pr-12 lg:pr-16 py-10 xxs:py-12 phone:py-16 tablet-md:py-20 lg:py-0 pt-52 md:pt-56 lg:pt-56 overflow-hidden">
           <div className="md:ml-auto md:max-w-lg">
             <h1 className="text-[#68c9e0] mb-10 phone:mb-16 font-comfortaa" style={{ fontSize: 'clamp(40px, 9vw, 64px)', fontWeight: '300', lineHeight: '1' }}>
               About
@@ -68,7 +68,7 @@ export function AboutPage() {
         </div>
       </div>
 
-      <div className="w-full md:w-1/2 relative overflow-hidden min-h-[420px] xxs:min-h-[460px] phone:min-h-[520px] tablet-md:min-h-[640px] lg:h-screen">
+      <div className="w-full lg:w-1/2 relative overflow-hidden min-h-[420px] xxs:min-h-[460px] phone:min-h-[520px] tablet-md:min-h-[640px] lg:h-vp lg:overflow-hidden">
         {/* Match hero right side background tone */}
         <div 
           className="absolute inset-0 opacity-100"

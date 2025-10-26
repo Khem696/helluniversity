@@ -6,18 +6,18 @@ import { ImageWithFallback } from "./figma/ImageWithFallback"
 
 export function Hero() {
   return (
-    <section className="relative min-h-screen overflow-hidden">
-      <div className="flex flex-col md:flex-row min-h-screen">
+    <section className="relative min-h-vp overflow-hidden no-horiz-overflow">
+      <div className="flex flex-col lg:flex-row h-full">
         {/* Left Side - Blue */}
-        <div className="w-full md:w-1/2 bg-[#3e82bb] flex flex-col justify-center hero-left-padding py-10 xxs:py-12 phone:py-16 tablet-md:py-20 lg:py-24">
-          <div className="max-w-xl pr-3 xxs:pr-4 phone:pr-6 md:pr-6 tablet-md:pr-8 lg:pr-0">
+        <div className="w-full lg:w-1/2 min-w-0 bg-[#3e82bb] flex flex-col justify-center hero-left-padding py-10 xxs:py-12 phone:py-16 tablet-md:py-20 lg:py-24 mobile-center">
+          <div className="max-w-xl pr-3 xxs:pr-4 phone:pr-6 md:pr-6 tablet-md:pr-8 lg:pr-0 mt-16 md:mt-20 lg:mt-24 w-full">
             {/* Main Title */}
-            <h1 className="mb-8 tablet-md:mb-10 lg:mb-12 font-acumin" style={{ fontSize: 'clamp(56px, 8.5vw, 112px)', fontWeight: '900', lineHeight: '0.9', color: '#42210b' }}>
+            <h1 className="mb-8 tablet-md:mb-10 lg:mb-12 font-acumin" style={{ fontSize: 'clamp(48px, 7.5vw, 96px)', fontWeight: '900', lineHeight: '0.9', color: '#42210b' }}>
               Hell<br />University
             </h1>
 
             {/* Culture House */}
-            <h2 className="text-white mb-10 phone:mb-12 lg:mb-16 font-urbanist" style={{ fontSize: 'clamp(34px, 6.5vw, 64px)', fontWeight: '800', lineHeight: '1.2' }}>
+            <h2 className="text-white mb-10 phone:mb-12 lg:mb-16 font-urbanist" style={{ fontSize: 'clamp(30px, 5.5vw, 56px)', fontWeight: '800', lineHeight: '1.2' }}>
               Culture House
             </h2>
 
@@ -46,7 +46,7 @@ export function Hero() {
         </div>
 
         {/* Right Side - Textured Red/Brown with Image */}
-        <div className="w-full md:w-1/2 relative overflow-hidden min-h-[420px] xxs:min-h-[460px] phone:min-h-[520px] tablet-md:min-h-[640px] lg:min-h-screen">
+        <div className="w-full lg:w-1/2 min-w-0 relative overflow-hidden min-h-[420px] xxs:min-h-[460px] phone:min-h-[520px] tablet-md:min-h-[640px] lg:min-h-[100svh]">
           {/* Texture Overlay */}
           <div 
             className="absolute inset-0 opacity-100"
@@ -56,13 +56,16 @@ export function Hero() {
             // }}
             style={{
               backgroundImage: `url('${withBasePath('/assets/artwork/artwork_home.jpg')}')`,
+              backgroundSize: 'cover',
+              backgroundPosition: 'center',
+              backgroundRepeat: 'no-repeat',
               mixBlendMode: 'multiply'
             }}
           />
 
           {/* Portrait Image */}
-          <div className="absolute inset-0 flex items-center justify-start pl-0 pr-2 xxs:pr-3 phone:pr-6 md:pr-6 tablet-md:pr-8 lg:pl-0 lg:pr-12">
-            <div className="relative w-full max-w-[720px] aspect-square">
+          <div className="absolute inset-0 flex items-center justify-start pl-0 pr-2 xxs:pr-3 phone:pr-6 md:pr-6 tablet-md:pr-8 lg:pl-0 lg:pr-12 pt-8 md:pt-10 lg:pt-12">
+            <div className="relative w-full max-w-[560px] md:max-w-[620px] lg:max-w-[660px] aspect-square">
               <img
                 src={withBasePath('/assets/portrait/portrait_kade.png')}
                 alt="Kade Javanalikikorn"
