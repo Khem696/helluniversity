@@ -34,7 +34,7 @@ jobs:
       - name: Install dependencies (include devDependencies)
         run: npm ci
 
-      - name: Build static export (via output: export)
+      - name: "Build static export (via output: export)"
         run: npm run build
         env:
           NODE_ENV: production
