@@ -11,21 +11,21 @@ export function Hero() {
         <div className="w-full md:w-1/2 bg-[#3e82bb] flex flex-col justify-center hero-left-padding py-10 xxs:py-12 phone:py-16 tablet-md:py-20 lg:py-24">
           <div className="max-w-xl pr-3 xxs:pr-4 phone:pr-6 md:pr-6 tablet-md:pr-8 lg:pr-0">
             {/* Main Title */}
-            <h1 className="mb-8 tablet-md:mb-10 lg:mb-12" style={{ fontSize: 'clamp(56px, 8.5vw, 112px)', fontWeight: '900', lineHeight: '0.9', color: '#5a3a2a' }}>
+            <h1 className="mb-8 tablet-md:mb-10 lg:mb-12 font-acumin" style={{ fontSize: 'clamp(56px, 8.5vw, 112px)', fontWeight: '900', lineHeight: '0.9', color: '#42210b' }}>
               Hell<br />University
             </h1>
 
             {/* Culture House */}
-            <h2 className="text-white mb-10 phone:mb-12 lg:mb-16" style={{ fontSize: 'clamp(34px, 6.5vw, 64px)', fontWeight: '400', lineHeight: '1.2' }}>
+            <h2 className="text-white mb-10 phone:mb-12 lg:mb-16 font-urbanist" style={{ fontSize: 'clamp(34px, 6.5vw, 64px)', fontWeight: '800', lineHeight: '1.2' }}>
               Culture House
             </h2>
 
             {/* Studio Section */}
             <div className="mb-8 lg:mb-12">
-              <h3 className="text-white mb-4" style={{ fontSize: 'clamp(28px, 4.5vw, 40px)', fontWeight: '400' }}>
+              <h3 className="text-white mb-4 font-comfortaa" style={{ fontSize: 'clamp(28px, 4.5vw, 40px)', fontWeight: '400' }}>
                 Studio
               </h3>
-              <p className="text-white/90" style={{ fontSize: '14px', fontWeight: '300', lineHeight: '1.6' }}>
+              <p className="text-white/90 font-comfortaa" style={{ fontSize: '14px', fontWeight: '300', lineHeight: '1.6' }}>
                 Hongsee Culture House is a creative hub<br />
                 for cultural events and the artistic community.
               </p>
@@ -33,10 +33,10 @@ export function Hero() {
 
             {/* Gallery Section */}
             <div>
-              <h3 className="text-white mb-4" style={{ fontSize: 'clamp(28px, 4.5vw, 40px)', fontWeight: '400' }}>
+              <h3 className="text-white mb-4 font-comfortaa" style={{ fontSize: 'clamp(28px, 4.5vw, 40px)', fontWeight: '400' }}>
                 Gallery
               </h3>
-              <p className="text-white/90" style={{ fontSize: '14px', fontWeight: '300', lineHeight: '1.6' }}>
+              <p className="text-white/90 font-comfortaa" style={{ fontSize: '14px', fontWeight: '300', lineHeight: '1.6' }}>
                 Hell University, an archive and gallery<br />
                 dedicated to research and education.
               </p>
@@ -45,7 +45,7 @@ export function Hero() {
         </div>
 
         {/* Right Side - Textured Red/Brown with Image */}
-        <div className="w-full md:w-1/2 relative min-h-[420px] xxs:min-h-[460px] phone:min-h-[520px] tablet-md:min-h-[640px] lg:min-h-screen">
+        <div className="w-full md:w-1/2 relative overflow-hidden min-h-[420px] xxs:min-h-[460px] phone:min-h-[520px] tablet-md:min-h-[640px] lg:min-h-screen">
           {/* Texture Overlay */}
           <div 
             className="absolute inset-0 opacity-100"
@@ -72,15 +72,15 @@ export function Hero() {
               
               {/* Quote Overlay */}
               <div className="absolute bottom-3 xxs:bottom-4 phone:bottom-6 left-3 xxs:left-4 phone:left-6 right-3 xxs:right-4 phone:right-6">
-                <p className="text-[#D4AF37] mb-4 phone:mb-6 xxs:block hidden" style={{ fontSize: '14px', fontWeight: '300', lineHeight: '1.8', fontStyle: 'italic' }}>
+                <p className="text-[#D4AF37] mb-4 phone:mb-6 xxs:block hidden font-comfortaa" style={{ fontSize: '14px', fontWeight: '300', lineHeight: '1.8', fontStyle: 'regular' }}>
                   Some wonders seem to have no explanation<br />
                   but could only be perceived by an opening<br />
                   and extension of the mind.
                 </p>
-                <p className="text-white" style={{ fontSize: '14px', fontWeight: '400' }}>
+                <p className="text-white font-urbanist" style={{ fontSize: '14px', fontWeight: '800' ,fontStyle: 'ExtraBold'}}>
                   Kade Javanalikikorn
                 </p>
-        </div>
+              </div>
       </div>
       </div>
 

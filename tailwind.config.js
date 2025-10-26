@@ -38,6 +38,10 @@ module.exports = {
         ui: ['var(--font-ui)'],
         'helvetica': ['"Helvetica Neue"', '"Helvetica"', '"Arial"', 'sans-serif'],
         'inter': ['"Inter"', '-apple-system', 'BlinkMacSystemFont', '"Segoe UI"', '"Helvetica Neue"', '"Helvetica"', '"Arial"', 'sans-serif'],
+        comfortaa: ['var(--font-comfortaa)', '"Comfortaa"', 'system-ui', 'sans-serif'],
+        urbanist: ['var(--font-urbanist)'],
+        // Roboto Flex as Acumin alternative
+        acumin: ['var(--font-acumin)', '"Roboto Flex"', 'system-ui', 'sans-serif']
       },
       colors: {
         border: "hsl(var(--border))",

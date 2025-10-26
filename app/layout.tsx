@@ -6,7 +6,7 @@ import { Header } from '@/components/Header'
 import { DisableServiceWorker } from '@/components/DisableServiceWorker'
 import { organizationStructuredData, websiteStructuredData, localBusinessStructuredData, eventStructuredData } from '@/lib/structured-data'
 import './globals.css'
-import { bodyFont, headingFont, uiFont } from '@/lib/fonts'
+import { bodyFont, headingFont, uiFont, comfortaaFont, urbanistFont, acuminAlt } from '@/lib/fonts'
 
 
 export const metadata: Metadata = {
@@ -84,7 +84,7 @@ export default function RootLayout({
   children: React.ReactNode
 }) {
   return (
-    <html lang="en" className={`${bodyFont.variable} ${headingFont.variable} ${uiFont.variable}`} suppressHydrationWarning>
+    <html lang="en" className={`${bodyFont.variable} ${headingFont.variable} ${uiFont.variable} ${comfortaaFont.variable} ${urbanistFont.variable} ${acuminAlt.variable}`} suppressHydrationWarning>
       <head>
         <link rel="icon" href="/assets/icons/icon_helluniversity.svg" />
         <link rel="apple-touch-icon" sizes="180x180" href="/assets/icons/icon_helluniversity.svg" />
