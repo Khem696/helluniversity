@@ -1,12 +1,13 @@
 import type { Metadata } from 'next'
-import { Inter } from 'next/font/google'
 import { Analytics } from '@vercel/analytics/react'
 import { GoogleAnalytics } from '@next/third-parties/google'
 import { Toaster } from '@/components/ui/sonner'
+import { Header } from '@/components/Header'
+import { DisableServiceWorker } from '@/components/DisableServiceWorker'
 import { organizationStructuredData, websiteStructuredData, localBusinessStructuredData, eventStructuredData } from '@/lib/structured-data'
 import './globals.css'
+import { bodyFont, headingFont, uiFont, comfortaaFont, urbanistFont, acuminAlt } from '@/lib/fonts'
 
-const inter = Inter({ subsets: ['latin'] })
 
 export const metadata: Metadata = {
   title: {
@@ -83,10 +84,10 @@ export default function RootLayout({
   children: React.ReactNode
 }) {
   return (
-    <html lang="en" suppressHydrationWarning>
+    <html lang="en" className={`${bodyFont.variable} ${headingFont.variable} ${uiFont.variable} ${comfortaaFont.variable} ${urbanistFont.variable} ${acuminAlt.variable}`} suppressHydrationWarning>
       <head>
-        <link rel="icon" href="/favicon.ico" />
-        <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png" />
+        <link rel="icon" href="/assets/icons/icon_helluniversity.svg" />
+        <link rel="apple-touch-icon" sizes="180x180" href="/assets/icons/icon_helluniversity.svg" />
         <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32x32.png" />
         <link rel="icon" type="image/png" sizes="16x16" href="/favicon-16x16.png" />
         <link rel="manifest" href="/site.webmanifest" />
@@ -119,13 +120,15 @@ export default function RootLayout({
           }}
         />
       </head>
-      <body className={inter.className}>
+      <body className="font-body">
         <a
           href="#main-content"
           className="sr-only focus:not-sr-only focus:absolute focus:top-2 focus:left-2 focus:z-[100] bg-black text-white px-4 py-2 rounded"
         >
           Skip to content
         </a>
+        <DisableServiceWorker />
+        <Header />
         {children}
         <Toaster />
         <Analytics />

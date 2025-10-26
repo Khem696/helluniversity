@@ -1,4 +1,5 @@
-'use client'
+"use client"
+import Link from 'next/link'
 
 export function Footer() {
   return (
@@ -23,40 +24,19 @@ export function Footer() {
             <h4 className="text-lg" style={{ fontWeight: '500' }}>Quick Links</h4>
             <ul className="space-y-2 text-sm text-gray-300">
               <li>
-                <button 
-                  onClick={() => document.getElementById('spaces')?.scrollIntoView({ behavior: 'smooth' })}
-                  className="hover:text-white transition-colors"
-                  aria-label="Jump to Spaces section"
-                >
-                  Spaces
-                </button>
+                <Link href="/studio-gallery" className="hover:text-white transition-colors" aria-label="Studio & Gallery">
+                  Studio/Gallery
+                </Link>
               </li>
               <li>
-                <button 
-                  onClick={() => document.getElementById('ai-generator')?.scrollIntoView({ behavior: 'smooth' })}
-                  className="hover:text-white transition-colors"
-                  aria-label="Jump to AI Generator section"
-                >
-                  AI Generator
-                </button>
+                <Link href="/about" className="hover:text-white transition-colors" aria-label="About page">
+                  About
+                </Link>
               </li>
               <li>
-                <button 
-                  onClick={() => window.scrollTo({ top: 0, behavior: 'smooth' })}
-                  className="hover:text-white transition-colors"
-                  aria-label="Back to top"
-                >
-                  Top
-                </button>
-              </li>
-              <li>
-                <button 
-                  onClick={() => document.getElementById('reservation')?.scrollIntoView({ behavior: 'smooth' })}
-                  className="hover:text-white transition-colors"
-                  aria-label="Jump to Reservation section"
-                >
-                  Book Now
-                </button>
+                <Link href="/contact" className="hover:text-white transition-colors" aria-label="Contact page">
+                  Contact
+                </Link>
               </li>
             </ul>
           </div>
