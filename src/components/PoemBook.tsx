@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react"
 import { ChevronLeft, ChevronRight } from "lucide-react"
+import { withBasePath } from "@/lib/utils"
 
 type PoemBookProps = {
 	className?: string
@@ -19,19 +20,19 @@ function usePreloaded(srcs: string[]) {
 }
 
 export function PoemBook({ className }: PoemBookProps) {
-	const pages = useMemo(
-		() => [
-			"/assets/poem/poem_1_text_v2.png",
-			"/assets/poem/poem_2_text_v2.png",
-			"/assets/poem/poem_3_text_v2.png",
-			"/assets/poem/poem_4_text_v2.png",
-			"/assets/poem/poem_5_text_v2.png",
-		],
-		[]
-	)
+    const pages = useMemo(
+        () => [
+            withBasePath('/assets/poem/poem_1_text_v2.png'),
+            withBasePath('/assets/poem/poem_2_text_v2.png'),
+            withBasePath('/assets/poem/poem_3_text_v2.png'),
+            withBasePath('/assets/poem/poem_4_text_v2.png'),
+            withBasePath('/assets/poem/poem_5_text_v2.png'),
+        ],
+        []
+    )
 
-	const baseBackground = "/assets/poem/empty.jpg"
-	usePreloaded([baseBackground, ...pages])
+    const baseBackground = withBasePath('/assets/poem/empty.jpg')
+    usePreloaded([baseBackground, ...pages])
 
 	const [index, setIndex] = useState(0)
 	const total = pages.length
