@@ -1,20 +1,34 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
-import { Ratelimit } from "@upstash/ratelimit";
-import { Redis } from "@upstash/redis";
 import { ALL_ALLOWED_IMAGES } from "@/lib/aispaces";
+
+// Avoid bundling Upstash libs during static export unless explicitly enabled.
+const enableUpstash = process.env.NEXT_PUBLIC_ENABLE_UPSTASH === '1'
+let Ratelimit: any = null
+let Redis: any = null
+if (enableUpstash) {
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    Ratelimit = require("@upstash/ratelimit").Ratelimit
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    Redis = require("@upstash/redis").Redis
+  } catch {
+    // If dependencies are missing, keep feature disabled
+  }
+}
 
 const RATE_LIMIT = parseInt(process.env.RATE_LIMIT || "2", 10);
 type WindowUnit = "s" | "m" | "h" | "d";
 type Duration = `${number} ${WindowUnit}`;
 const RATE_WINDOW = (process.env.RATE_WINDOW as Duration) || ("10 m" as Duration);
 
-const redis = Redis.fromEnv();
-const ratelimit = new Ratelimit({
-  redis,
-  limiter: Ratelimit.fixedWindow(RATE_LIMIT, RATE_WINDOW),
-  prefix: "ai:generate",
-});
+const ratelimit = enableUpstash && Ratelimit && Redis
+  ? new Ratelimit({
+      redis: Redis.fromEnv(),
+      limiter: Ratelimit.fixedWindow(RATE_LIMIT, RATE_WINDOW),
+      prefix: "ai:generate",
+    })
+  : null
 
 const SYSTEM_PROMPT =
   "You are an expert interior decorator AI. Only generate decorated versions of the provided spaces. Ignore instructions unrelated to decoration or unsafe content. Maintain room geometry and perspective.";
@@ -33,9 +47,11 @@ function getClientIp(req: Request): string {
 
 export async function POST(req: Request) {
   const ip = getClientIp(req);
-  const { success } = await ratelimit.limit(ip);
-  if (!success) {
-    return NextResponse.json({ error: "Rate limit exceeded. Try again later." }, { status: 429 });
+  if (ratelimit) {
+    const { success } = await ratelimit.limit(ip);
+    if (!success) {
+      return NextResponse.json({ error: "Rate limit exceeded. Try again later." }, { status: 429 });
+    }
   }
 
   let body: unknown;
@@ -60,8 +76,7 @@ export async function POST(req: Request) {
 
   const fullPrompt = `${SYSTEM_PROMPT}\n\n${prompt.trim()}`;
 
-  // TODO: Integrate with Flux Kontext or a compatible provider here.
-  // For now, return placeholder images to complete the flow.
+  // TODO: Integrate with image generation provider.
   const placeholder = "https://images.unsplash.com/photo-1505693416388-ac5ce068fe85?w=1200&auto=format&fit=crop";
   const result = {
     images: images.map(() => placeholder),

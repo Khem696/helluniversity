@@ -2,6 +2,7 @@
 
 import Image from 'next/image'
 import { useState } from 'react'
+import { withBasePath } from '@/lib/utils'
 
 interface ImageWithFallbackProps {
   src: string
@@ -43,7 +44,7 @@ export function ImageWithFallback({
         className={`transition-opacity duration-300 ${isLoading ? 'opacity-0' : 'opacity-100'} ${imgClassName}`}
         onLoad={() => setIsLoading(false)}
         onError={() => {
-          setImgSrc('/placeholder-image.jpg')
+          setImgSrc(withBasePath('/placeholder-image.jpg'))
           setIsLoading(false)
         }}
         style={{

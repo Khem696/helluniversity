@@ -76,6 +76,18 @@ const nextConfig = {
     // Set to '1' if you want to enable Vercel Analytics on GH Pages
     NEXT_PUBLIC_ENABLE_VERCEL_ANALYTICS: process.env.NEXT_PUBLIC_ENABLE_VERCEL_ANALYTICS || '0',
   },
+  webpack: (config) => {
+    // Avoid bundling optional Upstash dependencies when disabled
+    if (process.env.NEXT_PUBLIC_ENABLE_UPSTASH !== '1') {
+      config.resolve = config.resolve || {}
+      config.resolve.alias = {
+        ...(config.resolve.alias || {}),
+        '@upstash/ratelimit': false,
+        '@upstash/redis': false,
+      }
+    }
+    return config
+  },
 }
 
 module.exports = withPWA(nextConfig)

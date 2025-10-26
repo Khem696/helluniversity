@@ -1,5 +1,5 @@
-import { withBasePath } from "@/lib/utils"
 "use client"
+import { withBasePath } from "@/lib/utils"
 
 import { Facebook, Twitter, Instagram } from "lucide-react"
 import { ImageWithFallback } from "./figma/ImageWithFallback"
@@ -64,7 +64,7 @@ export function Hero() {
           <div className="absolute inset-0 flex items-center justify-start pl-0 pr-2 xxs:pr-3 phone:pr-6 md:pr-6 tablet-md:pr-8 lg:pl-0 lg:pr-12">
             <div className="relative w-full max-w-[720px] aspect-square">
               <img
-                src="/assets/portrait/portrait_kade.png"
+                src={withBasePath('/assets/portrait/portrait_kade.png')}
                 alt="Kade Javanalikikorn"
                 className="absolute inset-0 w-full h-full object-contain object-left grayscale contrast-110"
                 width={1600}
