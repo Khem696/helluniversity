@@ -1,3 +1,4 @@
+import { withBasePath } from "@/lib/utils"
 "use client"
 
 import { Facebook, Twitter, Instagram } from "lucide-react"
@@ -54,7 +55,7 @@ export function Hero() {
             //   mixBlendMode: 'multiply'
             // }}
             style={{
-              backgroundImage: 'url("/assets/artwork/artwork_home.jpg")',
+              backgroundImage: `url('${withBasePath('/assets/artwork/artwork_home.jpg')}')`,
               mixBlendMode: 'multiply'
             }}
           />

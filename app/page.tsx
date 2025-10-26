@@ -1,5 +1,6 @@
 import { Hero } from "@/components/Hero"
 import { Metadata } from 'next'
+import { withBasePath } from '@/lib/utils'
 
 export const metadata: Metadata = {
   title: 'Home',
@@ -11,7 +12,7 @@ export const metadata: Metadata = {
     siteName: 'Hell University',
     images: [
       {
-        url: '/og-image.jpg',
+        url: withBasePath('/og-image.jpg'),
         width: 1200,
         height: 630,
         alt: 'Hell University - Cultural House',
@@ -24,7 +25,7 @@ export const metadata: Metadata = {
     card: 'summary_large_image',
     title: 'Hell University - A Cultural House for Creative Expression',
     description: 'Promoting cultural activities and community engagement through art, music, and creativity.',
-    images: ['/og-image.jpg'],
+    images: [withBasePath('/og-image.jpg')],
   },
   alternates: {
     canonical: process.env.NODE_ENV === 'production' ? 'https://khem696.github.io/helluniversity' : 'http://localhost:3000',

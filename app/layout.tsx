@@ -7,6 +7,7 @@ import { DisableServiceWorker } from '@/components/DisableServiceWorker'
 import { organizationStructuredData, websiteStructuredData, localBusinessStructuredData, eventStructuredData } from '@/lib/structured-data'
 import './globals.css'
 import { bodyFont, headingFont, uiFont, comfortaaFont, urbanistFont, acuminAlt } from '@/lib/fonts'
+import { withBasePath } from '@/lib/utils'
 
 
 export const metadata: Metadata = {
@@ -48,7 +49,7 @@ export const metadata: Metadata = {
     siteName: 'Hell University',
     images: [
       {
-        url: '/og-image.jpg',
+        url: withBasePath('/og-image.jpg'),
         width: 1200,
         height: 630,
         alt: 'Hell University - Cultural House',
@@ -59,7 +60,7 @@ export const metadata: Metadata = {
     card: 'summary_large_image',
     title: 'Hell University - A Cultural House for Creative Expression',
     description: 'Promoting cultural activities and community engagement through art, music, and creativity.',
-    images: ['/og-image.jpg'],
+    images: [withBasePath('/og-image.jpg')],
     creator: '@helluniversity',
   },
   robots: {
@@ -86,11 +87,9 @@ export default function RootLayout({
   return (
     <html lang="en" className={`${bodyFont.variable} ${headingFont.variable} ${uiFont.variable} ${comfortaaFont.variable} ${urbanistFont.variable} ${acuminAlt.variable}`} suppressHydrationWarning>
       <head>
-        <link rel="icon" href="/assets/icons/icon_helluniversity.svg" />
-        <link rel="apple-touch-icon" sizes="180x180" href="/assets/icons/icon_helluniversity.svg" />
-        <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32x32.png" />
-        <link rel="icon" type="image/png" sizes="16x16" href="/favicon-16x16.png" />
-        <link rel="manifest" href="/site.webmanifest" />
+        <link rel="icon" href={withBasePath('/assets/icons/icon_helluniversity.svg')} />
+        <link rel="apple-touch-icon" sizes="180x180" href={withBasePath('/assets/icons/icon_helluniversity.svg')} />
+        <link rel="manifest" href={withBasePath('/site.webmanifest')} />
         <meta name="theme-color" content="#7ba3a3" />
         <meta name="viewport" content="width=device-width, initial-scale=1" />
         
@@ -131,7 +130,7 @@ export default function RootLayout({
         <Header />
         {children}
         <Toaster />
-        <Analytics />
+        {process.env.NEXT_PUBLIC_ENABLE_VERCEL_ANALYTICS === '1' && <Analytics />}
         <GoogleAnalytics gaId={process.env.NEXT_PUBLIC_GA_ID || ''} />
       </body>
     </html>

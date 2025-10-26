@@ -5,6 +5,17 @@ export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs))
 }
 
+// Base path helpers for GitHub Pages (or any Next.js basePath)
+export const BASE_PATH: string = process.env.NEXT_PUBLIC_BASE_PATH || ''
+
+export function withBasePath(path: string): string {
+  if (!path) return BASE_PATH
+  const normalizedPath = path.startsWith('/') ? path : `/${path}`
+  if (!BASE_PATH) return normalizedPath
+  // Avoid double slashes when concatenating
+  return `${BASE_PATH}${normalizedPath}`.replace(/\/+/, '/').replace(/\/+/, '/')
+}
+
 // Performance utilities
 export function debounce<T extends (...args: any[]) => any>(
   func: T,

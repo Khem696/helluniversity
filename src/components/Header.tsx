@@ -5,6 +5,7 @@ import { useState } from "react"
 import { Wand2, Menu, X } from "lucide-react"
 import { Dialog, DialogTrigger, DialogContent } from "@/components/ui/dialog"
 import { AISpaceGenerator } from "@/components/AISpaceGenerator"
+import { withBasePath } from "@/lib/utils"
 
 export function Header() {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false)
@@ -16,7 +17,7 @@ export function Header() {
         {/* Logo */}
         <Link href="/" aria-label="Hell University Home" className="flex items-center justify-center">
           <div className="flex items-center justify-center w-[48px] h-[48px] xxs:w-[52px] xxs:h-[52px] xs:w-[56px] xs:h-[56px] phone:w-[64px] phone:h-[64px] lg:w-[83px] lg:h-[83px] rounded-full bg-white border-2 lg:border-4 border-[var(--hell-dusty-blue)]">
-            <img src="/assets/icons/icon_helluniversity.svg" alt="Hell University" width={62} height={62} className="w-[40px] h-[40px] xxs:w-[44px] xxs:h-[44px] xs:w-[46px] xs:h-[46px] phone:w-[56px] phone:h-[56px] lg:w-[73px] lg:h-[73px]" />
+            <img src={withBasePath('/assets/icons/icon_helluniversity.svg')} alt="Hell University" width={62} height={62} className="w-[40px] h-[40px] xxs:w-[44px] xxs:h-[44px] xs:w-[46px] xs:h-[46px] phone:w-[56px] phone:h-[56px] lg:w-[73px] lg:h-[73px]" />
           </div>
         </Link>
 

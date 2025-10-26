@@ -1,5 +1,6 @@
 import { Facebook, Twitter, Instagram } from "lucide-react";
 import { ImageWithFallback } from "./figma/ImageWithFallback";
+import { withBasePath } from "@/lib/utils";
 import PoemBook from "./PoemBook";
 
 export function AboutPage() {
@@ -9,7 +10,7 @@ export function AboutPage() {
         <div 
           className="absolute inset-0 opacity-100"
           style={{
-            backgroundImage: 'url("/assets/artwork/artwork_about.jpg")',
+            backgroundImage: `url('${withBasePath('/assets/artwork/artwork_about.jpg')}')`,
             backgroundSize: 'cover',
             backgroundPosition: 'center',
             backgroundRepeat: 'no-repeat'

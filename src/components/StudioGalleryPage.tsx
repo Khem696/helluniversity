@@ -1,5 +1,6 @@
 import { ChevronDown } from "lucide-react";
 import { ImageWithFallback } from "./figma/ImageWithFallback";
+import { withBasePath } from "@/lib/utils";
 
 export function StudioGalleryPage() {
   const studioImages = [
@@ -26,7 +27,7 @@ export function StudioGalleryPage() {
         <div
           className="pointer-events-none absolute left-0 right-0"
           style={{
-            backgroundImage: "url('/assets/portrait/portrait_kade_nobg.png')",
+            backgroundImage: `url('${withBasePath('/assets/portrait/portrait_kade_nobg.png')}')`,
             backgroundRepeat: 'no-repeat',
             backgroundPosition: 'right center',
             backgroundSize: 'contain',

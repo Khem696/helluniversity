@@ -68,6 +68,14 @@ const nextConfig = {
   compress: true,
   assetPrefix: process.env.NODE_ENV === 'production' ? '/helluniversity' : '',
   basePath: process.env.NODE_ENV === 'production' ? '/helluniversity' : '',
+  env: {
+    NEXT_PUBLIC_BASE_PATH: process.env.NODE_ENV === 'production' ? '/helluniversity' : '',
+    NEXT_PUBLIC_BASE_URL: process.env.NODE_ENV === 'production'
+      ? 'https://khem696.github.io/helluniversity'
+      : 'http://localhost:3000',
+    // Set to '1' if you want to enable Vercel Analytics on GH Pages
+    NEXT_PUBLIC_ENABLE_VERCEL_ANALYTICS: process.env.NEXT_PUBLIC_ENABLE_VERCEL_ANALYTICS || '0',
+  },
 }
 
 module.exports = withPWA(nextConfig)

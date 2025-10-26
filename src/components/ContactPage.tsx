@@ -1,5 +1,6 @@
 import { Facebook, Twitter, Instagram, Search } from "lucide-react";
 import { ImageWithFallback } from "./figma/ImageWithFallback";
+import { withBasePath } from "@/lib/utils";
 
 export function ContactPage() {
   return (
@@ -8,7 +9,7 @@ export function ContactPage() {
       <div className="w-full md:w-1/2 relative overflow-hidden flex items-center justify-center min-h-[520px] phone:min-h-[600px] tablet-md:min-h-[720px] lg:min-h-screen">
         <div className="w-11/12 max-w-3xl aspect-[16/9]">
           <ImageWithFallback
-            src="/assets/artwork/artwork_contact.png"
+            src={withBasePath('/assets/artwork/artwork_contact.png')}
             alt="Contact artwork"
             className="w-full h-full object-cover"
             width={1600}
