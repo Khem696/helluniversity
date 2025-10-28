@@ -18,7 +18,7 @@ export function Hero() {
 
             {/* Culture House */}
             <h2 className="text-white mb-10 phone:mb-12 lg:mb-16 font-urbanist" style={{ fontSize: 'clamp(30px, 5.5vw, 56px)', fontWeight: '800', lineHeight: '1.2' }}>
-              Culture House
+              Culture Hub
             </h2>
 
             {/* Studio Section */}
@@ -46,7 +46,7 @@ export function Hero() {
         </div>
 
         {/* Right Side - Textured Red/Brown with Image */}
-        <div className="w-full lg:w-1/2 min-w-0 relative overflow-hidden min-h-[420px] xxs:min-h-[460px] phone:min-h-[520px] tablet-md:min-h-[640px] lg:min-h-[100svh]">
+        <div className="w-full lg:w-1/2 min-w-0 relative overflow-hidden min-h-[420px] xxs:min-h-[460px] phone:min-h-[520px] tablet-md:min-h-[640px] lg:min-h-[100dvh]">
           {/* Texture Overlay */}
           <div 
             className="absolute inset-0 opacity-100"
@@ -72,6 +72,9 @@ export function Hero() {
                 className="absolute inset-0 w-full h-full object-contain object-left grayscale contrast-110"
                 width={1600}
                 height={1800}
+                loading="eager"
+                decoding="async"
+                fetchPriority="high"
               />
               
               {/* Quote Overlay */}

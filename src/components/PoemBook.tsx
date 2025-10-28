@@ -44,11 +44,10 @@ export function PoemBook({ className }: PoemBookProps) {
 
 	return (
 		<div
-			className={"relative select-none " + (className ?? "")}
-			style={{ transform: 'scale(0.72)', transformOrigin: 'left top' }}
+			className={"relative select-none origin-top-left lg:scale-[.72] " + (className ?? "")}
 		>
 			{/* Book Container matches hero portrait container: object-left, contained within max width */}
-			<div className="relative w-full max-w-[720px]">
+			<div className="relative w-full max-w-[720px] md:max-w-[640px] lg:max-w-[720px]">
 				{/* Base image determines container size */}
 				<img
 					src={baseBackground}
@@ -56,6 +55,8 @@ export function PoemBook({ className }: PoemBookProps) {
 					className="w-full h-auto block"
 					width={1600}
 					height={2000}
+					loading="lazy"
+					decoding="async"
 				/>
 
 				{/* Text overlay */}
@@ -65,6 +66,8 @@ export function PoemBook({ className }: PoemBookProps) {
 					className="absolute inset-0 w-full h-full object-contain object-left"
 					width={1600}
 					height={2000}
+					loading="lazy"
+					decoding="async"
 				/>
 			</div>
 

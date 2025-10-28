@@ -74,7 +74,7 @@ export function StudioGalleryPage() {
             </div>
           </div>
 
-          <div className="grid grid-cols-3 gap-2 xxs:gap-3 phone:gap-4 tablet-md:gap-5 mt-4 phone:mt-6 tablet-md:mt-6 w-11/12 mx-auto">
+          <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-2 xxs:gap-3 phone:gap-4 tablet-md:gap-5 mt-4 phone:mt-6 tablet-md:mt-6 w-11/12 mx-auto">
             <div className="aspect-[16/9] bg-[#E85D9C]/90 overflow-hidden">
               <div className="w-full h-full flex items-center justify-center">
                 <span style={{ fontSize: '12px', fontWeight: '500', color: 'white' }}>Gallery 1</span>
@@ -87,6 +87,7 @@ export function StudioGalleryPage() {
                 className="w-full h-full object-cover"
                 width={800}
                 height={800}
+                sizes="(max-width: 640px) 100vw, (max-width: 1024px) 50vw, 33vw"
               />
             </div>
             <div className="aspect-[16/9] bg-[#87CEEB]/90 overflow-hidden">
@@ -96,6 +97,7 @@ export function StudioGalleryPage() {
                 className="w-full h-full object-cover"
                 width={800}
                 height={800}
+                sizes="(max-width: 640px) 100vw, (max-width: 1024px) 50vw, 33vw"
               />
             </div>
             <div className="aspect-[16/9] bg-[#7BC74D]/90 overflow-hidden">
@@ -155,7 +157,7 @@ export function StudioGalleryPage() {
             </div>
           </div>
 
-          <div className="grid grid-cols-3 gap-2 xxs:gap-3 phone:gap-4 tablet-md:gap-5 mt-4 phone:mt-6 tablet-md:mt-6 w-11/12 mx-auto">
+          <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-2 xxs:gap-3 phone:gap-4 tablet-md:gap-5 mt-4 phone:mt-6 tablet-md:mt-6 w-11/12 mx-auto">
             <div className="aspect-[16/9] bg-[#2C5F6F]/90 overflow-hidden">
               <div className="w-full h-full flex items-center justify-center">
                 <span style={{ fontSize: '12px', fontWeight: '500', color: 'white' }}>Archive 1</span>
@@ -168,6 +170,7 @@ export function StudioGalleryPage() {
                 className="w-full h-full object-cover"
                 width={800}
                 height={800}
+                sizes="(max-width: 640px) 100vw, (max-width: 1024px) 50vw, 33vw"
               />
             </div>
             <div className="aspect-[16/9] bg-[#8B4B3B]/90 overflow-hidden">
@@ -182,6 +185,7 @@ export function StudioGalleryPage() {
                 className="w-full h-full object-cover"
                 width={800}
                 height={800}
+                sizes="(max-width: 640px) 100vw, (max-width: 1024px) 50vw, 33vw"
               />
             </div>
             <div className="aspect-[16/9] bg-white/80 overflow-hidden">

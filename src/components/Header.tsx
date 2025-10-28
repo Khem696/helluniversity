@@ -21,8 +21,8 @@ export function Header() {
           </div>
         </Link>
 
-        {/* Title - single line on mobile; centered on larger screens */}
-        <h1 className="flex-1 text-left font-heading whitespace-nowrap phone:absolute phone:left-1/2 phone:-translate-x-1/2 phone:text-center" style={{ fontSize: 'clamp(20px, 8vw, 44px)', fontWeight: '800', letterSpacing: '0.02em' }}>
+        {/* Title - wraps on very small screens to avoid overlap; single line from phone and up */}
+        <h1 className="flex-1 text-left font-heading whitespace-normal phone:whitespace-nowrap phone:absolute phone:left-1/2 phone:-translate-x-1/2 phone:text-center max-w-[80vw] phone:max-w-none" style={{ fontSize: 'clamp(20px, 8vw, 44px)', fontWeight: '800', letterSpacing: '0.02em' }}>
           <span className="text-[var(--hell-dusty-blue)] font-urbanist font-extrabold leading-[1.2]">Hell</span>{' '}
           <span className="text-[#2a1f1a] font-urbanist font-extrabold leading-[1.2]">University</span>
         </h1>

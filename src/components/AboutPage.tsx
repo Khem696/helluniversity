@@ -5,8 +5,8 @@ import PoemBook from "./PoemBook";
 
 export function AboutPage() {
   return (
-    <div className="flex flex-col lg:flex-row min-h-vp lg:h-vp overflow-hidden no-horiz-overflow lg:overflow-y-hidden">
-      <div className="w-full lg:w-1/2 relative overflow-hidden min-h-[520px] phone:min-h-[600px] tablet-md:min-h-[720px] lg:h-vp lg:overflow-hidden">
+    <div className="flex flex-col lg:flex-row min-h-vp lg:h-[100dvh] overflow-hidden no-horiz-overflow lg:overflow-y-hidden">
+      <div className="w-full lg:w-1/2 relative overflow-hidden min-h-[520px] phone:min-h-[600px] tablet-md:min-h-[720px] lg:h-[100dvh] lg:overflow-hidden">
         <div 
           className="absolute inset-0 opacity-100"
           style={{
@@ -68,7 +68,7 @@ export function AboutPage() {
         </div>
       </div>
 
-      <div className="w-full lg:w-1/2 relative overflow-hidden min-h-[420px] xxs:min-h-[460px] phone:min-h-[520px] tablet-md:min-h-[640px] lg:h-vp lg:overflow-hidden">
+      <div className="w-full lg:w-1/2 relative overflow-hidden min-h-[420px] xxs:min-h-[460px] phone:min-h-[520px] tablet-md:min-h-[640px] lg:h-[100dvh] lg:overflow-hidden">
         {/* Match hero right side background tone */}
         <div 
           className="absolute inset-0 opacity-100"

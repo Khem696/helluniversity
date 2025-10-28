@@ -8,7 +8,7 @@ export const metadata: Metadata = {
 
 export default function About() {
   return (
-    <div className="min-h-vp lg:h-vp bg-[#f4f1ed] overflow-x-hidden overflow-y-auto lg:overflow-hidden">
+    <div className="min-h-vp lg:h-[100dvh] bg-[#f4f1ed] overflow-x-hidden overflow-y-auto lg:overflow-hidden">
       <AboutContent />
     </div>
   )

@@ -11,6 +11,7 @@ interface ImageWithFallbackProps {
   width?: number
   height?: number
   priority?: boolean
+  sizes?: string
   imgClassName?: string
   objectPosition?: string
 }
@@ -22,6 +23,7 @@ export function ImageWithFallback({
   width, 
   height, 
   priority = false,
+  sizes,
   imgClassName = '',
   objectPosition
 }: ImageWithFallbackProps) {
@@ -41,6 +43,7 @@ export function ImageWithFallback({
         width={width}
         height={height}
         priority={priority}
+        sizes={sizes}
         className={`transition-opacity duration-300 ${isLoading ? 'opacity-0' : 'opacity-100'} ${imgClassName}`}
         onLoad={() => setIsLoading(false)}
         onError={() => {
