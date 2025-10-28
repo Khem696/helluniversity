@@ -57,15 +57,15 @@ export function StudioGalleryPage() {
         <div className="relative z-10 flex flex-col h-full px-4 xxs:px-6 phone:px-8 tablet-md:px-10 lg:px-12 pt-16 xxs:pt-20 phone:pt-24 tablet-md:pt-28 lg:pt-24 pb-0">
           <div className="flex flex-col items-center mb-4 xxs:mb-5 phone:mb-6 mt-6 xxs:mt-8 phone:mt-10">
             <div className="bg-[#5B9AB8]/80 px-5 xxs:px-6 phone:px-8 py-2 phone:py-3 rounded-full mb-3 xxs:mb-4 phone:mb-6">
-              <h2 className="text-white" style={{ fontSize: '24px', fontWeight: '400' }}>
+              <h2 className="text-white font-comfortaa" style={{ fontSize: '24px', fontWeight: '400' }}>
                 Studio
               </h2>
             </div>
             
-            <p className="text-[#87CEEB] text-center max-w-md mb-2" style={{ fontSize: '14px', fontWeight: '300', lineHeight: '1.6' }}>
+            <p className="text-[#87CEEB] text-center max-w-md mb-2 font-comfortaa" style={{ fontSize: '14px', fontWeight: '300', lineHeight: '1.6' }}>
               Hongsee Culture House is a creative hub
             </p>
-            <p className="text-[#87CEEB] text-center max-w-md" style={{ fontSize: '14px', fontWeight: '300', lineHeight: '1.6' }}>
+            <p className="text-[#87CEEB] text-center max-w-md font-comfortaa" style={{ fontSize: '14px', fontWeight: '300', lineHeight: '1.6' }}>
               for cultural events and the artistic community.
             </p>
 
@@ -140,15 +140,15 @@ export function StudioGalleryPage() {
         <div className="relative z-10 flex flex-col h-full px-4 xxs:px-6 phone:px-8 tablet-md:px-10 lg:px-12 pt-16 xxs:pt-20 phone:pt-24 tablet-md:pt-28 lg:pt-24 pb-0">
           <div className="flex flex-col items-center mb-4 xxs:mb-5 phone:mb-6 mt-6 xxs:mt-8 phone:mt-10">
             <div className="bg-[#5B9AB8]/80 px-5 xxs:px-6 phone:px-8 py-2 phone:py-3 rounded-full mb-3 xxs:mb-4 phone:mb-6">
-              <h2 className="text-white" style={{ fontSize: '24px', fontWeight: '400' }}>
+              <h2 className="text-white font-comfortaa" style={{ fontSize: '24px', fontWeight: '400' }}>
                 Gallery
               </h2>
             </div>
             
-            <p className="text-[#87CEEB] text-center max-w-md mb-2" style={{ fontSize: '14px', fontWeight: '300', lineHeight: '1.6' }}>
+            <p className="text-[#87CEEB] text-center max-w-md mb-2 font-comfortaa" style={{ fontSize: '14px', fontWeight: '300', lineHeight: '1.6' }}>
               Hell University, an archive and gallery
             </p>
-            <p className="text-[#87CEEB] text-center max-w-md" style={{ fontSize: '14px', fontWeight: '300', lineHeight: '1.6' }}>
+            <p className="text-[#87CEEB] text-center max-w-md font-comfortaa" style={{ fontSize: '14px', fontWeight: '300', lineHeight: '1.6' }}>
               dedicated to research and education.
             </p>
 

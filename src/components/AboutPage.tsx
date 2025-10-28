@@ -23,27 +23,27 @@ export function AboutPage() {
         <div className="relative z-10 flex flex-col justify-between h-full box-border hero-left-padding pr-4 xxs:pr-6 phone:pr-8 tablet-md:pr-12 lg:pr-16 py-10 xxs:py-12 phone:py-16 tablet-md:py-20 lg:py-0 pt-52 md:pt-56 lg:pt-56 overflow-hidden">
           <div className="md:ml-auto md:max-w-lg">
             <h1 className="text-[#68c9e0] mb-10 phone:mb-16 font-comfortaa" style={{ fontSize: 'clamp(40px, 9vw, 64px)', fontWeight: '300', lineHeight: '1' }}>
-              About
+              Why Hell University?
             </h1>
 
-            <div className="bg-[#2a2520] p-5 xxs:p-6 phone:p-8 max-w-md">
-              <h2 className="text-[#D4AF37] mb-4 phone:mb-6" style={{ fontSize: 'clamp(20px, 5vw, 28px)', fontWeight: '900', letterSpacing: '0.05em' }}>
+            <div className="p-5 xxs:p-6 phone:p-8 max-w-md">
+              {/* <h2 className="text-[#D4AF37] mb-4 phone:mb-6" style={{ fontSize: 'clamp(20px, 5vw, 28px)', fontWeight: '900', letterSpacing: '0.05em' }}>
                 BIOGRAPHY
-              </h2>
-              <p className="text-white/80 mb-1 phone:mb-6 font-comfortaa" style={{ fontSize: '14px', fontWeight: '400', lineHeight: '1.2' }}>
+              </h2> */}
+              {/* <p className="text-white/80 mb-1 phone:mb-6 font-comfortaa" style={{ fontSize: '14px', fontWeight: '400', lineHeight: '1.2' }}>
                 Some wonders seem to have no explanation<br />
                 but could only be perceived by an opening<br />
                 and extension of the mind.
-              </p>
+              </p> */}
               <div className="space-y-3">
-                <p className="text-[#D4AF37] font-comfortaa" style={{ fontSize: '16px', fontWeight: '400'}}>
-                "Hell University" เป็นชื่อชุดผลงานหนึ่งของ เกศ ซึ่งเกิดขึ้นเมื่อปี 2545 และในขณะเดียวกันนั้น เกศ ก็ได้สร้างที่พำนัก พร้อมกับพัฒนาพื้นที่ในบริเวณเดียวกันที่ อำเภอแม่แตง เพื่อสร้างสรรค์ผลงานศิลปะอย่างต่อเนื่อง 
+                <p className="text-white font-comfortaa" style={{ fontSize: '16px', fontWeight: '400'}}>
+                "Hell University" is the name of one of Kade's collections of work, which originated in 2002. At the same time, Kade also built a residence, along with developing the area in the same vicinity in Mae Taeng District, to continuously create artworks.
                 </p>
-                <p className="text-[#D4AF37] font-comfortaa" style={{ fontSize: '16px', fontWeight: '400'}}>
-                ต่อมา Hell University ได้กลายเป็นอัตลักษณ์ และแรงบันดาลใจ ของ เกศ ในการที่จะสร้างกิจกรรมทางศิลปะในพื้นที่นี้ แก่เหล่าลูกศิษย์ และผู้สนใจงานด้านศิลปะ จนดูคล้ายกับว่า สถานที่นี้ได้กลายเป็นเสมือนห้องเรียนที่ห้อมล้อมไปด้วยชีวิตและธรรมชาติที่มีความเรียบง่าย
+                <p className="text-white font-comfortaa" style={{ fontSize: '16px', fontWeight: '400'}}>
+                Later, Hell University became the identity and inspiration for Kade to create art activities in this area for students and those interested in art, until it seemed as if this place had become a classroom surrounded by simple life and nature.
                 </p>
-                <p className="text-[#D4AF37] font-comfortaa" style={{ fontSize: '16px', fontWeight: '400'}}>
-                หลังจากที่ เกศ ได้จากไปเมื่อเดือน พฤศจิกายน 2567 ทางครอบครัวและผู้ที่รัก เกศ ได้เห็นคุณค่าของผลงานและสถานที่นี้  และต้องการรักษาไว้ เพื่อส่งต่อคุณค่า ความเป็นธรรมชาติของคนจากมุมมองของ เกศ ต่อไป
+                <p className="text-white font-comfortaa" style={{ fontSize: '16px', fontWeight: '400'}}>
+                After Kade passed away in November 2024, the family and loved ones saw the value of the works and this place and wish to preserve it, to pass on its value and the naturalness of people and surroundings from Kade's perspective.
                 </p>
                 {/* <div className="border-b border-dotted border-white/30 py-2" />
                 <div className="border-b border-dotted border-white/30 py-2" />
