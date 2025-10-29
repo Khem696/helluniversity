@@ -8,7 +8,7 @@ export function Footer() {
         <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
           {/* Brand Section */}
           <div className="space-y-4">
-            <h3 className="text-2xl" style={{ fontWeight: '700' }}>HELL UNIVERSITY</h3>
+            <h3 className="text-2xl font-bold">HELL UNIVERSITY</h3>
             <p className="text-gray-300 text-sm">
               The place where Love, Fun & Joy come together. 
             </p>
@@ -21,7 +21,7 @@ export function Footer() {
 
           {/* Quick Links */}
           <div className="space-y-4">
-            <h4 className="text-lg" style={{ fontWeight: '500' }}>Quick Links</h4>
+            <h4 className="text-lg font-medium">Quick Links</h4>
             <ul className="space-y-2 text-sm text-gray-300">
               <li>
                 <Link href="/studio-gallery" className="hover:text-white transition-colors" aria-label="Studio & Gallery">
@@ -43,7 +43,7 @@ export function Footer() {
 
           {/* Contact Info */}
           <div className="space-y-4">
-            <h4 className="text-lg" style={{ fontWeight: '500' }}>Get in Touch</h4>
+            <h4 className="text-lg font-medium">Get in Touch</h4>
             <div className="space-y-2 text-sm text-gray-300">
               <p>📧 helluniversity.cm@gmail.com</p>
               <a href="https://www.facebook.com/kadejavanalikhikara" target="_blank" rel="noopener noreferrer">

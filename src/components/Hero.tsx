@@ -6,11 +6,11 @@ import { ImageWithFallback } from "./figma/ImageWithFallback"
 
 export function Hero() {
   return (
-    <section className="relative min-h-vp overflow-hidden no-horiz-overflow">
+    <section className="relative min-h-vp overflow-visible no-horiz-overflow">
       <div className="flex flex-col lg:flex-row h-full">
         {/* Left Side - Blue */}
-        <div className="w-full lg:w-1/2 min-w-0 bg-[#3e82bb] flex flex-col justify-center hero-left-padding py-10 xxs:py-12 phone:py-16 tablet-md:py-20 lg:py-24 mobile-center">
-          <div className="max-w-xl pr-3 xxs:pr-4 phone:pr-6 md:pr-6 tablet-md:pr-8 lg:pr-0 mt-16 md:mt-20 lg:mt-24 w-full">
+        <div className="w-full lg:w-1/2 min-w-0 bg-[#3e82bb] flex flex-col justify-center lg:justify-start hero-left-padding py-10 xxs:py-12 phone:py-16 tablet-md:py-20 lg:pt-4 lg:pb-16 mobile-center">
+          <div className="max-w-xl pl-6 sm:pl-0 pr-3 xxs:pr-4 phone:pr-6 md:pr-6 tablet-md:pr-8 lg:pr-0 mt-16 md:mt-32 lg:mt-48 xl:mt-48 desktop:mt-52 w-full">
             {/* Main Title */}
             <h1 className="mb-8 tablet-md:mb-10 lg:mb-12 font-acumin" style={{ fontSize: 'clamp(48px, 7.5vw, 96px)', fontWeight: '900', lineHeight: '0.9', color: '#42210b' }}>
               Hell<br />University
@@ -46,7 +46,7 @@ export function Hero() {
         </div>
 
         {/* Right Side - Textured Red/Brown with Image */}
-        <div className="w-full lg:w-1/2 min-w-0 relative overflow-hidden min-h-[420px] xxs:min-h-[460px] phone:min-h-[520px] tablet-md:min-h-[640px] lg:min-h-[100dvh]">
+        <div className="w-full lg:w-1/2 min-w-0 relative overflow-visible lg:overflow-hidden min-h-[420px] xxs:min-h-[460px] phone:min-h-[520px] tablet-md:min-h-[640px] lg:min-h-[100dvh]">
           {/* Texture Overlay */}
           <div 
             className="absolute inset-0 opacity-100"
@@ -64,7 +64,7 @@ export function Hero() {
           />
 
           {/* Portrait Image */}
-          <div className="absolute inset-0 flex items-center justify-start pl-0 pr-2 xxs:pr-3 phone:pr-6 md:pr-6 tablet-md:pr-8 lg:pl-0 lg:pr-12 pt-8 md:pt-10 lg:pt-12">
+          <div className="flex items-center lg:items-start justify-start px-4 sm:px-6 md:px-8 lg:absolute lg:inset-0 lg:pl-0 lg:pr-12 pt-8 md:pt-10 lg:pt-52 desktop:pt-56">
             <div className="relative w-full max-w-[560px] md:max-w-[620px] lg:max-w-[660px] aspect-square">
               <img
                 src={withBasePath('/assets/portrait/portrait_kade.png')}

@@ -44,10 +44,10 @@ export function PoemBook({ className }: PoemBookProps) {
 
 	return (
 		<div
-			className={"relative select-none origin-top-left lg:scale-[.72] " + (className ?? "")}
+			className={"relative select-none origin-top-left lg:scale-100 xl:scale-[.72] " + (className ?? "")}
 		>
 			{/* Book Container matches hero portrait container: object-left, contained within max width */}
-			<div className="relative w-full max-w-[720px] md:max-w-[640px] lg:max-w-[720px]">
+			<div className="relative w-full max-w-[720px] md:max-w-[640px] lg:max-w-[520px] xl:max-w-[720px]">
 				{/* Base image determines container size */}
 				<img
 					src={baseBackground}

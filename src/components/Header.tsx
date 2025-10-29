@@ -11,18 +11,18 @@ export function Header() {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false)
 
   return (
-    <header className="absolute top-0 left-0 right-0 z-50 px-4 xxs:px-6 phone:px-8 md:px-12 lg:px-[120px] xl:px-[132px] py-2 xxs:py-3 phone:py-4 lg:py-6 no-horiz-overflow">
+    <header className="absolute top-0 left-0 right-0 z-50 px-4 xxs:px-6 phone:px-8 md:px-12 lg:px-[120px] xl:px-[132px] py-2 xxs:py-3 phone:py-4 min-[639px]:max-md:py-4 lg:py-6 no-horiz-overflow">
       {/* Top Row */}
       <div className="flex items-center justify-between max-w-[1920px] mx-auto mb-0 lg:mb-0 min-w-0 relative">
         {/* Logo (hidden ≤425px) */}
-        <Link href="/" aria-label="Hell University Home" className="flex items-center justify-center ml-1 xxs:ml-2 phone:ml-3 lg:ml-0 hide-425">
+        <Link href="/" aria-label="Hell University Home" className="hidden md:flex items-center justify-center ml-1 md:ml-0">
           <div className="flex items-center justify-center w-[48px] h-[48px] xxs:w-[52px] xxs:h-[52px] xs:w-[56px] xs:h-[56px] phone:w-[64px] phone:h-[64px] lg:w-[83px] lg:h-[83px] rounded-full bg-white border-2 lg:border-4 border-[var(--hell-dusty-blue)]">
             <img src={withBasePath('/assets/icons/icon_helluniversity.svg')} alt="Hell University" width={62} height={62} className="w-[40px] h-[40px] xxs:w-[44px] xxs:h-[44px] xs:w-[46px] xs:h-[46px] phone:w-[56px] phone:h-[56px] lg:w-[73px] lg:h-[73px]" />
           </div>
         </Link>
 
         {/* Title - wraps on very small screens to avoid overlap; single line from phone and up */}
-        <h1 className="flex-1 text-left font-heading whitespace-normal phone:whitespace-nowrap phone:absolute phone:left-1/2 phone:-translate-x-1/2 phone:text-center max-w-[80vw] phone:max-w-none" style={{ fontSize: 'clamp(20px, 8vw, 44px)', fontWeight: '800', letterSpacing: '0.02em' }}>
+                <h1 className="flex-1 text-left font-heading whitespace-normal md:whitespace-nowrap md:absolute md:left-1/2 md:-translate-x-1/2 md:text-center max-w-[80vw] md:max-w-none" style={{ fontSize: 'clamp(20px, 8vw, 44px)', fontWeight: '800', letterSpacing: '0.02em' }}>
           <span className="text-[var(--hell-dusty-blue)] font-urbanist font-extrabold leading-[1.2]">Hell</span>{' '}
           <span className="text-[#2a1f1a] font-urbanist font-extrabold leading-[1.2]">University</span>
         </h1>
@@ -62,7 +62,7 @@ export function Header() {
                 </div>
 
                 {/* Right Side - Generator panel */}
-                <div className="w-full lg:w-1/2 bg-[#f4f1ed] flex items-center justify-center px-4 phone:px-6 lg:px-12 py-8 phone:py-10 lg:py-16 overflow-y-auto no-horiz-overflow">
+                <div className="w-full lg:w-1/2 bg-[#f4f1ed] flex items-center justify-center px-4 sm:px-6 lg:px-12 py-8 sm:py-10 lg:py-16 overflow-y-auto no-horiz-overflow">
                   <div className="w-full max-w-2xl bg-white/90 border rounded-lg p-6 shadow-lg">
                     <div className="mb-4">
                       <h3 className="text-[#5a3a2a] font-comfortaa" style={{ fontSize: '24px', fontWeight: '700' }}>
@@ -83,7 +83,7 @@ export function Header() {
         {/* Mobile Menu Button */}
         <button
           onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
-          className="md:hidden text-white p-2 xxs:p-3"
+          className="md:hidden text-white p-2 xxs:p-3 phone:absolute phone:right-4 phone:top-1/2 phone:-translate-y-1/2 min-[639px]:max-md:absolute min-[639px]:max-md:right-4 min-[639px]:max-md:top-1/2 min-[639px]:max-md:-translate-y-1/2"
           aria-label="Toggle navigation"
         >
           {mobileMenuOpen ? <X size={22} /> : <Menu size={22} />}

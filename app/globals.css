@@ -815,23 +815,28 @@ html {
 
 /* Align hero left text to logo left edge */
 .hero-left-padding {
-  /* Align left text start with the right edge of the header logo */
-  padding-left: 132px; /* desktop default: header padding (32) + logo (83) + gap (~16) */
+  /* Default: no special left padding on small screens; rely on container px */
+  padding-left: 0;
   box-sizing: border-box; /* prevent width+padding overflow at small widths */
 }
 
-/* Responsive tweaks to align with common Chrome device widths */
+/* Phones ≤414px */
 @media (max-width: 414px) {
-  .hero-left-padding { padding-left: 88px; box-sizing: border-box; } /* header px ~8 + logo ~64 + gap */
+  .hero-left-padding { padding-left: 24px; box-sizing: border-box; }
 }
+/* Large phones to small tablets 415–767px */
 @media (min-width: 415px) and (max-width: 767px) {
-  .hero-left-padding { padding-left: 100px; box-sizing: border-box; }
+  .hero-left-padding { padding-left: 28px; box-sizing: border-box; }
 }
-/* Tablet-specific hero alignment for iPad widths */
+/* Tablets 768–1180px */
 @media (min-width: 768px) and (max-width: 1180px) {
-  .hero-left-padding { padding-left: 120px; box-sizing: border-box; }
+  .hero-left-padding { padding-left: 40px; box-sizing: border-box; }
   /* Ensure hero columns don't overlap on tablets by providing extra breathing room */
   .hero-left-padding + * { padding-right: 2rem; }
+}
+/* Desktops ≥1181px align to header logo edge */
+@media (min-width: 1181px) {
+  .hero-left-padding { padding-left: 132px; box-sizing: border-box; }
 }
 
 .nav-item, .menu-item {

@@ -192,11 +192,11 @@ export function StudioGalleryPage() {
         /> */}
 
         {/* Content row */}
-        <div className="relative z-10 flex flex-col md:flex-row mt-12 xxs:mt-16 phone:mt-20 tablet-md:mt-24 lg:mt-28">
+        <div className="relative z-10 flex flex-col md:flex-row mt-[clamp(128px,9vw,168px)] lg:mt-0">
       {/* Left Side - Studio */}
       <div className="w-full md:w-1/2 relative overflow-hidden">
 
-        <div className="relative z-10 flex flex-col h-full px-4 xxs:px-6 phone:px-8 tablet-md:px-10 lg:px-12 pt-10 xxs:pt-12 phone:pt-16 tablet-md:pt-16 lg:pt-16 pb-0">
+        <div className="relative z-10 flex flex-col h-full px-4 xxs:px-6 phone:px-8 tablet-md:px-10 lg:px-12 pt-10 xxs:pt-12 phone:pt-16 tablet-md:pt-16 lg:pt-52 pb-0">
           <div className="flex flex-col items-center mb-4 xxs:mb-4 phone:mb-5 mt-4 xxs:mt-4 phone:mt-5">
             <div className="bg-[#5B9AB8]/80 px-5 xxs:px-6 phone:px-8 py-2 phone:py-3 rounded-full mb-3 xxs:mb-4 phone:mb-6">
               <h2 className="text-white font-comfortaa" style={{ fontSize: '24px', fontWeight: '400' }}>
@@ -216,7 +216,7 @@ export function StudioGalleryPage() {
             </div>
           </div>
 
-          <div className="grid grid-cols-3 gap-4 xxs:gap-3 phone:gap-4 tablet-md:gap-5 mt-4 phone:mt-5 tablet-md:mt-5 w-full">
+          <div className="grid grid-cols-3 gap-2 sm:gap-3 md:gap-4 lg:gap-5 mt-4 sm:mt-5 w-full">
             {/** Row 1: [1]=artwork A top, [2-3]=building top row */}
             {renderTile(
               "studio-1",
@@ -310,7 +310,7 @@ export function StudioGalleryPage() {
       {/* Right Side - Gallery */}
       <div className="w-full md:w-1/2 relative overflow-hidden">
 
-        <div className="relative z-10 flex flex-col h-full px-4 xxs:px-6 phone:px-8 tablet-md:px-10 lg:px-12 pt-10 xxs:pt-12 phone:pt-16 tablet-md:pt-16 lg:pt-16 pb-0">
+        <div className="relative z-10 flex flex-col h-full px-4 xxs:px-6 phone:px-8 tablet-md:px-10 lg:px-12 pt-10 xxs:pt-12 phone:pt-16 tablet-md:pt-16 lg:pt-52 pb-0">
           <div className="flex flex-col items-center mb-4 xxs:mb-4 phone:mb-5 mt-4 xxs:mt-4 phone:mt-5">
             <div className="bg-[#5B9AB8]/80 px-5 xxs:px-6 phone:px-8 py-2 phone:py-3 rounded-full mb-3 xxs:mb-4 phone:mb-6">
               <h2 className="text-white font-comfortaa" style={{ fontSize: '24px', fontWeight: '400' }}>
@@ -330,7 +330,7 @@ export function StudioGalleryPage() {
             </div>
           </div>
 
-          <div className="grid grid-cols-3 gap-4 xxs:gap-3 phone:gap-4 tablet-md:gap-5 mt-4 phone:mt-5 tablet-md:mt-5 w-full">
+          <div className="grid grid-cols-3 gap-2 sm:gap-3 md:gap-4 lg:gap-5 mt-4 sm:mt-5 w-full">
             <div className="aspect-[16/9] bg-[#2C5F6F]/90 overflow-hidden">
               <div className="w-full h-full flex items-center justify-center">
                 <span style={{ fontSize: '12px', fontWeight: '500', color: 'white' }}>Archive 1</span>
