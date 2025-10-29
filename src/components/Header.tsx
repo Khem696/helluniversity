@@ -3,7 +3,7 @@
 import Link from "next/link"
 import { useState } from "react"
 import { Wand2, Menu, X } from "lucide-react"
-import { Dialog, DialogTrigger, DialogContent } from "@/components/ui/dialog"
+import { Dialog, DialogTrigger, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog"
 import { AISpaceGenerator } from "@/components/AISpaceGenerator"
 import { withBasePath } from "@/lib/utils"
 
@@ -37,6 +37,10 @@ export function Header() {
           </DialogTrigger>
 
           <DialogContent className="top-0 left-0 translate-x-0 translate-y-0 w-full h-vp max-w-none sm:max-w-none rounded-none border-0 p-0 bg-transparent">
+            <DialogHeader className="sr-only">
+              <DialogTitle>AI GenSpace</DialogTitle>
+              <DialogDescription>Menu and AI Space Generator modal</DialogDescription>
+            </DialogHeader>
             <div className="relative min-h-vp">
               <div className="flex flex-col lg:flex-row min-h-vp">
                 {/* Left Side - Hero-like panel */}

@@ -4,7 +4,7 @@ import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react"
 import { ChevronDown } from "lucide-react";
 import { ImageWithFallback } from "./figma/ImageWithFallback";
 import { withBasePath } from "@/lib/utils";
-import { Dialog, DialogContent } from "./ui/dialog";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "./ui/dialog";
 import {
   Carousel,
   CarouselContent,
@@ -393,6 +393,10 @@ export function StudioGalleryPage() {
       </section>
       <Dialog open={viewerOpen} onOpenChange={setViewerOpen}>
         <DialogContent className="p-0 border-0 max-w-none sm:max-w-none md:max-w-none lg:max-w-none w-screen h-screen top-0 left-0 translate-x-0 translate-y-0 rounded-none bg-black overflow-hidden">
+          <DialogHeader className="sr-only">
+            <DialogTitle>Image viewer</DialogTitle>
+            <DialogDescription>Full-screen carousel to browse studio and building images.</DialogDescription>
+          </DialogHeader>
           <div className="relative w-screen h-screen">
             <Carousel className="w-full h-full" setApi={setCarouselApi} opts={{ startIndex: viewerIndex }}>
               <CarouselContent className="h-full ml-0">
