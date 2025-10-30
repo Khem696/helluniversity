@@ -11,13 +11,13 @@ export function Header() {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false)
 
   return (
-    <header className="absolute top-0 left-0 right-0 z-50 px-4 xxs:px-6 phone:px-8 md:px-12 lg:px-[120px] xl:px-[132px] py-2 xxs:py-3 phone:py-4 min-[639px]:max-md:py-4 lg:py-6 no-horiz-overflow">
+    <header className="absolute top-0 left-0 right-0 z-50 px-4 sm:px-6 md:px-8 lg:px-12 xl:px-16 py-2 sm:py-3 md:py-4 lg:py-6 no-horiz-overflow">
       {/* Top Row */}
       <div className="flex items-center justify-between max-w-[1920px] mx-auto mb-0 lg:mb-0 min-w-0 relative">
         {/* Logo (hidden ≤425px) */}
         <Link href="/" aria-label="Hell University Home" className="hidden md:flex items-center justify-center ml-1 md:ml-0">
-          <div className="flex items-center justify-center w-[48px] h-[48px] xxs:w-[52px] xxs:h-[52px] xs:w-[56px] xs:h-[56px] phone:w-[64px] phone:h-[64px] lg:w-[83px] lg:h-[83px] rounded-full bg-white border-2 lg:border-4 border-[var(--hell-dusty-blue)]">
-            <img src={withBasePath('/assets/icons/icon_helluniversity.svg')} alt="Hell University" width={62} height={62} className="w-[40px] h-[40px] xxs:w-[44px] xxs:h-[44px] xs:w-[46px] xs:h-[46px] phone:w-[56px] phone:h-[56px] lg:w-[73px] lg:h-[73px]" />
+          <div className="flex items-center justify-center w-12 h-12 sm:w-14 sm:h-14 md:w-16 md:h-16 lg:w-20 lg:h-20 rounded-full bg-white border-2 lg:border-4 border-[var(--hell-dusty-blue)]">
+            <img src={withBasePath('/assets/icons/icon_helluniversity.svg')} alt="Hell University" width={62} height={62} className="w-10 h-10 sm:w-11 sm:h-11 md:w-12 md:h-12 lg:w-16 lg:h-16" />
           </div>
         </Link>
 
@@ -29,7 +29,7 @@ export function Header() {
 
         {/* Global Modal Trigger (replacing Log In) */}
         <Dialog>
-          <DialogTrigger className="hidden md:flex flex-col items-center gap-1 text-white/80 hover:text-white transition-colors mr-1 xxs:mr-2 phone:mr-3 lg:mr-0" aria-label="Open AI GenSpace">
+          <DialogTrigger className="hidden md:flex flex-col items-center gap-1 text-white/80 hover:text-white transition-colors mr-1 sm:mr-2 md:mr-3 lg:mr-0" aria-label="Open AI GenSpace">
             <div className="w-8 h-8 rounded-full bg-white/20 flex items-center justify-center">
               <Wand2 size={16} className="text-white" />
             </div>
@@ -44,8 +44,8 @@ export function Header() {
             <div className="relative min-h-vp">
               <div className="flex flex-col lg:flex-row min-h-vp">
                 {/* Left Side - Hero-like panel */}
-                <div className="w-full lg:w-1/2 bg-[#5B9AB8] flex flex-col justify-center hero-left-padding py-12 phone:py-16 lg:py-24">
-                  <div className="max-w-xl px-6 phone:px-8 lg:px-12">
+                <div className="w-full lg:w-1/2 bg-[#5B9AB8] flex flex-col justify-center xl:pl-32 py-12 md:py-16 lg:py-24">
+                  <div className="max-w-xl px-6 md:px-8 lg:px-12">
                     <h1 className="mb-8 lg:mb-12 font-heading" style={{ fontSize: 'clamp(48px, 8vw, 96px)', fontWeight: '900', lineHeight: '0.9', color: '#5a3a2a' }}>
                       Hell<br />University
                     </h1>
@@ -83,7 +83,7 @@ export function Header() {
         {/* Mobile Menu Button */}
         <button
           onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
-          className="md:hidden text-white p-2 xxs:p-3 phone:absolute phone:right-4 phone:top-1/2 phone:-translate-y-1/2 min-[639px]:max-md:absolute min-[639px]:max-md:right-4 min-[639px]:max-md:top-1/2 min-[639px]:max-md:-translate-y-1/2"
+          className="md:hidden text-white p-2 sm:p-3 sm:absolute sm:right-4 sm:top-1/2 sm:-translate-y-1/2"
           aria-label="Toggle navigation"
         >
           {mobileMenuOpen ? <X size={22} /> : <Menu size={22} />}

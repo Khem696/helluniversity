@@ -196,9 +196,9 @@ export function StudioGalleryPage() {
       {/* Left Side - Studio */}
       <div className="w-full md:w-1/2 relative overflow-hidden">
 
-        <div className="relative z-10 flex flex-col h-full px-4 xxs:px-6 phone:px-8 tablet-md:px-10 lg:px-12 pt-10 xxs:pt-12 phone:pt-16 tablet-md:pt-16 lg:pt-52 pb-0">
-          <div className="flex flex-col items-center mb-4 xxs:mb-4 phone:mb-5 mt-4 xxs:mt-4 phone:mt-5">
-            <div className="bg-[#5B9AB8]/80 px-5 xxs:px-6 phone:px-8 py-2 phone:py-3 rounded-full mb-3 xxs:mb-4 phone:mb-6">
+        <div className="relative z-10 flex flex-col h-full px-4 sm:px-6 md:px-8 lg:px-12 pt-10 sm:pt-12 md:pt-16 lg:pt-52 pb-0">
+          <div className="flex flex-col items-center mb-4 sm:mb-4 md:mb-5 mt-4 sm:mt-4 md:mt-5">
+            <div className="bg-[#5B9AB8]/80 px-5 sm:px-6 md:px-8 py-2 md:py-3 rounded-full mb-3 sm:mb-4 md:mb-6">
               <h2 className="text-white font-comfortaa" style={{ fontSize: '24px', fontWeight: '400' }}>
                 Studio
               </h2>
@@ -310,9 +310,9 @@ export function StudioGalleryPage() {
       {/* Right Side - Gallery */}
       <div className="w-full md:w-1/2 relative overflow-hidden">
 
-        <div className="relative z-10 flex flex-col h-full px-4 xxs:px-6 phone:px-8 tablet-md:px-10 lg:px-12 pt-10 xxs:pt-12 phone:pt-16 tablet-md:pt-16 lg:pt-52 pb-0">
-          <div className="flex flex-col items-center mb-4 xxs:mb-4 phone:mb-5 mt-4 xxs:mt-4 phone:mt-5">
-            <div className="bg-[#5B9AB8]/80 px-5 xxs:px-6 phone:px-8 py-2 phone:py-3 rounded-full mb-3 xxs:mb-4 phone:mb-6">
+        <div className="relative z-10 flex flex-col h-full px-4 sm:px-6 md:px-8 lg:px-12 pt-10 sm:pt-12 md:pt-16 lg:pt-52 pb-0">
+          <div className="flex flex-col items-center mb-4 sm:mb-4 md:mb-5 mt-4 sm:mt-4 md:mt-5">
+            <div className="bg-[#5B9AB8]/80 px-5 sm:px-6 md:px-8 py-2 md:py-3 rounded-full mb-3 sm:mb-4 md:mb-6">
               <h2 className="text-white font-comfortaa" style={{ fontSize: '24px', fontWeight: '400' }}>
                 Gallery
               </h2>

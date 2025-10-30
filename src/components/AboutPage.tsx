@@ -6,7 +6,7 @@ import PoemBook from "./PoemBook";
 export function AboutPage() {
   return (
     <div className="flex flex-col lg:flex-row min-h-vp lg:h-[100dvh] overflow-visible no-horiz-overflow">
-      <div className="w-full lg:w-1/2 relative overflow-hidden min-h-[520px] phone:min-h-[600px] tablet-md:min-h-[720px] lg:h-[100dvh] lg:overflow-hidden">
+      <div className="w-full lg:w-1/2 relative overflow-hidden min-h-[520px] sm:min-h-[600px] md:min-h-[720px] lg:h-[100dvh] lg:overflow-hidden">
         <div 
           className="absolute inset-0 opacity-100"
           style={{
@@ -20,13 +20,13 @@ export function AboutPage() {
 
         {/* Removed colored blur overlays to preserve original artwork tones */}
 
-        <div className="relative z-10 flex flex-col justify-between h-full box-border hero-left-padding pr-4 xxs:pr-6 phone:pr-8 tablet-md:pr-12 lg:pr-16 py-10 xxs:py-12 phone:py-16 min-[769px]:max-lg:py-16 lg:py-0 pt-[96px] phone:pt-[80px] min-[415px]:pt-[80px] md:pt-[184px] lg:pt-56 overflow-hidden">
+        <div className="relative z-10 flex flex-col justify-between h-full box-border xl:pl-32 pr-4 sm:pr-6 md:pr-8 lg:pr-16 py-10 sm:py-12 md:py-16 lg:py-0 pt-24 md:pt-48 lg:pt-56 overflow-hidden">
           <div className="md:mx-auto lg:mx-0 lg:ml-auto md:max-w-lg">
-            <h1 className="text-[#68c9e0] mt-[24px] min-[415px]:mt-0 min-[769px]:max-lg:mt-[72px] lg:mt-0 mb-8 phone:mb-12 lg:mb-6 font-comfortaa text-[clamp(30px,8.5vw,42px)] min-[427px]:text-[clamp(34px,8vw,48px)] md:text-[clamp(40px,9vw,64px)] leading-[1] whitespace-normal break-words max-w-[16ch] min-[427px]:max-w-[18ch] md:max-w-none">
+            <h1 className="text-[#68c9e0] mt-[24px] min-[415px]:mt-0 min-[769px]:max-lg:mt-[72px] lg:mt-0 mb-8 sm:mb-12 lg:mb-6 font-comfortaa text-[clamp(30px,8.5vw,42px)] min-[427px]:text-[clamp(34px,8vw,48px)] md:text-[clamp(40px,9vw,64px)] leading-[1] whitespace-normal break-words max-w-[16ch] min-[427px]:max-w-[18ch] md:max-w-none">
               Why Hell University?
             </h1>
 
-            <div className="p-5 xxs:p-6 phone:p-8 md:p-6 lg:p-5 max-w-[22rem] min-[427px]:max-w-md">
+            <div className="p-5 sm:p-6 md:p-6 lg:p-5 max-w-[22rem] min-[427px]:max-w-md">
               {/* <h2 className="text-[#D4AF37] mb-4 phone:mb-6" style={{ fontSize: 'clamp(20px, 5vw, 28px)', fontWeight: '900', letterSpacing: '0.05em' }}>
                 BIOGRAPHY
               </h2> */}
@@ -54,7 +54,7 @@ export function AboutPage() {
             </div>
           </div>
 
-          <div className="flex gap-5 xxs:gap-6 phone:gap-8 mt-8 phone:mt-0">
+          <div className="flex gap-5 sm:gap-6 md:gap-8 mt-8 md:mt-0">
             <button className="text-white hover:text-[#87CEEB] transition-colors">
               <Facebook size={18} />
             </button>
@@ -68,7 +68,7 @@ export function AboutPage() {
         </div>
       </div>
 
-      <div className="w-full lg:w-1/2 relative overflow-visible lg:overflow-hidden min-h-[420px] xxs:min-h-[460px] phone:min-h-[520px] tablet-md:min-h-[640px] lg:h-[100dvh]">
+      <div className="w-full lg:w-1/2 relative overflow-visible lg:overflow-hidden min-h-[420px] sm:min-h-[460px] md:min-h-[520px] lg:min-h-[640px] lg:h-[100dvh]">
         {/* Match hero right side background tone */}
         <div 
           className="absolute inset-0 opacity-100"

@@ -61,8 +61,6 @@ img, picture, video, canvas {
 
 /* Small-device helpers (≤425px) */
 @media (max-width: 425px) {
-  .hide-425 { display: none !important; }
-  .show-425 { display: flex !important; }
   /* Center the block on screen but keep text left-aligned */
   .mobile-center {
     padding-left: 0 !important;
@@ -813,31 +811,7 @@ html {
 
 /* Do not force a universal font-family; use Tailwind classes (font-body, font-heading, font-ui) */
 
-/* Align hero left text to logo left edge */
-.hero-left-padding {
-  /* Default: no special left padding on small screens; rely on container px */
-  padding-left: 0;
-  box-sizing: border-box; /* prevent width+padding overflow at small widths */
-}
-
-/* Phones ≤414px */
-@media (max-width: 414px) {
-  .hero-left-padding { padding-left: 24px; box-sizing: border-box; }
-}
-/* Large phones to small tablets 415–767px */
-@media (min-width: 415px) and (max-width: 767px) {
-  .hero-left-padding { padding-left: 28px; box-sizing: border-box; }
-}
-/* Tablets 768–1180px */
-@media (min-width: 768px) and (max-width: 1180px) {
-  .hero-left-padding { padding-left: 40px; box-sizing: border-box; }
-  /* Ensure hero columns don't overlap on tablets by providing extra breathing room */
-  .hero-left-padding + * { padding-right: 2rem; }
-}
-/* Desktops ≥1181px align to header logo edge */
-@media (min-width: 1181px) {
-  .hero-left-padding { padding-left: 132px; box-sizing: border-box; }
-}
+/* Alignments now handled with Tailwind utilities (xl:pl-32 etc.) */
 
 .nav-item, .menu-item {
   font-size: .75rem;

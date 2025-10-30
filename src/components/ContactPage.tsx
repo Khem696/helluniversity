@@ -27,7 +27,7 @@ export function ContactPage() {
 
         <div className="relative md:absolute md:inset-x-0 md:bottom-0 md:top-28 lg:top-36 xl:top-40 flex flex-col justify-center px-4 sm:px-6 md:px-8 lg:px-16 py-10 md:py-16 lg:py-24">
           <div className="max-w-md">
-            <h1 className="text-[#87CEEB] mb-8 phone:mb-12" style={{ fontSize: 'clamp(42px, 9vw, 72px)', fontWeight: '700', letterSpacing: '0.05em' }}>
+            <h1 className="text-[#87CEEB] mb-8 sm:mb-12" style={{ fontSize: 'clamp(42px, 9vw, 72px)', fontWeight: '700', letterSpacing: '0.05em' }}>
               CONTACT
             </h1>
 
