@@ -22,7 +22,7 @@ export function Header() {
         </Link>
 
         {/* Title - wraps on very small screens to avoid overlap; single line from phone and up */}
-                <h1 className="flex-1 text-left font-heading whitespace-normal md:whitespace-nowrap md:absolute md:left-1/2 md:-translate-x-1/2 md:text-center max-w-[80vw] md:max-w-none" style={{ fontSize: 'clamp(20px, 8vw, 44px)', fontWeight: '800', letterSpacing: '0.02em' }}>
+                <h1 className="flex-1 text-left font-heading font-extrabold tracking-wide whitespace-normal md:whitespace-nowrap md:absolute md:left-1/2 md:-translate-x-1/2 md:text-center max-w-[80vw] md:max-w-none text-xl sm:text-2xl md:text-3xl lg:text-5xl">
           <span className="text-[var(--hell-dusty-blue)] font-urbanist font-extrabold leading-[1.2]">Hell</span>{' '}
           <span className="text-[#2a1f1a] font-urbanist font-extrabold leading-[1.2]">University</span>
         </h1>
@@ -33,7 +33,7 @@ export function Header() {
             <div className="w-8 h-8 rounded-full bg-white/20 flex items-center justify-center">
               <Wand2 size={16} className="text-white" />
             </div>
-            <span className="hidden lg:inline font-comfortaa" style={{ fontSize: '14px', fontWeight: '400' }}>AI GenSpace</span>
+            <span className="hidden lg:inline font-comfortaa text-sm font-normal">AI GenSpace</span>
           </DialogTrigger>
 
           <DialogContent className="top-0 left-0 translate-x-0 translate-y-0 w-full h-vp max-w-none sm:max-w-none rounded-none border-0 p-0 bg-transparent">

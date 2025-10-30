@@ -6,7 +6,7 @@ import PoemBook from "./PoemBook";
 export function AboutPage() {
   return (
     <div className="flex flex-col lg:flex-row min-h-vp lg:h-[100dvh] overflow-visible no-horiz-overflow">
-      <div className="w-full lg:w-1/2 relative overflow-hidden min-h-[520px] sm:min-h-[600px] md:min-h-[720px] lg:h-[100dvh] lg:overflow-hidden">
+      <div className="@container/about-left w-full lg:w-1/2 relative overflow-hidden min-h-[520px] sm:min-h-[600px] md:min-h-[720px] lg:h-[100dvh] lg:overflow-hidden">
         <div 
           className="absolute inset-0 opacity-100"
           style={{
@@ -20,9 +20,9 @@ export function AboutPage() {
 
         {/* Removed colored blur overlays to preserve original artwork tones */}
 
-        <div className="relative z-10 flex flex-col justify-between h-full box-border xl:pl-32 pr-4 sm:pr-6 md:pr-8 lg:pr-16 py-10 sm:py-12 md:py-16 lg:py-0 pt-24 md:pt-48 lg:pt-56 overflow-hidden">
-          <div className="md:mx-auto lg:mx-0 lg:ml-auto md:max-w-lg">
-            <h1 className="text-[#68c9e0] mt-[24px] min-[415px]:mt-0 min-[769px]:max-lg:mt-[72px] lg:mt-0 mb-8 sm:mb-12 lg:mb-6 font-comfortaa text-[clamp(30px,8.5vw,42px)] min-[427px]:text-[clamp(34px,8vw,48px)] md:text-[clamp(40px,9vw,64px)] leading-[1] whitespace-normal break-words max-w-[16ch] min-[427px]:max-w-[18ch] md:max-w-none">
+        <div className="cq cq-about relative z-10 flex flex-col justify-between h-full box-border pl-6 sm:pl-6 md:pl-8 lg:pl-10 xl:pl-32 pr-4 sm:pr-6 md:pr-8 lg:pr-16 py-10 sm:py-12 md:py-16 lg:py-0 pt-24 md:pt-48 lg:pt-56 overflow-hidden">
+          <div className="w-11/12 sm:w-5/6 md:w-4/5 lg:w-3/4 xl:w-2/3 md:mx-auto lg:mx-0 lg:ml-auto md:max-w-lg">
+            <h1 className="text-[#68c9e0] mt-[24px] min-[415px]:mt-0 min-[769px]:max-lg:mt-[72px] lg:mt-0 mb-8 sm:mb-12 lg:mb-6 font-comfortaa leading-[1] whitespace-normal break-words max-w-[16ch] min-[427px]:max-w-[18ch] md:max-w-none text-3xl sm:text-4xl md:text-6xl">
               Why Hell University?
             </h1>
 
@@ -35,14 +35,14 @@ export function AboutPage() {
                 but could only be perceived by an opening<br />
                 and extension of the mind.
               </p> */}
-              <div className="space-y-3 lg:space-y-2">
-                <p className="text-white font-comfortaa text-[14px] min-[427px]:text-[15px] md:text-base xl:text-lg font-normal leading-relaxed">
+              <div className="about-body space-y-3 lg:space-y-2">
+                <p className="text-white font-comfortaa text-sm md:text-base xl:text-lg font-normal leading-relaxed">
                 "Hell University" is the name of one of Kade's collections of work, which originated in 2002. At the same time, Kade also built a residence, along with developing the area in the same vicinity in Mae Taeng District, to continuously create artworks.
                 </p>
-                <p className="text-white font-comfortaa text-[14px] min-[427px]:text-[15px] md:text-base xl:text-lg font-normal leading-relaxed">
+                <p className="text-white font-comfortaa text-sm md:text-base xl:text-lg font-normal leading-relaxed">
                 Later, Hell University became the identity and inspiration for Kade to create art activities in this area for students and those interested in art, until it seemed as if this place had become a classroom surrounded by simple life and nature.
                 </p>
-                <p className="text-white font-comfortaa text-[14px] min-[427px]:text-[15px] md:text-base xl:text-lg font-normal leading-relaxed">
+                <p className="text-white font-comfortaa text-sm md:text-base xl:text-lg font-normal leading-relaxed">
                 After Kade passed away in November 2024, the family and loved ones saw the value of the works and this place and wish to preserve it, to pass on its value and the naturalness of people and surroundings from Kade's perspective.
                 </p>
                 {/* <div className="border-b border-dotted border-white/30 py-2" />
@@ -68,7 +68,7 @@ export function AboutPage() {
         </div>
       </div>
 
-      <div className="w-full lg:w-1/2 relative overflow-visible lg:overflow-hidden min-h-[420px] sm:min-h-[460px] md:min-h-[520px] lg:min-h-[640px] lg:h-[100dvh]">
+      <div className="@container/about-right w-full lg:w-1/2 relative overflow-visible lg:overflow-hidden min-h-[420px] sm:min-h-[460px] md:min-h-[520px] lg:min-h-[640px] lg:h-[100dvh]">
         {/* Match hero right side background tone */}
         <div 
           className="absolute inset-0 opacity-100"

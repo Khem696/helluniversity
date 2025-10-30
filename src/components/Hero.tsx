@@ -9,15 +9,15 @@ export function Hero() {
     <section className="relative min-h-vp overflow-visible no-horiz-overflow">
       <div className="flex flex-col lg:flex-row h-full">
         {/* Left Side - Blue */}
-        <div className="w-full lg:w-1/2 min-w-0 bg-[#3e82bb] flex flex-col justify-center lg:justify-start xl:pl-32 py-10 sm:py-12 md:py-16 lg:py-20 lg:pt-4 lg:pb-16 mobile-center">
-          <div className="max-w-xl pl-6 sm:pl-0 pr-3 sm:pr-4 md:pr-6 lg:pr-8 xl:pr-0 mt-16 md:mt-32 lg:mt-48 xl:mt-48 2xl:mt-52 w-full">
+        <div className="w-full lg:w-1/2 min-w-0 bg-[#3e82bb] flex flex-col justify-center lg:justify-start hero-left-padding py-10 xxs:py-12 phone:py-16 tablet-md:py-20 lg:pt-4 lg:pb-16 mobile-center">
+          <div className="max-w-xl pl-6 sm:pl-0 pr-3 xxs:pr-4 phone:pr-6 md:pr-6 tablet-md:pr-8 lg:pr-0 mt-16 md:mt-32 lg:mt-48 xl:mt-48 desktop:mt-52 w-full">
             {/* Main Title */}
-            <h1 className="mb-8 md:mb-10 lg:mb-12 font-acumin" style={{ fontSize: 'clamp(48px, 7.5vw, 96px)', fontWeight: '900', lineHeight: '0.9', color: '#42210b' }}>
+            <h1 className="mb-8 tablet-md:mb-10 lg:mb-12 font-acumin" style={{ fontSize: 'clamp(48px, 7.5vw, 96px)', fontWeight: '900', lineHeight: '0.9', color: '#42210b' }}>
               Hell<br />University
             </h1>
 
             {/* Culture House */}
-            <h2 className="text-white mb-10 sm:mb-12 lg:mb-16 font-urbanist" style={{ fontSize: 'clamp(30px, 5.5vw, 56px)', fontWeight: '800', lineHeight: '1.2' }}>
+            <h2 className="text-white mb-10 phone:mb-12 lg:mb-16 font-urbanist" style={{ fontSize: 'clamp(30px, 5.5vw, 56px)', fontWeight: '800', lineHeight: '1.2' }}>
               Culture Hub
             </h2>
 
@@ -46,7 +46,7 @@ export function Hero() {
         </div>
 
         {/* Right Side - Textured Red/Brown with Image */}
-        <div className="w-full lg:w-1/2 min-w-0 relative overflow-visible lg:overflow-hidden min-h-[420px] sm:min-h-[460px] md:min-h-[520px] lg:min-h-[100dvh]">
+        <div className="w-full lg:w-1/2 min-w-0 relative overflow-visible lg:overflow-hidden min-h-[420px] xxs:min-h-[460px] phone:min-h-[520px] tablet-md:min-h-[640px] lg:min-h-[100dvh]">
           {/* Texture Overlay */}
           <div 
             className="absolute inset-0 opacity-100"
@@ -64,7 +64,7 @@ export function Hero() {
           />
 
           {/* Portrait Image */}
-          <div className="flex items-center lg:items-start justify-start px-4 sm:px-6 md:px-8 lg:absolute lg:inset-0 lg:pl-0 lg:pr-12 pt-8 md:pt-10 lg:pt-52 2xl:pt-56">
+          <div className="flex items-center lg:items-start justify-start px-4 sm:px-6 md:px-8 lg:absolute lg:inset-0 lg:pl-0 lg:pr-12 pt-8 md:pt-10 lg:pt-52 desktop:pt-56">
             <div className="relative w-full max-w-[560px] md:max-w-[620px] lg:max-w-[660px] aspect-square">
               <img
                 src={withBasePath('/assets/portrait/portrait_kade.png')}
@@ -78,8 +78,8 @@ export function Hero() {
               />
               
               {/* Quote Overlay */}
-              <div className="absolute bottom-3 sm:bottom-4 md:bottom-6 left-3 sm:left-4 md:left-6 right-3 sm:right-4 md:right-6">
-                <p className="text-[#D4AF37] mb-4 md:mb-6 hidden sm:block font-comfortaa" style={{ fontSize: '14px', fontWeight: '300', lineHeight: '1.8', fontStyle: 'regular' }}>
+              <div className="absolute bottom-3 xxs:bottom-4 phone:bottom-6 left-3 xxs:left-4 phone:left-6 right-3 xxs:right-4 phone:right-6">
+                <p className="text-[#D4AF37] mb-4 phone:mb-6 xxs:block hidden font-comfortaa" style={{ fontSize: '14px', fontWeight: '300', lineHeight: '1.8', fontStyle: 'regular' }}>
                   Some wonders seem to have no explanation<br />
                   but could only be perceived by an opening<br />
                   and extension of the mind.
@@ -92,7 +92,7 @@ export function Hero() {
       </div>
 
           {/* Social Icons */}
-          <div className="absolute bottom-3 sm:bottom-5 md:bottom-10 right-2 sm:right-4 md:right-6 lg:right-12 flex flex-row md:flex-col gap-3 sm:gap-4 md:gap-6">
+          <div className="absolute bottom-3 xxs:bottom-5 phone:bottom-10 right-2 xxs:right-4 phone:right-6 lg:right-12 flex flex-row phone:flex-col gap-3 xxs:gap-4 phone:gap-6">
             <button className="text-white hover:text-[#D4AF37] transition-colors">
               <Facebook size={18} />
             </button>

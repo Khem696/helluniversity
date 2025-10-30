@@ -158,7 +158,7 @@ export function StudioGalleryPage() {
   return (
     <div className="min-h-vp bg-[#7a2d28]">
       {/* Section wrapper: limits background layers to the Studio/Gallery area only */}
-      <section className="relative overflow-hidden pb-0" style={{ minHeight: 'calc(100dvh - clamp(128px, 9vw, 168px))' }}>
+      <section className="relative overflow-hidden pb-0 md:min-h-screen" style={{ minHeight: 'calc(100dvh - clamp(128px, 9vw, 168px))' }}>
         {/* Darker red stripe across this section only (start below header) */}
         <div
           className="pointer-events-none absolute left-0 right-0 bg-[#42210b]"
@@ -194,20 +194,20 @@ export function StudioGalleryPage() {
         {/* Content row */}
         <div className="relative z-10 flex flex-col md:flex-row mt-[clamp(128px,9vw,168px)] lg:mt-0">
       {/* Left Side - Studio */}
-      <div className="w-full md:w-1/2 relative overflow-hidden">
+      <div className="@container/studio-left w-full md:w-1/2 relative overflow-hidden">
 
-        <div className="relative z-10 flex flex-col h-full px-4 sm:px-6 md:px-8 lg:px-12 pt-10 sm:pt-12 md:pt-16 lg:pt-52 pb-0">
+        <div className="relative z-10 flex flex-col h-full px-4 sm:px-6 md:px-8 lg:px-12 pt-10 sm:pt-12 md:pt-16 lg:pt-52 pb-12 md:pb-16">
           <div className="flex flex-col items-center mb-4 sm:mb-4 md:mb-5 mt-4 sm:mt-4 md:mt-5">
             <div className="bg-[#5B9AB8]/80 px-5 sm:px-6 md:px-8 py-2 md:py-3 rounded-full mb-3 sm:mb-4 md:mb-6">
-              <h2 className="text-white font-comfortaa" style={{ fontSize: '24px', fontWeight: '400' }}>
+              <h2 className="text-white font-comfortaa text-2xl font-normal">
                 Studio
               </h2>
             </div>
             
-            <p className="text-[#87CEEB] text-center max-w-md mb-1 font-comfortaa" style={{ fontSize: '14px', fontWeight: '300', lineHeight: '1.6' }}>
+            <p className="text-[#87CEEB] text-center max-w-md mb-1 font-comfortaa text-sm font-light leading-relaxed">
               Hongsee Culture House is a creative hub
             </p>
-            <p className="text-[#87CEEB] text-center max-w-md font-comfortaa" style={{ fontSize: '14px', fontWeight: '300', lineHeight: '1.6' }}>
+            <p className="text-[#87CEEB] text-center max-w-md font-comfortaa text-sm font-light leading-relaxed">
               for cultural events and the artistic community.
             </p>
 
@@ -308,12 +308,12 @@ export function StudioGalleryPage() {
       </div>
 
       {/* Right Side - Gallery */}
-      <div className="w-full md:w-1/2 relative overflow-hidden">
+      <div className="@container/studio-right w-full md:w-1/2 relative overflow-hidden">
 
-        <div className="relative z-10 flex flex-col h-full px-4 sm:px-6 md:px-8 lg:px-12 pt-10 sm:pt-12 md:pt-16 lg:pt-52 pb-0">
+        <div className="relative z-10 flex flex-col h-full px-4 sm:px-6 md:px-8 lg:px-12 pt-10 sm:pt-12 md:pt-16 lg:pt-52 pb-12 md:pb-16">
           <div className="flex flex-col items-center mb-4 sm:mb-4 md:mb-5 mt-4 sm:mt-4 md:mt-5">
             <div className="bg-[#5B9AB8]/80 px-5 sm:px-6 md:px-8 py-2 md:py-3 rounded-full mb-3 sm:mb-4 md:mb-6">
-              <h2 className="text-white font-comfortaa" style={{ fontSize: '24px', fontWeight: '400' }}>
+              <h2 className="text-white font-comfortaa text-2xl font-normal">
                 Gallery
               </h2>
             </div>
@@ -333,7 +333,7 @@ export function StudioGalleryPage() {
           <div className="grid grid-cols-3 gap-2 sm:gap-3 md:gap-4 lg:gap-5 mt-4 sm:mt-5 w-full">
             <div className="aspect-[16/9] bg-[#2C5F6F]/90 overflow-hidden">
               <div className="w-full h-full flex items-center justify-center">
-                <span style={{ fontSize: '12px', fontWeight: '500', color: 'white' }}>Archive 1</span>
+                <span className="text-xs font-medium text-white">Archive 1</span>
               </div>
             </div>
             <div className="aspect-[16/9] bg-white/90 overflow-hidden">
@@ -348,7 +348,7 @@ export function StudioGalleryPage() {
             </div>
             <div className="aspect-[16/9] bg-[#8B4B3B]/90 overflow-hidden">
               <div className="w-full h-full flex items-center justify-center">
-                <span style={{ fontSize: '12px', fontWeight: '500', color: 'white' }}>Archive 2</span>
+                <span className="text-xs font-medium text-white">Archive 2</span>
               </div>
             </div>
             <div className="aspect-[16/9] bg-[#7BC74D]/90 overflow-hidden">
@@ -363,27 +363,27 @@ export function StudioGalleryPage() {
             </div>
             <div className="aspect-[16/9] bg-white/80 overflow-hidden">
               <div className="w-full h-full flex items-center justify-center">
-                <span style={{ fontSize: '12px', fontWeight: '500', color: '#5a3a2a' }}>Archive 3</span>
+                <span className="text-xs font-medium" style={{ color: '#5a3a2a' }}>Archive 3</span>
               </div>
             </div>
             <div className="aspect-[16/9] bg-[#D4AF37]/90 overflow-hidden">
               <div className="w-full h-full flex items-center justify-center">
-                <span style={{ fontSize: '12px', fontWeight: '500', color: 'white' }}>Archive 4</span>
+                <span className="text-xs font-medium text-white">Archive 4</span>
               </div>
             </div>
             <div className="aspect-[16/9] bg-[#355C7D]/90 overflow-hidden">
               <div className="w-full h-full flex items-center justify-center">
-                <span style={{ fontSize: '12px', fontWeight: '500', color: 'white' }}>Archive 5</span>
+                <span className="text-xs font-medium text-white">Archive 5</span>
               </div>
             </div>
             <div className="aspect-[16/9] bg-[#6C5B7B]/90 overflow-hidden">
               <div className="w-full h-full flex items-center justify-center">
-                <span style={{ fontSize: '12px', fontWeight: '500', color: 'white' }}>Archive 6</span>
+                <span className="text-xs font-medium text-white">Archive 6</span>
               </div>
             </div>
             <div className="aspect-[16/9] bg-[#C06C84]/90 overflow-hidden">
               <div className="w-full h-full flex items-center justify-center">
-                <span style={{ fontSize: '12px', fontWeight: '500', color: 'white' }}>Archive 7</span>
+                <span className="text-xs font-medium text-white">Archive 7</span>
               </div>
             </div>
           </div>

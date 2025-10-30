@@ -4,7 +4,7 @@ import { withBasePath } from "@/lib/utils";
 
 export function ContactPage() {
   return (
-    <div className="flex flex-col md:flex-row min-h-vp overflow-hidden bg-[#3a3a3e] no-horiz-overflow pt-24 sm:pt-28 md:pt-0 lg:pt-0">
+    <div className="@container/contact flex flex-col md:flex-row min-h-vp overflow-hidden bg-[#3a3a3e] no-horiz-overflow pt-24 sm:pt-28 md:pt-0 lg:pt-0">
       {/* Left: artwork as full background (half width) */}
       <div className="w-full md:w-1/2 relative overflow-hidden flex items-center justify-center md:min-h-screen">
         <div className="w-11/12 max-w-3xl aspect-[16/9]">
@@ -25,14 +25,14 @@ export function ContactPage() {
         {/* On mobile, let content flow normally to avoid overlap; use absolute overlay only on md+ */}
         <div className="hidden md:block md:absolute md:inset-x-0 md:bottom-0 md:top-28 lg:top-36 xl:top-40" style={{ backgroundColor: '#3a3a3e' }} />
 
-        <div className="relative md:absolute md:inset-x-0 md:bottom-0 md:top-28 lg:top-36 xl:top-40 flex flex-col justify-center px-4 sm:px-6 md:px-8 lg:px-16 py-10 md:py-16 lg:py-24">
-          <div className="max-w-md">
-            <h1 className="text-[#87CEEB] mb-8 sm:mb-12" style={{ fontSize: 'clamp(42px, 9vw, 72px)', fontWeight: '700', letterSpacing: '0.05em' }}>
+          <div className="relative md:absolute md:inset-x-0 md:bottom-0 md:top-28 lg:top-36 xl:top-40 flex flex-col justify-center px-4 sm:px-6 md:px-8 lg:px-16 py-10 md:py-16 lg:py-24">
+            <div className="max-w-md">
+              <h1 className="text-[#87CEEB] mb-8 sm:mb-12 font-bold tracking-wider text-5xl md:text-6xl lg:text-7xl @min-[80rem]/contact:text-8xl">
               CONTACT
             </h1>
 
-            <div className="space-y-4 mb-12 sm:mb-16">
-              <p className="text-white/80 text-base font-light">
+              <div className="space-y-4 mb-12 sm:mb-16">
+                <p className="text-white/80 text-base @min-[80rem]/contact:text-lg font-light">
                 Text.
               </p>
               <div className="border-b border-dotted border-white/30 py-2" />
@@ -56,11 +56,11 @@ export function ContactPage() {
               </button>
             </div>
 
-            <div className="space-y-3">
-              <p className="text-white/70 text-sm font-light">
+              <div className="space-y-3">
+                <p className="text-white/70 text-sm @min-[80rem]/contact:text-base font-light">
                 info@mysite.com
               </p>
-              <p className="text-white/70 text-sm font-light">
+                <p className="text-white/70 text-sm @min-[80rem]/contact:text-base font-light">
                 123-456-7890
               </p>
             </div>
