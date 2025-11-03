@@ -26,7 +26,7 @@ export function Header() {
   return (
     <header ref={headerRef} className="absolute top-0 left-0 right-0 z-50 px-4 sm:px-6 md:px-8 lg:px-12 xl:px-16 py-2 sm:py-3 md:py-4 lg:py-6 no-horiz-overflow">
       {/* Top Row */}
-      <div className="flex items-center justify-between max-w-[1920px] mx-auto mb-0 lg:mb-0 min-w-0 relative">
+      <div className="flex items-center justify-between max-w-none mx-auto mb-0 lg:mb-0 min-w-0 relative">
         {/* Logo (hidden ≤425px) */}
         <Link href="/" aria-label="Hell University Home" className="hidden lg:flex items-center justify-center ml-1 md:ml-0">
           <div className="flex items-center justify-center w-12 h-12 sm:w-14 sm:h-14 md:w-16 md:h-16 lg:w-20 lg:h-20 rounded-full bg-white border-2 lg:border-4 border-[var(--hell-dusty-blue)]">
@@ -105,7 +105,7 @@ export function Header() {
 
 
       {/* Bottom Row: Desktop Nav */}
-      <nav className="hidden lg:flex items-center justify-center gap-8 lg:gap-14 xl:gap-16 max-w-[1920px] mx-auto mb-0 lg:mb-0">
+      <nav className="hidden lg:flex items-center justify-center gap-8 lg:gap-14 xl:gap-16 max-w-none mx-auto mb-0 lg:mb-0">
         <Link href="/" className="transition-colors text-white hover:text-white font-comfortaa" style={{ fontSize: '22px', fontWeight: '400' }}>Home</Link>
         <Link href="/about" className="transition-colors text-white hover:text-white font-comfortaa" style={{ fontSize: '22px', fontWeight: '400' }}>About</Link>
         <Link href="/studio-gallery" className="transition-colors text-white hover:text-white font-comfortaa" style={{ fontSize: '22px', fontWeight: '400' }}>Studio/Gallery</Link>

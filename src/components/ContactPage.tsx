@@ -7,7 +7,7 @@ export function ContactPage() {
     <div className="@container/contact flex flex-col md:flex-row min-h-vp overflow-hidden bg-[#3a3a3e] no-horiz-overflow pt-[clamp(5rem,8vw,7rem)] md:pt-0">
       {/* Left: artwork as full background (half width) */}
       <div className="w-full md:w-1/2 relative overflow-hidden flex items-center justify-center md:min-h-screen">
-        <div className="w-11/12 max-w-3xl aspect-[16/9]">
+        <div className="w-11/12 max-w-3xl xl:max-w-none aspect-[16/9]">
           <ImageWithFallback
             src={withBasePath('/assets/artwork/artwork_contact.png')}
             alt="Contact artwork"

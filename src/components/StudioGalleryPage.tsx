@@ -199,7 +199,7 @@ export function StudioGalleryPage() {
           />
 
           {/* Content row */}
-          <div className="relative z-10 mx-auto w-full max-w-[min(92vw,1800px)] px-[clamp(16px,3vw,40px)] flex flex-col md:flex-row md:items-stretch gap-y-[clamp(16px,4vw,40px)] md:gap-x-[clamp(42px,10.4vw,208px)]">
+          <div className="relative z-10 mx-auto w-full max-w-[92vw] px-[clamp(16px,3vw,40px)] flex flex-col md:flex-row md:items-stretch gap-y-[clamp(16px,4vw,40px)] md:gap-x-[clamp(42px,10.4vw,208px)]">
       {/* Left Side - Studio */}
       <div className="@container/studio-left w-full md:w-1/2 min-w-0 relative overflow-hidden" style={{ ['--block-h' as any]: `${leftBlockH}px` }}>
 

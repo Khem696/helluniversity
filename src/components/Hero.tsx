@@ -8,7 +8,7 @@ export function Hero() {
     <section className="relative min-h-vp lg:h-[100dvh] overflow-visible no-horiz-overflow">
       <div className="flex flex-col lg:flex-row lg:items-stretch h-full">
         {/* Left Side - Blue */}
-        <div className="w-full lg:w-1/2 min-w-0 bg-[#3e82bb] flex flex-col justify-start pl-6 sm:pl-6 min-[769px]:pl-8 lg:pl-10 xl:pl-32 3xl:pl-40 4xl:pl-56 5xl:pl-72 pt-[calc(var(--header-h)+2rem)] lg:pt-[calc(var(--header-h)+3rem)] pb-[clamp(2rem,8vh,5rem)] lg:pb-[clamp(3rem,10vh,6rem)]">
+        <div className="w-full lg:w-1/2 min-w-0 bg-[#3e82bb] flex flex-col justify-start 4xl:justify-center pl-6 sm:pl-6 min-[769px]:pl-8 lg:pl-10 xl:pl-32 3xl:pl-40 4xl:pl-56 5xl:pl-72 pt-[calc(var(--header-h)+2rem)] lg:pt-[calc(var(--header-h)+3rem)] 4xl:pt-0 pb-[clamp(2rem,8vh,5rem)] lg:pb-[clamp(3rem,10vh,6rem)] 4xl:pb-0">
           <div className="pl-0 pr-3 sm:pr-4 min-[769px]:pr-6 lg:pr-8 xl:pr-0 w-full max-w-[44rem] 3xl:max-w-[50rem] 4xl:max-w-[56rem] 5xl:max-w-[62rem]">
             {/* Main Title */}
             <h1 className="mb-8 md:mb-10 lg:mb-12 font-acumin text-[clamp(48px,7.5vw,96px)] font-black leading-[0.9] text-[#42210b]">
@@ -45,7 +45,7 @@ export function Hero() {
         </div>
 
         {/* Right Side - Textured Red/Brown with Image */}
-        <div className="w-full lg:w-1/2 min-w-0 relative overflow-visible lg:overflow-hidden">
+        <div className="w-full lg:w-1/2 min-w-0 relative overflow-visible lg:overflow-hidden lg:h-full">
           {/* Texture Overlay */}
           <div 
             className="absolute inset-0 opacity-100"
@@ -63,12 +63,12 @@ export function Hero() {
           />
 
           {/* Portrait Image */}
-          <div className="flex items-stretch justify-start px-4 sm:px-6 min-[769px]:px-8 lg:pl-0 lg:pr-12 3xl:pr-20 4xl:pr-28 5xl:pr-36 pt-[calc(var(--header-h)+2rem)] lg:pt-[calc(var(--header-h)+3rem)] pb-[clamp(2rem,8vh,5rem)] lg:pb-[clamp(3rem,10vh,6rem)] relative">
-            <div className="relative w-full h-full max-w-[560px] min-[769px]:max-w-[620px] lg:max-w-[700px] 3xl:max-w-[780px] 4xl:max-w-[880px] 5xl:max-w-[980px]">
+          <div className="flex items-stretch 4xl:items-center justify-start px-4 sm:px-6 min-[769px]:px-8 lg:pl-0 lg:pr-12 3xl:pr-20 4xl:pr-28 5xl:pr-36 pt-[calc(var(--header-h)+2rem)] lg:pt-[calc(var(--header-h)+3rem)] 4xl:pt-0 pb-[clamp(2rem,8vh,5rem)] lg:pb-[clamp(3rem,10vh,6rem)] 4xl:pb-0 relative lg:h-full">
+            <div className="relative w-full h-full 4xl:h-auto max-w-[560px] min-[769px]:max-w-[620px] lg:max-w-[700px] 3xl:max-w-[780px] 4xl:max-w-[880px] 5xl:max-w-[980px]">
               <img
                 src={withBasePath('/assets/portrait/portrait_kade.png')}
                 alt="Kade Javanalikikorn"
-                className="h-full w-auto max-w-none object-contain object-left grayscale contrast-110"
+                className="h-full 4xl:h-auto 4xl:max-h-screen w-auto max-w-none object-contain object-left grayscale contrast-110"
                 width={1600}
                 height={1800}
                 loading="eager"
