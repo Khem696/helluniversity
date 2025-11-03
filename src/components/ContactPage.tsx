@@ -27,7 +27,7 @@ export function ContactPage() {
 
           <div className="relative md:absolute md:inset-x-0 md:bottom-0 md:top-28 lg:top-36 xl:top-40 3xl:top-44 4xl:top-48 5xl:top-52 flex flex-col justify-center px-[clamp(1rem,3vw,4rem)] py-[clamp(2.5rem,6vw,6rem)]">
             <div className="max-w-md">
-              <h1 className="text-[#87CEEB] mb-[clamp(2rem,5vw,3rem)] font-comfortaa weight-700 tracking-wider text-[clamp(2.25rem,6vw,4.5rem)] @min-[80rem]/contact:text-[clamp(4rem,7vw,6rem)] 3xl:tracking-[0.2em] 4xl:tracking-[0.25em] 5xl:tracking-[0.3em]">
+              <h1 className="text-[#87CEEB] mb-[clamp(2rem,5vw,3rem)] font-comfortaa weight-700 tracking-wider text-[clamp(2.25rem,6vw,5rem)] @min-[80rem]/contact:text-[clamp(4rem,7vw,7rem)] 3xl:tracking-[0.2em] 4xl:tracking-[0.25em] 5xl:tracking-[0.3em]">
               CONTACT
             </h1>
 
@@ -51,10 +51,10 @@ export function ContactPage() {
             </div>
 
               <div className="space-y-3">
-                <p className="text-white/70 font-light text-[clamp(0.95rem,1vw,1rem)]">
+                <p className="text-white/70 font-light text-[clamp(0.95rem,1vw,1.125rem)]">
                 info@mysite.com
               </p>
-                <p className="text-white/70 font-light text-[clamp(0.95rem,1vw,1rem)]">
+                <p className="text-white/70 font-light text-[clamp(0.95rem,1vw,1.125rem)]">
                 123-456-7890
               </p>
             </div>
