@@ -1,7 +1,7 @@
 "use client"
 
 import Link from "next/link"
-import { useState } from "react"
+import { useEffect, useRef, useState } from "react"
 import { Wand2, Menu, X } from "lucide-react"
 import { Dialog, DialogTrigger, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog"
 import { AISpaceGenerator } from "@/components/AISpaceGenerator"
@@ -9,27 +9,40 @@ import { withBasePath } from "@/lib/utils"
 
 export function Header() {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false)
+  const headerRef = useRef<HTMLElement | null>(null)
+
+  useEffect(() => {
+    const setHeaderVar = () => {
+      if (headerRef.current) {
+        const h = headerRef.current.offsetHeight
+        document.documentElement.style.setProperty('--header-h', `${h}px`)
+      }
+    }
+    setHeaderVar()
+    window.addEventListener('resize', setHeaderVar)
+    return () => window.removeEventListener('resize', setHeaderVar)
+  }, [])
 
   return (
-    <header className="absolute top-0 left-0 right-0 z-50 px-4 sm:px-6 md:px-8 lg:px-12 xl:px-16 py-2 sm:py-3 md:py-4 lg:py-6 no-horiz-overflow">
+    <header ref={headerRef} className="absolute top-0 left-0 right-0 z-50 px-4 sm:px-6 md:px-8 lg:px-12 xl:px-16 py-2 sm:py-3 md:py-4 lg:py-6 no-horiz-overflow">
       {/* Top Row */}
       <div className="flex items-center justify-between max-w-[1920px] mx-auto mb-0 lg:mb-0 min-w-0 relative">
         {/* Logo (hidden ≤425px) */}
-        <Link href="/" aria-label="Hell University Home" className="hidden md:flex items-center justify-center ml-1 md:ml-0">
+        <Link href="/" aria-label="Hell University Home" className="hidden lg:flex items-center justify-center ml-1 md:ml-0">
           <div className="flex items-center justify-center w-12 h-12 sm:w-14 sm:h-14 md:w-16 md:h-16 lg:w-20 lg:h-20 rounded-full bg-white border-2 lg:border-4 border-[var(--hell-dusty-blue)]">
             <img src={withBasePath('/assets/icons/icon_helluniversity.svg')} alt="Hell University" width={62} height={62} className="w-10 h-10 sm:w-11 sm:h-11 md:w-12 md:h-12 lg:w-16 lg:h-16" />
           </div>
         </Link>
 
         {/* Title - wraps on very small screens to avoid overlap; single line from phone and up */}
-                <h1 className="flex-1 text-left font-heading font-extrabold tracking-wide whitespace-normal md:whitespace-nowrap md:absolute md:left-1/2 md:-translate-x-1/2 md:text-center max-w-[80vw] md:max-w-none text-xl sm:text-2xl md:text-3xl lg:text-5xl">
+                <h1 className="flex-1 text-left font-heading font-extrabold tracking-wide whitespace-normal lg:whitespace-nowrap lg:absolute lg:left-1/2 lg:-translate-x-1/2 lg:text-center max-w-[80vw] lg:max-w-none text-xl sm:text-2xl md:text-3xl lg:text-5xl">
           <span className="text-[var(--hell-dusty-blue)] font-urbanist font-extrabold leading-[1.2]">Hell</span>{' '}
           <span className="text-[#2a1f1a] font-urbanist font-extrabold leading-[1.2]">University</span>
         </h1>
 
         {/* Global Modal Trigger (replacing Log In) */}
         <Dialog>
-          <DialogTrigger className="hidden md:flex flex-col items-center gap-1 text-white/80 hover:text-white transition-colors mr-1 sm:mr-2 md:mr-3 lg:mr-0" aria-label="Open AI GenSpace">
+          <DialogTrigger className="hidden lg:flex flex-col items-center gap-1 text-white/80 hover:text-white transition-colors mr-1 sm:mr-2 md:mr-3 lg:mr-0" aria-label="Open AI GenSpace">
             <div className="w-8 h-8 rounded-full bg-white/20 flex items-center justify-center">
               <Wand2 size={16} className="text-white" />
             </div>
@@ -83,7 +96,7 @@ export function Header() {
         {/* Mobile Menu Button */}
         <button
           onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
-          className="md:hidden text-white p-2 sm:p-3 sm:absolute sm:right-4 sm:top-1/2 sm:-translate-y-1/2"
+          className="lg:hidden text-white p-2 sm:p-3 sm:absolute sm:right-4 sm:top-1/2 sm:-translate-y-1/2"
           aria-label="Toggle navigation"
         >
           {mobileMenuOpen ? <X size={22} /> : <Menu size={22} />}
@@ -92,7 +105,7 @@ export function Header() {
 
 
       {/* Bottom Row: Desktop Nav */}
-      <nav className="hidden md:flex items-center justify-center gap-8 lg:gap-14 xl:gap-16 max-w-[1920px] mx-auto mb-0 lg:mb-0">
+      <nav className="hidden lg:flex items-center justify-center gap-8 lg:gap-14 xl:gap-16 max-w-[1920px] mx-auto mb-0 lg:mb-0">
         <Link href="/" className="transition-colors text-white hover:text-white font-comfortaa" style={{ fontSize: '22px', fontWeight: '400' }}>Home</Link>
         <Link href="/about" className="transition-colors text-white hover:text-white font-comfortaa" style={{ fontSize: '22px', fontWeight: '400' }}>About</Link>
         <Link href="/studio-gallery" className="transition-colors text-white hover:text-white font-comfortaa" style={{ fontSize: '22px', fontWeight: '400' }}>Studio/Gallery</Link>
@@ -101,7 +114,7 @@ export function Header() {
 
       {/* Mobile Menu Overlay */}
       {mobileMenuOpen && (
-        <div className="md:hidden fixed inset-0 z-40 bg-[#2a2520]/95 backdrop-blur-sm">
+        <div className="lg:hidden fixed inset-0 z-40 bg-[#2a2520]/95 backdrop-blur-sm">
           <nav className="flex flex-col items-center justify-center h-full gap-8 mb-0 lg:mb-0">
             {/* Logo shown at top of menu on small screens */}
             <div className="mb-4">

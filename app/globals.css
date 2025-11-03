@@ -30,6 +30,13 @@
   --font-comfortaa: var(--font-comfortaa);
   --font-urbanist: var(--font-urbanist);
   --font-acumin: var(--font-acumin);
+
+  /* Breakpoint customization: make md start at 1024px so 769–1023px uses mobile/tablet styles */
+  --breakpoint-md: 64rem;
+  /* Large-screen additions for 1920p, 2560p, and 3840p */
+  --breakpoint-3xl: 120rem; /* 1920px */
+  --breakpoint-4xl: 160rem; /* 2560px */
+  --breakpoint-5xl: 240rem; /* 3840px */
 }
 
 /* Import Helvetica-like web font */

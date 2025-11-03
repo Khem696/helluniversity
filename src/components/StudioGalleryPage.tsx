@@ -94,6 +94,31 @@ export function StudioGalleryPage() {
   const [viewerIndex, setViewerIndex] = useState(0);
   const [carouselApi, setCarouselApi] = useState<CarouselApi | null>(null);
 
+  // Measure header blocks above each grid so tiles can grow to the largest
+  // 16:9 size that still fits inside the stripe height.
+  const leftHeaderRef = useRef<HTMLDivElement | null>(null);
+  const rightHeaderRef = useRef<HTMLDivElement | null>(null);
+  const [leftBlockH, setLeftBlockH] = useState(0);
+  const [rightBlockH, setRightBlockH] = useState(0);
+
+  useEffect(() => {
+    const measureWithMargins = (el: HTMLElement | null): number => {
+      if (!el) return 0;
+      const rect = el.getBoundingClientRect();
+      const styles = window.getComputedStyle(el);
+      const mt = parseFloat(styles.marginTop || "0");
+      const mb = parseFloat(styles.marginBottom || "0");
+      return rect.height + mt + mb;
+    };
+    const update = () => {
+      setLeftBlockH(measureWithMargins(leftHeaderRef.current));
+      setRightBlockH(measureWithMargins(rightHeaderRef.current));
+    };
+    update();
+    window.addEventListener("resize", update);
+    return () => window.removeEventListener("resize", update);
+  }, []);
+
   const openViewerForImage = (src: string) => {
     const idx = allImages.indexOf(src);
     setViewerIndex(idx >= 0 ? idx : 0);
@@ -147,67 +172,49 @@ export function StudioGalleryPage() {
     );
   };
 
-  // Shared layout constants to keep stripe, portrait, and content vertically aligned
-  const headerHeightClamp = 'clamp(128px, 9vw, 168px)';
-  const stripeExtraOffset = 0; // revert baseline
-  const stripeBottomReveal = 0;
-  const stripeTop = `calc(${headerHeightClamp} + ${stripeExtraOffset}px)`;
-  const stripeHeight = `calc(100% - ${headerHeightClamp} - ${stripeExtraOffset}px - ${stripeBottomReveal}px)`;
-  const sectionHeight = `calc(100dvh - ${headerHeightClamp})`;
+  // Using Tailwind responsive spacing utilities for vertical rhythm
 
   return (
     <div className="min-h-vp bg-[#7a2d28]">
       {/* Section wrapper: limits background layers to the Studio/Gallery area only */}
-      <section className="relative overflow-hidden pb-0 md:min-h-screen" style={{ minHeight: 'calc(100dvh - clamp(128px, 9vw, 168px))' }}>
-        {/* Darker red stripe across this section only (start below header) */}
-        <div
-          className="pointer-events-none absolute left-0 right-0 bg-[#42210b]"
-          style={{ top: 'clamp(128px, 9vw, 168px)', height: 'calc(100% - clamp(128px, 9vw, 168px))' }}
-        />
+      <section className="relative overflow-hidden pb-0">
+        {/* Equal top spacer matching header height (Tailwind scale) */}
+        {/* <div aria-hidden className="shrink-0 h-24 sm:h-28 md:h-32 lg:h-36" /> */}
 
-        {/* Portrait layer (right-center), blended over darker red */}
-        <div
-          className="pointer-events-none absolute left-0 right-0"
-          style={{
-            backgroundImage: `url('${withBasePath('/assets/portrait/portrait_kade_nobg.png')}')`,
-            backgroundRepeat: 'no-repeat',
-            backgroundPosition: 'right center',
-            backgroundSize: 'contain',
-            mixBlendMode: 'multiply',
-            opacity: 0.3,
-            top: 'clamp(128px, 9vw, 168px)',
-            height: 'calc(100% - clamp(128px, 9vw, 168px))',
-          }}
-        />
+        {/* Content block with backgrounds scoped to its height */}
+        <div className="lg:min-h-screen lg:grid lg:place-items-center py-[max(var(--header-h,0px),clamp(24px,6vh,96px))] lg:py-0">
+          <div className="relative isolate bg-[#42210b] overflow-hidden h-auto lg:h-[var(--stripe-h)] w-full" style={{ ['--stripe-h' as any]: 'clamp(45rem, 72vh, 78rem)' }}>
 
-        {/* Keep subtle noise texture on top */}
-        {/* <div 
-          className="pointer-events-none absolute left-0 right-0 opacity-25"
-          style={{
-            backgroundImage: 'url("data:image/svg+xml,%3Csvg width="100" height="100" xmlns="http://www.w3.org/2000/svg"%3E%3Cfilter id="noise"%3E%3CfeTurbulence type="fractalNoise" baseFrequency="0.7" numOctaves="3" /%3E%3C/filter%3E%3Crect width="100" height="100" filter="url(%23noise)" opacity="0.4"/%3E%3C/svg%3E")',
-            mixBlendMode: 'overlay',
-            top: 'clamp(128px, 9vw, 168px)',
-            height: 'calc(100% - clamp(128px, 9vw, 168px))',
-          }}
-        /> */}
+          {/* Portrait layer (right-center), blended over darker red */}
+          <div
+            className="pointer-events-none absolute inset-0"
+            style={{
+              backgroundImage: `url('${withBasePath('/assets/portrait/portrait_kade_nobg.png')}')`,
+              backgroundRepeat: 'no-repeat',
+              backgroundPosition: 'right center',
+              backgroundSize: 'contain',
+              mixBlendMode: 'multiply',
+              opacity: 0.3,
+            }}
+          />
 
-        {/* Content row */}
-        <div className="relative z-10 flex flex-col md:flex-row mt-[clamp(128px,9vw,168px)] lg:mt-0">
+          {/* Content row */}
+          <div className="relative z-10 mx-auto w-full max-w-[min(92vw,1800px)] px-[clamp(16px,3vw,40px)] flex flex-col md:flex-row md:items-stretch gap-y-[clamp(16px,4vw,40px)] md:gap-x-[clamp(42px,10.4vw,208px)]">
       {/* Left Side - Studio */}
-      <div className="@container/studio-left w-full md:w-1/2 relative overflow-hidden">
+      <div className="@container/studio-left w-full md:w-1/2 min-w-0 relative overflow-hidden" style={{ ['--block-h' as any]: `${leftBlockH}px` }}>
 
-        <div className="relative z-10 flex flex-col h-full px-4 sm:px-6 md:px-8 lg:px-12 pt-10 sm:pt-12 md:pt-16 lg:pt-52 pb-12 md:pb-16">
-          <div className="flex flex-col items-center mb-4 sm:mb-4 md:mb-5 mt-4 sm:mt-4 md:mt-5">
+        <div className="relative z-10 flex flex-col h-full px-4 sm:px-6 md:px-8 lg:px-10 pt-4 md:pt-6 lg:pt-8 pb-0">
+          <div ref={leftHeaderRef} className="flex flex-col items-center shrink-0 mb-3 md:mb-4 mt-3 md:mt-4 min-h-20 md:min-h-24 lg:min-h-28">
             <div className="bg-[#5B9AB8]/80 px-5 sm:px-6 md:px-8 py-2 md:py-3 rounded-full mb-3 sm:mb-4 md:mb-6">
-              <h2 className="text-white font-comfortaa text-2xl font-normal">
+              <h2 className="text-white font-comfortaa font-normal text-[clamp(1.25rem,2.2vw,1.75rem)]">
                 Studio
               </h2>
             </div>
             
-            <p className="text-[#87CEEB] text-center max-w-md mb-1 font-comfortaa text-sm font-light leading-relaxed">
+            <p className="text-[#87CEEB] text-center max-w-md mb-1 font-comfortaa font-light leading-relaxed text-[clamp(0.875rem,1.2vw,1rem)]">
               Hongsee Culture House is a creative hub
             </p>
-            <p className="text-[#87CEEB] text-center max-w-md font-comfortaa text-sm font-light leading-relaxed">
+            <p className="text-[#87CEEB] text-center max-w-md font-comfortaa font-light leading-relaxed text-[clamp(0.875rem,1.2vw,1rem)]">
               for cultural events and the artistic community.
             </p>
 
@@ -216,7 +223,7 @@ export function StudioGalleryPage() {
             </div>
           </div>
 
-          <div className="grid grid-cols-3 gap-2 sm:gap-3 md:gap-4 lg:gap-5 mt-4 sm:mt-5 w-full">
+          <div className="grid grid-cols-3 gap-1 sm:gap-2 md:gap-3 lg:gap-4 mt-3 sm:mt-4 md:mt-4 w-full mx-auto lg:max-w-[min(100%,calc((var(--stripe-h)-var(--block-h)-32px)*1.7778))]">
             {/** Row 1: [1]=artwork A top, [2-3]=building top row */}
             {renderTile(
               "studio-1",
@@ -304,24 +311,24 @@ export function StudioGalleryPage() {
               (idx) => buildingImages[idx.c],
             )}
           </div>
+          </div>
         </div>
-      </div>
 
       {/* Right Side - Gallery */}
-      <div className="@container/studio-right w-full md:w-1/2 relative overflow-hidden">
+      <div className="@container/studio-right w-full md:w-1/2 min-w-0 relative overflow-hidden" style={{ ['--block-h' as any]: `${rightBlockH}px` }}>
 
-        <div className="relative z-10 flex flex-col h-full px-4 sm:px-6 md:px-8 lg:px-12 pt-10 sm:pt-12 md:pt-16 lg:pt-52 pb-12 md:pb-16">
-          <div className="flex flex-col items-center mb-4 sm:mb-4 md:mb-5 mt-4 sm:mt-4 md:mt-5">
+        <div className="relative z-10 flex flex-col h-full px-4 sm:px-6 md:px-8 lg:px-10 pt-4 md:pt-6 lg:pt-8 pb-0">
+          <div ref={rightHeaderRef} className="flex flex-col items-center shrink-0 mb-3 md:mb-4 mt-3 md:mt-4 min-h-20 md:min-h-24 lg:min-h-28">
             <div className="bg-[#5B9AB8]/80 px-5 sm:px-6 md:px-8 py-2 md:py-3 rounded-full mb-3 sm:mb-4 md:mb-6">
-              <h2 className="text-white font-comfortaa text-2xl font-normal">
+              <h2 className="text-white font-comfortaa font-normal text-[clamp(1.25rem,2.2vw,1.75rem)]">
                 Gallery
               </h2>
             </div>
             
-            <p className="text-[#87CEEB] text-center max-w-md mb-1 font-comfortaa" style={{ fontSize: '14px', fontWeight: '300', lineHeight: '1.6' }}>
+            <p className="text-[#87CEEB] text-center max-w-md mb-1 font-comfortaa font-light leading-relaxed text-[clamp(0.875rem,1.2vw,1rem)]">
               Hell University, an archive and gallery
             </p>
-            <p className="text-[#87CEEB] text-center max-w-md font-comfortaa" style={{ fontSize: '14px', fontWeight: '300', lineHeight: '1.6' }}>
+            <p className="text-[#87CEEB] text-center max-w-md font-comfortaa font-light leading-relaxed text-[clamp(0.875rem,1.2vw,1rem)]">
               dedicated to research and education.
             </p>
 
@@ -330,7 +337,7 @@ export function StudioGalleryPage() {
             </div>
           </div>
 
-          <div className="grid grid-cols-3 gap-2 sm:gap-3 md:gap-4 lg:gap-5 mt-4 sm:mt-5 w-full">
+          <div className="grid grid-cols-3 gap-1 sm:gap-2 md:gap-3 lg:gap-4 mt-3 sm:mt-4 md:mt-4 w-full mx-auto lg:max-w-[min(100%,calc((var(--stripe-h)-var(--block-h)-32px)*1.7778))]">
             <div className="aspect-[16/9] bg-[#2C5F6F]/90 overflow-hidden">
               <div className="w-full h-full flex items-center justify-center">
                 <span className="text-xs font-medium text-white">Archive 1</span>
@@ -389,6 +396,10 @@ export function StudioGalleryPage() {
           </div>
         </div>
       </div>
+        </div>
+        {/* Equal bottom spacer matching header height (Tailwind scale) */}
+        {/* <div aria-hidden className="shrink-0 h-24 sm:h-28 md:h-32 lg:h-36" /> */}
+        </div>
         </div>
       </section>
       <Dialog open={viewerOpen} onOpenChange={setViewerOpen}>
