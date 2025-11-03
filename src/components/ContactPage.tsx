@@ -27,12 +27,12 @@ export function ContactPage() {
 
           <div className="relative md:absolute md:inset-x-0 md:bottom-0 md:top-28 lg:top-36 xl:top-40 3xl:top-44 4xl:top-48 5xl:top-52 flex flex-col justify-center px-[clamp(1rem,3vw,4rem)] py-[clamp(2.5rem,6vw,6rem)]">
             <div className="max-w-md">
-              <h1 className="text-[#87CEEB] mb-[clamp(2rem,5vw,3rem)] font-bold tracking-wider text-[clamp(2.25rem,6vw,4.5rem)] @min-[80rem]/contact:text-[clamp(4rem,7vw,6rem)] 3xl:tracking-[0.2em] 4xl:tracking-[0.25em] 5xl:tracking-[0.3em]">
+              <h1 className="text-[#87CEEB] mb-[clamp(2rem,5vw,3rem)] font-comfortaa weight-700 tracking-wider text-[clamp(2.25rem,6vw,4.5rem)] @min-[80rem]/contact:text-[clamp(4rem,7vw,6rem)] 3xl:tracking-[0.2em] 4xl:tracking-[0.25em] 5xl:tracking-[0.3em]">
               CONTACT
             </h1>
 
               <div className="space-y-4 mb-[clamp(2.5rem,5vw,4rem)]">
-                <p className="text-white/80 font-light text-[clamp(1rem,1.1vw,1.125rem)]">
+                {/* <p className="text-white/80 font-light text-[clamp(1rem,1.1vw,1.125rem)]">
                 Text.
               </p>
               <div className="border-b border-dotted border-white/30 py-2" />
@@ -41,18 +41,12 @@ export function ContactPage() {
               <div className="border-b border-dotted border-white/30 py-2" />
               <div className="flex items-center border-b border-dotted border-white/30 py-2">
                 <Search size={16} className="text-white/30" />
-              </div>
+              </div> */}
             </div>
 
             <div className="flex gap-[clamp(1rem,2vw,2rem)] mb-[clamp(2rem,4vw,3rem)]">
               <button className="text-white hover:text-[#87CEEB] transition-colors">
                 <Facebook size={20} />
-              </button>
-              <button className="text-white hover:text-[#87CEEB] transition-colors">
-                <Twitter size={20} />
-              </button>
-              <button className="text-white hover:text-[#87CEEB] transition-colors">
-                <Instagram size={20} />
               </button>
             </div>
 
