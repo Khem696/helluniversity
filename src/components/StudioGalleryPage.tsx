@@ -253,9 +253,9 @@ export function StudioGalleryPage() {
           />
 
           {/* Content row */}
-          <div className="relative z-10 mx-auto w-full max-w-[92vw] px-[clamp(16px,3vw,40px)] flex flex-col md:flex-row md:items-stretch gap-y-[clamp(16px,4vw,40px)] md:gap-x-[clamp(42px,10.4vw,208px)]">
+          <div className="relative z-10 mx-auto w-full max-w-[92vw] px-[clamp(16px,3vw,40px)] flex flex-col lg:flex-row lg:items-stretch gap-y-[clamp(16px,4vw,40px)] lg:gap-x-[clamp(42px,10.4vw,208px)]">
       {/* Left Side - Studio */}
-      <div className="@container/studio-left w-full md:w-1/2 min-w-0 relative overflow-hidden" style={{ ['--block-h' as any]: `${leftBlockH}px` }}>
+      <div className="@container/studio-left w-full lg:w-1/2 min-w-0 relative overflow-hidden" style={{ ['--block-h' as any]: `${leftBlockH}px` }}>
 
         <div className="relative z-10 flex flex-col h-full px-4 sm:px-6 md:px-8 lg:px-10 pt-4 md:pt-6 lg:pt-8 pb-4 md:pb-6 lg:pb-8">
           <div ref={leftHeaderRef} className="flex flex-col items-center shrink-0 mb-3 md:mb-4 mt-3 md:mt-4 min-h-20 md:min-h-24 lg:min-h-28">
@@ -392,7 +392,7 @@ export function StudioGalleryPage() {
         </div>
 
       {/* Right Side - Gallery */}
-      <div className="@container/studio-right w-full md:w-1/2 min-w-0 relative overflow-hidden" style={{ ['--block-h' as any]: `${rightBlockH}px` }}>
+      <div className="@container/studio-right w-full lg:w-1/2 min-w-0 relative overflow-hidden" style={{ ['--block-h' as any]: `${rightBlockH}px` }}>
 
         <div className="relative z-10 flex flex-col h-full px-4 sm:px-6 md:px-8 lg:px-10 pt-4 md:pt-6 lg:pt-8 pb-4 md:pb-6 lg:pb-8">
           <div ref={rightHeaderRef} className="flex flex-col items-center shrink-0 mb-3 md:mb-4 mt-3 md:mt-4 min-h-20 md:min-h-24 lg:min-h-28">
