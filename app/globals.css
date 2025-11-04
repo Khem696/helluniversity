@@ -39,6 +39,22 @@
   --breakpoint-5xl: 240rem; /* 3840px */
 }
 
+/* Provide a sensible first-paint default for header height to prevent layout jump */
+:root { --header-h: 72px; }
+@media (min-width: 64rem) { /* md (1024px) and up */
+  :root { --header-h: 128px; }
+}
+/* Larger headers on ultra-wide breakpoints */
+@media (min-width: 120rem) { /* 3xl (1920px) */
+  :root { --header-h: 144px; }
+}
+@media (min-width: 160rem) { /* 4xl (2560px) */
+  :root { --header-h: 160px; }
+}
+@media (min-width: 240rem) { /* 5xl (3840px) */
+  :root { --header-h: 176px; }
+}
+
 /* Import Helvetica-like web font */
  
 /* KADE'S ARTISTIC ELEMENTS */

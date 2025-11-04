@@ -11,17 +11,7 @@ export function Header() {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false)
   const headerRef = useRef<HTMLElement | null>(null)
 
-  useEffect(() => {
-    const setHeaderVar = () => {
-      if (headerRef.current) {
-        const h = headerRef.current.offsetHeight
-        document.documentElement.style.setProperty('--header-h', `${h}px`)
-      }
-    }
-    setHeaderVar()
-    window.addEventListener('resize', setHeaderVar)
-    return () => window.removeEventListener('resize', setHeaderVar)
-  }, [])
+  // Header height is provided via CSS defaults in globals to avoid first-paint jumps.
 
   return (
     <header ref={headerRef} className="absolute top-0 left-0 right-0 z-50 px-4 sm:px-6 md:px-8 lg:px-12 xl:px-16 py-2 sm:py-3 md:py-4 lg:py-6 no-horiz-overflow">
@@ -47,6 +37,14 @@ export function Header() {
               <Calendar className="w-5 h-5 lg:w-6 lg:h-6 3xl:w-7 3xl:h-7 4xl:w-8 4xl:h-8 5xl:w-10 5xl:h-10 text-[var(--hell-dusty-blue)]" />
             </div>
             <span className="hidden lg:inline font-comfortaa font-normal text-sm lg:text-base 3xl:text-lg">Booking</span>
+          </DialogTrigger>
+
+          {/* Mobile/Tablet trigger placed next to burger (≤1023px) */}
+          <DialogTrigger className="lg:hidden flex items-center gap-2 text-white/80 hover:text-white transition-colors absolute right-16 sm:right-20 md:right-24 top-1/2 -translate-y-1/2" aria-label="Open Booking">
+            <div className="flex items-center justify-center w-9 h-9 sm:w-10 sm:h-10 rounded-full bg-white border-2 border-[var(--hell-dusty-blue)]">
+              <Calendar className="w-5 h-5 text-[var(--hell-dusty-blue)]" />
+            </div>
+            <span className="hidden sm:inline font-comfortaa font-normal text-sm md:text-base">Booking</span>
           </DialogTrigger>
 
           <DialogContent className="top-0 left-0 translate-x-0 translate-y-0 w-full h-vp max-w-none sm:max-w-none rounded-none border-0 p-0 bg-transparent">
