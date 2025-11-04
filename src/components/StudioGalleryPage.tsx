@@ -229,15 +229,15 @@ export function StudioGalleryPage() {
   // Using Tailwind responsive spacing utilities for vertical rhythm
 
   return (
-    <div className="min-h-vp bg-[#7a2d28]">
+    <div className="min-h-vp lg:h-screen lg:overflow-hidden bg-[#7a2d28]">
       {/* Section wrapper: limits background layers to the Studio/Gallery area only */}
       <section className="relative overflow-hidden pb-0">
         {/* Equal top spacer matching header height (Tailwind scale) */}
         {/* <div aria-hidden className="shrink-0 h-24 sm:h-28 md:h-32 lg:h-36" /> */}
 
         {/* Content block with backgrounds scoped to its height */}
-        <div className="lg:min-h-screen lg:grid lg:place-items-center py-[max(var(--header-h,0px),clamp(24px,6vh,96px))] lg:py-[max(var(--header-h,0px),clamp(24px,4vh,64px))]">
-          <div className="relative isolate bg-[#42210b] overflow-hidden h-auto lg:min-h-[var(--stripe-h)] w-full lg:grid lg:place-items-center" style={{ ['--stripe-h' as any]: 'clamp(46rem, 66vh, 88rem)', ['--cta-h' as any]: 'clamp(3rem,5vh,6rem)' }}>
+        <div className="lg:min-h-screen lg:grid lg:place-items-center py-[max(var(--header-h,0px),clamp(24px,6vh,96px))] lg:pt-[var(--header-h,0px)] lg:pb-[var(--header-h,0px)] lg:overflow-hidden">
+          <div className="relative isolate bg-[#42210b] overflow-hidden h-auto lg:min-h-[var(--stripe-h)] w-full lg:grid lg:place-items-center" style={{ ['--stripe-h' as any]: 'calc(100svh - (var(--header-h, 0px) + var(--header-h, 0px)))', ['--cta-h' as any]: 'clamp(3rem,5vh,6rem)' }}>
 
           {/* Portrait layer (right-center), blended over darker red */}
           <div
