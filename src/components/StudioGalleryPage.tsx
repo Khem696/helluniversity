@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react"
 import { ChevronDown } from "lucide-react";
 import { ImageWithFallback } from "./figma/ImageWithFallback";
 import { withBasePath } from "@/lib/utils";
+import { ARTWORK_STUDIO_IMAGES, BUILDING_STUDIO_IMAGES, GALLERY_IMAGES_PUBLIC } from "@/lib/imageManifests";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "./ui/dialog";
 import {
   Carousel,
@@ -22,27 +23,9 @@ export function StudioGalleryPage() {
   const [galleryImages, setGalleryImages] = useState<string[]>([]);
 
   useEffect(() => {
-    const fetchList = async (folder: string): Promise<string[]> => {
-      try {
-        const res = await fetch(`/api/images?folder=${encodeURIComponent(folder)}`);
-        if (!res.ok) return [];
-        const data = await res.json();
-        const imgs = Array.isArray(data.images) ? data.images : [];
-        return imgs.map((p: string) => withBasePath(p));
-      } catch {
-        return [];
-      }
-    };
-    (async () => {
-      const [a, b, g] = await Promise.all([
-        fetchList('artwork_studio'),
-        fetchList('building_studio'),
-        fetchList('gallery'),
-      ]);
-      setArtworkImages(a);
-      setBuildingImages(b);
-      setGalleryImages(g);
-    })();
+    setArtworkImages(ARTWORK_STUDIO_IMAGES);
+    setBuildingImages(BUILDING_STUDIO_IMAGES);
+    setGalleryImages(GALLERY_IMAGES_PUBLIC);
   }, []);
 
   const allImages = useMemo(
