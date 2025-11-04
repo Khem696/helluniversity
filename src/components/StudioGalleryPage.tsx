@@ -17,24 +17,33 @@ import {
 type Indices = { a: number; b: number; c: number };
 
 export function StudioGalleryPage() {
-  const artworkImages = useMemo(
-    () => [
-      withBasePath("/assets/artwork_studio/artwork_studio_1.jpg"),
-      withBasePath("/assets/artwork_studio/artwork_studio_2.jpg"),
-      withBasePath("/assets/artwork_studio/artwork_studio_3.jpg"),
-      withBasePath("/assets/artwork_studio/artwork_studio_4.jpg"),
-    ],
-    [],
-  );
+  const [artworkImages, setArtworkImages] = useState<string[]>([]);
+  const [buildingImages, setBuildingImages] = useState<string[]>([]);
+  const [galleryImages, setGalleryImages] = useState<string[]>([]);
 
-  const buildingImages = useMemo(
-    () => [
-      withBasePath("/assets/building_studio/building_studio_1.jpg"),
-      withBasePath("/assets/building_studio/building_studio_2.jpg"),
-      withBasePath("/assets/building_studio/building_studio_3.jpg"),
-    ],
-    [],
-  );
+  useEffect(() => {
+    const fetchList = async (folder: string): Promise<string[]> => {
+      try {
+        const res = await fetch(`/api/images?folder=${encodeURIComponent(folder)}`);
+        if (!res.ok) return [];
+        const data = await res.json();
+        const imgs = Array.isArray(data.images) ? data.images : [];
+        return imgs.map((p: string) => withBasePath(p));
+      } catch {
+        return [];
+      }
+    };
+    (async () => {
+      const [a, b, g] = await Promise.all([
+        fetchList('artwork_studio'),
+        fetchList('building_studio'),
+        fetchList('gallery'),
+      ]);
+      setArtworkImages(a);
+      setBuildingImages(b);
+      setGalleryImages(g);
+    })();
+  }, []);
 
   const allImages = useMemo(
     () => [...artworkImages, ...buildingImages],
@@ -50,6 +59,7 @@ export function StudioGalleryPage() {
   const fadeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
+    if (artworkImages.length === 0 || buildingImages.length === 0) return;
     const pickNext = (): Indices => {
       const pick = (len: number, except?: number) => {
         if (len <= 1) return 0;
@@ -90,8 +100,44 @@ export function StudioGalleryPage() {
     };
   }, [artworkImages.length, buildingImages.length, current.a, current.b, current.c]);
 
+  const [galleryCurrent, setGalleryCurrent] = useState(0);
+  const [galleryNextIndex, setGalleryNextIndex] = useState<number | null>(null);
+  const [galleryShowNext, setGalleryShowNext] = useState(false);
+  const gRotateTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const gFadeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    if (galleryImages.length <= 1) return;
+    const pickNext = () => {
+      let r = Math.floor(Math.random() * galleryImages.length);
+      if (galleryImages.length > 1) {
+        while (r === galleryCurrent) r = Math.floor(Math.random() * galleryImages.length);
+      }
+      return r;
+    };
+    const startRotate = () => {
+      gRotateTimerRef.current = setInterval(() => {
+        const next = pickNext();
+        setGalleryNextIndex(next);
+        setGalleryShowNext(true);
+        if (gFadeTimerRef.current) clearTimeout(gFadeTimerRef.current);
+        gFadeTimerRef.current = setTimeout(() => {
+          setGalleryCurrent(next);
+          setGalleryShowNext(false);
+          setGalleryNextIndex(null);
+        }, fadeMs);
+      }, rotateMs);
+    };
+    startRotate();
+    return () => {
+      if (gRotateTimerRef.current) clearInterval(gRotateTimerRef.current);
+      if (gFadeTimerRef.current) clearTimeout(gFadeTimerRef.current);
+    };
+  }, [galleryImages.length, galleryCurrent]);
+
   const [viewerOpen, setViewerOpen] = useState(false);
   const [viewerIndex, setViewerIndex] = useState(0);
+  const [viewerMode, setViewerMode] = useState<"studio" | "gallery">("studio");
   const [carouselApi, setCarouselApi] = useState<CarouselApi | null>(null);
 
   // Measure header blocks above each grid so tiles can grow to the largest
@@ -119,9 +165,17 @@ export function StudioGalleryPage() {
     return () => window.removeEventListener("resize", update);
   }, []);
 
-  const openViewerForImage = (src: string) => {
+  const openViewerForStudioImage = (src: string) => {
+    setViewerMode("studio");
     const idx = allImages.indexOf(src);
     setViewerIndex(idx >= 0 ? idx : 0);
+    setViewerOpen(true);
+  };
+
+  const openViewerForGalleryImage = (idx?: number) => {
+    if (galleryImages.length === 0) return;
+    setViewerMode("gallery");
+    setViewerIndex(typeof idx === "number" ? idx : galleryCurrent);
     setViewerOpen(true);
   };
 
@@ -162,12 +216,29 @@ export function StudioGalleryPage() {
       <button
         key={key}
         type="button"
-        onClick={() => openViewerForImage(onClickSrc(current))}
+        onClick={() => openViewerForStudioImage(onClickSrc(current))}
         className="relative aspect-[16/9] overflow-hidden focus:outline-hidden"
         aria-label="Open image viewer"
       >
         {tileLayer(key, "current", showNext ? "opacity-0" : "opacity-100", makeBgStyle(cur.src, cur.size, cur.pos))}
         {tileLayer(key, "next", showNext ? "opacity-100" : "opacity-0", makeBgStyle(nxt.src, nxt.size, nxt.pos))}
+      </button>
+    );
+  };
+
+  const renderGallerySlice = (key: string, colPct: number, rowPct: number) => {
+    const curSrc = galleryImages[galleryCurrent] || "";
+    const nextSrc = galleryNextIndex !== null ? galleryImages[galleryNextIndex] : curSrc;
+    return (
+      <button
+        key={key}
+        type="button"
+        onClick={() => openViewerForGalleryImage()}
+        className="relative aspect-[16/9] overflow-hidden focus:outline-hidden"
+        aria-label="Open gallery image viewer"
+      >
+        {tileLayer(key, "current", galleryShowNext ? "opacity-0" : "opacity-100", makeBgStyle(curSrc, "290% 290%", `${colPct}% ${rowPct}%`))}
+        {tileLayer(key, "next", galleryShowNext ? "opacity-100" : "opacity-0", makeBgStyle(nextSrc, "290% 290%", `${colPct}% ${rowPct}%`))}
       </button>
     );
   };
@@ -224,91 +295,104 @@ export function StudioGalleryPage() {
           </div>
 
           <div className="grid grid-cols-3 gap-1 sm:gap-2 md:gap-3 lg:gap-4 mt-3 sm:mt-4 md:mt-4 w-full mx-auto lg:max-w-[min(100%,calc((var(--stripe-h)-var(--block-h)-var(--cta-h,56px)-32px)*1.7778))]">
-            {/** Row 1: [1]=artwork A top, [2-3]=building top row */}
-            {renderTile(
-              "studio-1",
-              (idx) => ({
-                src: artworkImages[idx.a],
-                size: "100% 250%",
-                pos: "50% 0%",
-              }),
-              (idx) => artworkImages[idx.a],
-            )}
-            {renderTile(
-              "studio-2",
-              (idx) => ({
-                src: buildingImages[idx.c],
-                size: "200% 300%",
-                pos: "0% 0%",
-              }),
-              (idx) => buildingImages[idx.c],
-            )}
-            {renderTile(
-              "studio-3",
-              (idx) => ({
-                src: buildingImages[idx.c],
-                size: "200% 300%",
-                pos: "100% 0%",
-              }),
-              (idx) => buildingImages[idx.c],
-            )}
+            {artworkImages.length > 0 && buildingImages.length > 0 ? (
+              <>
+                {renderTile(
+                  "studio-1",
+                  (idx) => ({
+                    src: artworkImages[idx.a],
+                    size: "100% 250%",
+                    pos: "50% 0%",
+                  }),
+                  (idx) => artworkImages[idx.a],
+                )}
+                {renderTile(
+                  "studio-2",
+                  (idx) => ({
+                    src: buildingImages[idx.c],
+                    size: "200% 300%",
+                    pos: "0% 0%",
+                  }),
+                  (idx) => buildingImages[idx.c],
+                )}
+                {renderTile(
+                  "studio-3",
+                  (idx) => ({
+                    src: buildingImages[idx.c],
+                    size: "200% 300%",
+                    pos: "100% 0%",
+                  }),
+                  (idx) => buildingImages[idx.c],
+                )}
 
-            {/** Row 2: [4]=artwork B top, [5-6]=building middle row */}
-            {renderTile(
-              "studio-4",
-              (idx) => ({
-                src: artworkImages[idx.b],
-                size: "100% 250%",
-                pos: "50% 0%",
-              }),
-              (idx) => artworkImages[idx.b],
-            )}
-            {renderTile(
-              "studio-5",
-              (idx) => ({
-                src: buildingImages[idx.c],
-                size: "200% 300%",
-                pos: "0% 50%",
-              }),
-              (idx) => buildingImages[idx.c],
-            )}
-            {renderTile(
-              "studio-6",
-              (idx) => ({
-                src: buildingImages[idx.c],
-                size: "200% 300%",
-                pos: "100% 50%",
-              }),
-              (idx) => buildingImages[idx.c],
-            )}
+                {renderTile(
+                  "studio-4",
+                  (idx) => ({
+                    src: artworkImages[idx.b],
+                    size: "100% 250%",
+                    pos: "50% 0%",
+                  }),
+                  (idx) => artworkImages[idx.b],
+                )}
+                {renderTile(
+                  "studio-5",
+                  (idx) => ({
+                    src: buildingImages[idx.c],
+                    size: "200% 300%",
+                    pos: "0% 50%",
+                  }),
+                  (idx) => buildingImages[idx.c],
+                )}
+                {renderTile(
+                  "studio-6",
+                  (idx) => ({
+                    src: buildingImages[idx.c],
+                    size: "200% 300%",
+                    pos: "100% 50%",
+                  }),
+                  (idx) => buildingImages[idx.c],
+                )}
 
-            {/** Row 3: [7]=artwork B bottom, [8-9]=building bottom row */}
-            {renderTile(
-              "studio-7",
-              (idx) => ({
-                src: artworkImages[idx.b],
-                size: "100% 166.6667%",
-                pos: "50% 100%",
-              }),
-              (idx) => artworkImages[idx.b],
-            )}
-            {renderTile(
-              "studio-8",
-              (idx) => ({
-                src: buildingImages[idx.c],
-                size: "200% 300%",
-                pos: "0% 100%",
-              }),
-              (idx) => buildingImages[idx.c],
-            )}
-            {renderTile(
-              "studio-9",
-              (idx) => ({
-                src: buildingImages[idx.c],
-                size: "200% 300%",
-                pos: "100% 100%",
-              }),
-              (idx) => buildingImages[idx.c],
+                {renderTile(
+                  "studio-7",
+                  (idx) => ({
+                    src: artworkImages[idx.b],
+                    size: "100% 166.6667%",
+                    pos: "50% 100%",
+                  }),
+                  (idx) => artworkImages[idx.b],
+                )}
+                {renderTile(
+                  "studio-8",
+                  (idx) => ({
+                    src: buildingImages[idx.c],
+                    size: "200% 300%",
+                    pos: "0% 100%",
+                  }),
+                  (idx) => buildingImages[idx.c],
+                )}
+                {renderTile(
+                  "studio-9",
+                  (idx) => ({
+                    src: buildingImages[idx.c],
+                    size: "200% 300%",
+                    pos: "100% 100%",
+                  }),
+                  (idx) => buildingImages[idx.c],
+                )}
+              </>
+            ) : (
+              <>
+                <div className="aspect-[16/9] bg-black/10 overflow-hidden" />
+                <div className="aspect-[16/9] bg-black/10 overflow-hidden" />
+                <div className="aspect-[16/9] bg-black/10 overflow-hidden" />
+                <div className="aspect-[16/9] bg-black/10 overflow-hidden" />
+                <div className="aspect-[16/9] bg-black/10 overflow-hidden" />
+                <div className="aspect-[16/9] bg-black/10 overflow-hidden" />
+                <div className="aspect-[16/9] bg-black/10 overflow-hidden" />
+                <div className="aspect-[16/9] bg-black/10 overflow-hidden" />
+                <div className="aspect-[16/9] bg-black/10 overflow-hidden" />
+              </>
             )}
           </div>
           {/* Action button under Studio grid */}
@@ -348,61 +432,31 @@ export function StudioGalleryPage() {
           </div>
 
           <div className="grid grid-cols-3 gap-1 sm:gap-2 md:gap-3 lg:gap-4 mt-3 sm:mt-4 md:mt-4 w-full mx-auto lg:max-w-[min(100%,calc((var(--stripe-h)-var(--block-h)-var(--cta-h,56px)-32px)*1.7778))]">
-            <div className="aspect-[16/9] bg-[#2C5F6F]/90 overflow-hidden">
-              <div className="w-full h-full flex items-center justify-center">
-                <span className="text-xs font-medium text-white">Archive 1</span>
-              </div>
-            </div>
-            <div className="aspect-[16/9] bg-white/90 overflow-hidden">
-              <ImageWithFallback
-                src={"https://images.unsplash.com/photo-1574367157590-3454fe866961?crop=entropy&cs=tinysrgb&fit=max&fm=jpg&ixid=M3w3Nzg4Nzd8MHwxfHNlYXJjaHwxfHxhcnQlMjBnYWxsZXJ5JTIwaW50ZXJpb3J8ZW58MXx8fHwxNzYxMjIxMDE4fDA&ixlib=rb-4.1.0&q=80&w=1080"}
-                alt="Gallery space"
-                className="w-full h-full object-cover"
-                width={800}
-                height={800}
-                sizes="(max-width: 640px) 100vw, (max-width: 1024px) 50vw, 33vw"
-              />
-            </div>
-            <div className="aspect-[16/9] bg-[#8B4B3B]/90 overflow-hidden">
-              <div className="w-full h-full flex items-center justify-center">
-                <span className="text-xs font-medium text-white">Archive 2</span>
-              </div>
-            </div>
-            <div className="aspect-[16/9] bg-[#7BC74D]/90 overflow-hidden">
-              <ImageWithFallback
-                src={"https://images.unsplash.com/photo-1713779490284-a81ff6a8ffae?crop=entropy&cs=tinysrgb&fit=max&fm=jpg&ixid=M3w3Nzg4Nzd8MHwxfHNlYXJjaHwxfHxnYWxsZXJ5JTIwZXhoaWJpdGlvbnxlbnwxfHx8fDE3NjEzMDI1NjV8MA&ixlib=rb-4.1.0&q=80&w=1080"}
-                alt="Gallery space"
-                className="w-full h-full object-cover"
-                width={800}
-                height={800}
-                sizes="(max-width: 640px) 100vw, (max-width: 1024px) 50vw, 33vw"
-              />
-            </div>
-            <div className="aspect-[16/9] bg-white/80 overflow-hidden">
-              <div className="w-full h-full flex items-center justify-center">
-                <span className="text-xs font-medium" style={{ color: '#5a3a2a' }}>Archive 3</span>
-              </div>
-            </div>
-            <div className="aspect-[16/9] bg-[#D4AF37]/90 overflow-hidden">
-              <div className="w-full h-full flex items-center justify-center">
-                <span className="text-xs font-medium text-white">Archive 4</span>
-              </div>
-            </div>
-            <div className="aspect-[16/9] bg-[#355C7D]/90 overflow-hidden">
-              <div className="w-full h-full flex items-center justify-center">
-                <span className="text-xs font-medium text-white">Archive 5</span>
-              </div>
-            </div>
-            <div className="aspect-[16/9] bg-[#6C5B7B]/90 overflow-hidden">
-              <div className="w-full h-full flex items-center justify-center">
-                <span className="text-xs font-medium text-white">Archive 6</span>
-              </div>
-            </div>
-            <div className="aspect-[16/9] bg-[#C06C84]/90 overflow-hidden">
-              <div className="w-full h-full flex items-center justify-center">
-                <span className="text-xs font-medium text-white">Archive 7</span>
-              </div>
-            </div>
+            {galleryImages.length > 0 ? (
+              <>
+                {renderGallerySlice("gallery-1", 0, 0)}
+                {renderGallerySlice("gallery-2", 50, 0)}
+                {renderGallerySlice("gallery-3", 100, 0)}
+                {renderGallerySlice("gallery-4", 0, 50)}
+                {renderGallerySlice("gallery-5", 50, 50)}
+                {renderGallerySlice("gallery-6", 100, 50)}
+                {renderGallerySlice("gallery-7", 0, 100)}
+                {renderGallerySlice("gallery-8", 50, 100)}
+                {renderGallerySlice("gallery-9", 100, 100)}
+              </>
+            ) : (
+              <>
+                <div className="aspect-[16/9] bg-[#2C5F6F]/90 overflow-hidden" />
+                <div className="aspect-[16/9] bg-white/90 overflow-hidden" />
+                <div className="aspect-[16/9] bg-[#8B4B3B]/90 overflow-hidden" />
+                <div className="aspect-[16/9] bg-[#7BC74D]/90 overflow-hidden" />
+                <div className="aspect-[16/9] bg-white/80 overflow-hidden" />
+                <div className="aspect-[16/9] bg-[#D4AF37]/90 overflow-hidden" />
+                <div className="aspect-[16/9] bg-[#355C7D]/90 overflow-hidden" />
+                <div className="aspect-[16/9] bg-[#6C5B7B]/90 overflow-hidden" />
+                <div className="aspect-[16/9] bg-[#C06C84]/90 overflow-hidden" />
+              </>
+            )}
           </div>
           {/* Action button under Gallery grid */}
           <div className="mt-4 sm:mt-5 md:mt-6 flex justify-center">
@@ -426,17 +480,17 @@ export function StudioGalleryPage() {
         <DialogContent className="p-0 border-0 max-w-none sm:max-w-none md:max-w-none lg:max-w-none w-screen h-screen top-0 left-0 translate-x-0 translate-y-0 rounded-none bg-black overflow-hidden">
           <DialogHeader className="sr-only">
             <DialogTitle>Image viewer</DialogTitle>
-            <DialogDescription>Full-screen carousel to browse studio and building images.</DialogDescription>
+            <DialogDescription>Full-screen carousel to browse images.</DialogDescription>
           </DialogHeader>
           <div className="relative w-screen h-screen">
             <Carousel className="w-full h-full" setApi={setCarouselApi} opts={{ startIndex: viewerIndex }}>
               <CarouselContent className="h-full ml-0">
-                {allImages.map((src, i) => (
+                {(viewerMode === "studio" ? allImages : galleryImages).map((src, i) => (
                   <CarouselItem key={src} className="h-full pl-0">
                     <div className="flex items-center justify-center w-full h-full bg-black">
                       <img
                         src={src}
-                        alt="Studio image"
+                        alt={viewerMode === "studio" ? "Studio image" : "Gallery image"}
                         className="object-contain w-auto h-auto"
                         style={{ maxWidth: 'calc(100vw - 6rem)', maxHeight: 'calc(100vh - 6rem)' }}
                         loading={i === viewerIndex ? "eager" : "lazy"}
