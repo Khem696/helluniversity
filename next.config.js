@@ -58,7 +58,12 @@ const nextConfig = {
   trailingSlash: true,
   images: {
     unoptimized: true,
-    domains: ['images.unsplash.com'],
+    remotePatterns: [
+      {
+        protocol: 'https',
+        hostname: 'images.unsplash.com',
+      },
+    ],
     formats: ['image/webp', 'image/avif'],
   },
   compiler: {
@@ -98,6 +103,8 @@ const nextConfig = {
     }
     return config
   },
+  // Add empty turbopack config to use webpack for static export
+  turbopack: {},
 }
 
 module.exports = withPWA(nextConfig)
