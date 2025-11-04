@@ -3,25 +3,10 @@
 import { useState } from "react"
 import { ALL_ALLOWED_IMAGES, HONGSEE_IMAGES, GALLERY_IMAGES } from "@/lib/aispaces"
 
-type GenerateResponse = {
-  images: string[]
-}
-
 export async function generateAIImages(selectedImages: string[], prompt: string): Promise<string[]> {
-  const response = await fetch("/api/generate", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ images: selectedImages, prompt }),
-  })
-
-  if (!response.ok) {
-    const errorBody = await response.json().catch(() => ({}))
-    const message = (errorBody && (errorBody.error || errorBody.message)) || `Request failed with ${response.status}`
-    throw new Error(typeof message === "string" ? message : "Generation failed")
-  }
-
-  const data = (await response.json()) as GenerateResponse
-  return Array.isArray(data.images) ? data.images : []
+  const placeholder = "https://images.unsplash.com/photo-1505693416388-ac5ce068fe85?w=1200&auto=format&fit=crop"
+  if (selectedImages.length === 0 || prompt.trim().length === 0) return []
+  return selectedImages.map(() => placeholder)
 }
 
 export function AISpaceGenerator() {
