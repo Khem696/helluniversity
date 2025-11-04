@@ -182,8 +182,8 @@ export function StudioGalleryPage() {
         {/* <div aria-hidden className="shrink-0 h-24 sm:h-28 md:h-32 lg:h-36" /> */}
 
         {/* Content block with backgrounds scoped to its height */}
-        <div className="lg:min-h-screen lg:grid lg:place-items-center py-[max(var(--header-h,0px),clamp(24px,6vh,96px))] lg:py-0">
-          <div className="relative isolate bg-[#42210b] overflow-hidden h-auto lg:h-[var(--stripe-h)] w-full" style={{ ['--stripe-h' as any]: 'clamp(45rem, 72vh, 78rem)' }}>
+        <div className="lg:min-h-screen lg:grid lg:place-items-center py-[max(var(--header-h,0px),clamp(24px,6vh,96px))] lg:py-[max(var(--header-h,0px),clamp(24px,4vh,64px))]">
+          <div className="relative isolate bg-[#42210b] overflow-hidden h-auto lg:min-h-[var(--stripe-h)] w-full lg:grid lg:place-items-center" style={{ ['--stripe-h' as any]: 'clamp(46rem, 66vh, 88rem)', ['--cta-h' as any]: 'clamp(3rem,5vh,6rem)' }}>
 
           {/* Portrait layer (right-center), blended over darker red */}
           <div
@@ -203,7 +203,7 @@ export function StudioGalleryPage() {
       {/* Left Side - Studio */}
       <div className="@container/studio-left w-full md:w-1/2 min-w-0 relative overflow-hidden" style={{ ['--block-h' as any]: `${leftBlockH}px` }}>
 
-        <div className="relative z-10 flex flex-col h-full px-4 sm:px-6 md:px-8 lg:px-10 pt-4 md:pt-6 lg:pt-8 pb-0">
+        <div className="relative z-10 flex flex-col h-full px-4 sm:px-6 md:px-8 lg:px-10 pt-4 md:pt-6 lg:pt-8 pb-4 md:pb-6 lg:pb-8">
           <div ref={leftHeaderRef} className="flex flex-col items-center shrink-0 mb-3 md:mb-4 mt-3 md:mt-4 min-h-20 md:min-h-24 lg:min-h-28">
             <div className="bg-[#5B9AB8]/80 px-5 sm:px-6 md:px-8 py-2 md:py-3 rounded-full mb-3 sm:mb-4 md:mb-6">
               <h2 className="text-white font-comfortaa font-normal text-[clamp(1.25rem,2.2vw,1.75rem)]">
@@ -223,7 +223,7 @@ export function StudioGalleryPage() {
             </div>
           </div>
 
-          <div className="grid grid-cols-3 gap-1 sm:gap-2 md:gap-3 lg:gap-4 mt-3 sm:mt-4 md:mt-4 w-full mx-auto lg:max-w-[min(100%,calc((var(--stripe-h)-var(--block-h)-32px)*1.7778))]">
+          <div className="grid grid-cols-3 gap-1 sm:gap-2 md:gap-3 lg:gap-4 mt-3 sm:mt-4 md:mt-4 w-full mx-auto lg:max-w-[min(100%,calc((var(--stripe-h)-var(--block-h)-var(--cta-h,56px)-32px)*1.7778))]">
             {/** Row 1: [1]=artwork A top, [2-3]=building top row */}
             {renderTile(
               "studio-1",
@@ -311,13 +311,23 @@ export function StudioGalleryPage() {
               (idx) => buildingImages[idx.c],
             )}
           </div>
+          {/* Action button under Studio grid */}
+          <div className="mt-4 sm:mt-5 md:mt-6 flex justify-center">
+            <button
+              type="button"
+              aria-label="Tailor Your Desire"
+              className="font-comfortaa inline-flex items-center justify-center w-auto whitespace-nowrap rounded-full bg-[#5B9AB8] text-white px-5 sm:px-6 md:px-8 py-2 md:py-3 text-[clamp(1.00rem,3.2vw,1.25rem)] shadow-sm hover:bg-[#4d8ea7] focus:outline-hidden focus-visible:ring-2 focus-visible:ring-white/70 transition-colors"
+            >
+              Tailor Your Desire
+            </button>
+          </div>
           </div>
         </div>
 
       {/* Right Side - Gallery */}
       <div className="@container/studio-right w-full md:w-1/2 min-w-0 relative overflow-hidden" style={{ ['--block-h' as any]: `${rightBlockH}px` }}>
 
-        <div className="relative z-10 flex flex-col h-full px-4 sm:px-6 md:px-8 lg:px-10 pt-4 md:pt-6 lg:pt-8 pb-0">
+        <div className="relative z-10 flex flex-col h-full px-4 sm:px-6 md:px-8 lg:px-10 pt-4 md:pt-6 lg:pt-8 pb-4 md:pb-6 lg:pb-8">
           <div ref={rightHeaderRef} className="flex flex-col items-center shrink-0 mb-3 md:mb-4 mt-3 md:mt-4 min-h-20 md:min-h-24 lg:min-h-28">
             <div className="bg-[#5B9AB8]/80 px-5 sm:px-6 md:px-8 py-2 md:py-3 rounded-full mb-3 sm:mb-4 md:mb-6">
               <h2 className="text-white font-comfortaa font-normal text-[clamp(1.25rem,2.2vw,1.75rem)]">
@@ -337,7 +347,7 @@ export function StudioGalleryPage() {
             </div>
           </div>
 
-          <div className="grid grid-cols-3 gap-1 sm:gap-2 md:gap-3 lg:gap-4 mt-3 sm:mt-4 md:mt-4 w-full mx-auto lg:max-w-[min(100%,calc((var(--stripe-h)-var(--block-h)-32px)*1.7778))]">
+          <div className="grid grid-cols-3 gap-1 sm:gap-2 md:gap-3 lg:gap-4 mt-3 sm:mt-4 md:mt-4 w-full mx-auto lg:max-w-[min(100%,calc((var(--stripe-h)-var(--block-h)-var(--cta-h,56px)-32px)*1.7778))]">
             <div className="aspect-[16/9] bg-[#2C5F6F]/90 overflow-hidden">
               <div className="w-full h-full flex items-center justify-center">
                 <span className="text-xs font-medium text-white">Archive 1</span>
@@ -393,6 +403,16 @@ export function StudioGalleryPage() {
                 <span className="text-xs font-medium text-white">Archive 7</span>
               </div>
             </div>
+          </div>
+          {/* Action button under Gallery grid */}
+          <div className="mt-4 sm:mt-5 md:mt-6 flex justify-center">
+            <button
+              type="button"
+              aria-label="Visit Our Gallery"
+              className="font-comfortaa inline-flex items-center justify-center w-auto whitespace-nowrap rounded-full bg-[#5B9AB8] text-white px-5 sm:px-6 md:px-8 py-2 md:py-3 text-[clamp(1.00rem,3.2vw,1.25rem)] shadow-sm hover:bg-[#4d8ea7] focus:outline-hidden focus-visible:ring-2 focus-visible:ring-white/70 transition-colors"
+            >
+              Visit Our Gallery
+            </button>
           </div>
         </div>
       </div>

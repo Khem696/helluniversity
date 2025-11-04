@@ -2,7 +2,7 @@
 
 import Link from "next/link"
 import { useEffect, useRef, useState } from "react"
-import { Wand2, Menu, X } from "lucide-react"
+import { Calendar, Menu, X } from "lucide-react"
 import { Dialog, DialogTrigger, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog"
 import { AISpaceGenerator } from "@/components/AISpaceGenerator"
 import { withBasePath } from "@/lib/utils"
@@ -42,17 +42,17 @@ export function Header() {
 
         {/* Global Modal Trigger (replacing Log In) */}
         <Dialog>
-          <DialogTrigger className="hidden lg:flex flex-col items-center gap-1 text-white/80 hover:text-white transition-colors mr-1 sm:mr-2 md:mr-3 lg:mr-0" aria-label="Open AI GenSpace">
-            <div className="w-8 h-8 rounded-full bg-white/20 flex items-center justify-center">
-              <Wand2 size={16} className="text-white" />
+          <DialogTrigger className="hidden lg:flex items-center gap-3 text-white/80 hover:text-white transition-colors mr-1 sm:mr-2 md:mr-3 lg:mr-0" aria-label="Open Booking">
+            <div className="flex items-center justify-center w-10 h-10 lg:w-12 lg:h-12 3xl:w-14 3xl:h-14 4xl:w-16 4xl:h-16 5xl:w-20 5xl:h-20 rounded-full bg-white border-2 border-[var(--hell-dusty-blue)]">
+              <Calendar className="w-5 h-5 lg:w-6 lg:h-6 3xl:w-7 3xl:h-7 4xl:w-8 4xl:h-8 5xl:w-10 5xl:h-10 text-[var(--hell-dusty-blue)]" />
             </div>
-            <span className="hidden lg:inline font-comfortaa text-sm font-normal">AI GenSpace</span>
+            <span className="hidden lg:inline font-comfortaa font-normal text-sm lg:text-base 3xl:text-lg">Booking</span>
           </DialogTrigger>
 
           <DialogContent className="top-0 left-0 translate-x-0 translate-y-0 w-full h-vp max-w-none sm:max-w-none rounded-none border-0 p-0 bg-transparent">
             <DialogHeader className="sr-only">
-              <DialogTitle>AI GenSpace</DialogTitle>
-              <DialogDescription>Menu and AI Space Generator modal</DialogDescription>
+              <DialogTitle>Booking</DialogTitle>
+              <DialogDescription>Menu and Booking modal</DialogDescription>
             </DialogHeader>
             <div className="relative min-h-vp">
               <div className="flex flex-col lg:flex-row min-h-vp">

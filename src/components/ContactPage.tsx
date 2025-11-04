@@ -4,28 +4,25 @@ import { withBasePath } from "@/lib/utils";
 
 export function ContactPage() {
   return (
-    <div className="@container/contact flex flex-col md:flex-row min-h-vp overflow-hidden bg-[#3a3a3e] no-horiz-overflow pt-[clamp(5rem,8vw,7rem)] md:pt-0">
+    <div className="@container/contact flex flex-col md:flex-row justify-center items-center md:justify-center min-h-screen md:min-h-screen md:items-center overflow-hidden bg-[#3a3a3e] no-horiz-overflow pt-[clamp(2rem,4vw,3rem)] pb-[clamp(3rem,6vw,5rem)] lg:py-0">
       {/* Left: artwork as full background (half width) */}
-      <div className="w-full md:w-1/2 relative overflow-hidden flex items-center justify-center md:min-h-screen">
-        <div className="w-11/12 max-w-3xl xl:max-w-none aspect-[16/9]">
-          <ImageWithFallback
-            src={withBasePath('/assets/artwork/artwork_contact.png')}
-            alt="Contact artwork"
-            className="w-full h-full object-cover"
-            width={1600}
-            height={900}
-            priority
-            sizes="(max-width: 768px) 90vw, 50vw"
-          />
-        </div>
+      <div className="w-full md:w-1/2 relative overflow-hidden md:flex md:items-start md:justify-center">
+          <div className="w-[clamp(18rem,90vw,44rem)] md:w-[clamp(18rem,46vw,48rem)] mx-auto -translate-y-[clamp(0rem,2vw,1rem)] lg:translate-y-0">
+            <ImageWithFallback
+              src={withBasePath('/assets/artwork/artwork_contact.png')}
+              alt="Contact artwork"
+              className="w-full h-auto object-cover"
+              width={1600}
+              height={900}
+              priority
+              sizes="(max-width: 768px) 90vw, (max-width: 1280px) 42vw, 640px"
+            />
+          </div>
       </div>
 
       {/* Right: contact content segment (half width) */}
-      <div className="w-full md:w-1/2 relative md:min-h-screen">
-        {/* On mobile, let content flow normally to avoid overlap; use absolute overlay only on md+ */}
-        <div className="hidden md:block md:absolute md:inset-x-0 md:bottom-0 md:top-28 lg:top-36 xl:top-40 3xl:top-44 4xl:top-48 5xl:top-52" style={{ backgroundColor: '#3a3a3e' }} />
-
-          <div className="relative md:absolute md:inset-x-0 md:bottom-0 md:top-28 lg:top-36 xl:top-40 3xl:top-44 4xl:top-48 5xl:top-52 flex flex-col justify-center px-[clamp(1rem,3vw,4rem)] py-[clamp(2.5rem,6vw,6rem)]">
+      <div className="w-full md:w-1/2 relative">
+          <div className="w-11/12 max-w-3xl xl:max-w-none px-[clamp(1rem,3vw,4rem)] py-[clamp(2.5rem,6vw,6rem)] mx-auto -translate-y-[clamp(0rem,2vw,1rem)] lg:translate-y-0">
             <div className="max-w-md">
               <h1 className="text-[#87CEEB] mb-[clamp(2rem,5vw,3rem)] font-comfortaa weight-700 tracking-wider text-[clamp(2.25rem,6vw,5rem)] @min-[80rem]/contact:text-[clamp(4rem,7vw,7rem)] 3xl:tracking-[0.2em] 4xl:tracking-[0.25em] 5xl:tracking-[0.3em]">
               CONTACT
