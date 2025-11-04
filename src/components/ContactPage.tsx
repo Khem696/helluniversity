@@ -4,7 +4,7 @@ import { withBasePath } from "@/lib/utils";
 
 export function ContactPage() {
   return (
-    <div className="@container/contact flex flex-col lg:flex-row justify-center items-center lg:justify-center min-h-screen lg:min-h-screen lg:items-center overflow-hidden bg-[#3a3a3e] no-horiz-overflow pt-[clamp(2rem,4vw,3rem)] pb-[clamp(3rem,6vw,5rem)] lg:py-0">
+    <div className="@container/contact flex flex-col lg:flex-row justify-center items-center lg:justify-center min-h-screen lg:min-h-screen lg:items-center overflow-hidden bg-[#3a3a3e] no-horiz-overflow pt-[calc(var(--header-h)+1rem)] pb-[clamp(3rem,6vw,5rem)] lg:py-0">
       {/* Left: artwork as full background (half width) */}
       <div className="w-full lg:w-1/2 relative overflow-hidden lg:flex lg:items-start lg:justify-center">
           <div className="w-[clamp(18rem,90vw,44rem)] lg:w-[clamp(18rem,46vw,48rem)] mx-auto -translate-y-[clamp(0rem,2vw,1rem)] lg:translate-y-0">
