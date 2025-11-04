@@ -1,51 +1,64 @@
 "use client"
 
 import Link from "next/link"
-import { useState } from "react"
-import { Wand2, Menu, X } from "lucide-react"
+import { useEffect, useRef, useState } from "react"
+import { Calendar, Menu, X } from "lucide-react"
 import { Dialog, DialogTrigger, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog"
 import { AISpaceGenerator } from "@/components/AISpaceGenerator"
 import { withBasePath } from "@/lib/utils"
 
 export function Header() {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false)
+  const headerRef = useRef<HTMLElement | null>(null)
+
+  useEffect(() => {
+    const setHeaderVar = () => {
+      if (headerRef.current) {
+        const h = headerRef.current.offsetHeight
+        document.documentElement.style.setProperty('--header-h', `${h}px`)
+      }
+    }
+    setHeaderVar()
+    window.addEventListener('resize', setHeaderVar)
+    return () => window.removeEventListener('resize', setHeaderVar)
+  }, [])
 
   return (
-    <header className="absolute top-0 left-0 right-0 z-50 px-4 xxs:px-6 phone:px-8 md:px-12 lg:px-[120px] xl:px-[132px] py-2 xxs:py-3 phone:py-4 min-[639px]:max-md:py-4 lg:py-6 no-horiz-overflow">
+    <header ref={headerRef} className="absolute top-0 left-0 right-0 z-50 px-4 sm:px-6 md:px-8 lg:px-12 xl:px-16 py-2 sm:py-3 md:py-4 lg:py-6 no-horiz-overflow">
       {/* Top Row */}
-      <div className="flex items-center justify-between max-w-[1920px] mx-auto mb-0 lg:mb-0 min-w-0 relative">
+      <div className="flex items-center justify-between max-w-none mx-auto mb-0 lg:mb-0 min-w-0 relative">
         {/* Logo (hidden ≤425px) */}
-        <Link href="/" aria-label="Hell University Home" className="hidden md:flex items-center justify-center ml-1 md:ml-0">
-          <div className="flex items-center justify-center w-[48px] h-[48px] xxs:w-[52px] xxs:h-[52px] xs:w-[56px] xs:h-[56px] phone:w-[64px] phone:h-[64px] lg:w-[83px] lg:h-[83px] rounded-full bg-white border-2 lg:border-4 border-[var(--hell-dusty-blue)]">
-            <img src={withBasePath('/assets/icons/icon_helluniversity.svg')} alt="Hell University" width={62} height={62} className="w-[40px] h-[40px] xxs:w-[44px] xxs:h-[44px] xs:w-[46px] xs:h-[46px] phone:w-[56px] phone:h-[56px] lg:w-[73px] lg:h-[73px]" />
+        <Link href="/" aria-label="Hell University Home" className="hidden lg:flex items-center justify-center ml-1 md:ml-0">
+          <div className="flex items-center justify-center w-12 h-12 sm:w-14 sm:h-14 md:w-16 md:h-16 lg:w-20 lg:h-20 3xl:w-24 3xl:h-24 4xl:w-28 4xl:h-28 5xl:w-32 5xl:h-32 rounded-full bg-white border-2 lg:border-4 3xl:border-[6px] 4xl:border-8 border-[var(--hell-dusty-blue)]">
+            <img src={withBasePath('/assets/icons/icon_helluniversity.svg')} alt="Hell University" width={62} height={62} className="w-10 h-10 sm:w-11 sm:h-11 md:w-12 md:h-12 lg:w-16 lg:h-16 3xl:w-[4.5rem] 3xl:h-[4.5rem] 4xl:w-[5rem] 4xl:h-[5rem] 5xl:w-[6rem] 5xl:h-[6rem]" />
           </div>
         </Link>
 
         {/* Title - wraps on very small screens to avoid overlap; single line from phone and up */}
-                <h1 className="flex-1 text-left font-heading whitespace-normal md:whitespace-nowrap md:absolute md:left-1/2 md:-translate-x-1/2 md:text-center max-w-[80vw] md:max-w-none" style={{ fontSize: 'clamp(20px, 8vw, 44px)', fontWeight: '800', letterSpacing: '0.02em' }}>
+                <h1 className="flex-1 text-left font-heading font-extrabold tracking-wide whitespace-normal lg:whitespace-nowrap lg:absolute lg:left-1/2 lg:-translate-x-1/2 lg:text-center max-w-[80vw] lg:max-w-none text-xl sm:text-2xl md:text-3xl lg:text-5xl 3xl:text-6xl 4xl:text-7xl 5xl:text-8xl">
           <span className="text-[var(--hell-dusty-blue)] font-urbanist font-extrabold leading-[1.2]">Hell</span>{' '}
           <span className="text-[#2a1f1a] font-urbanist font-extrabold leading-[1.2]">University</span>
         </h1>
 
         {/* Global Modal Trigger (replacing Log In) */}
         <Dialog>
-          <DialogTrigger className="hidden md:flex flex-col items-center gap-1 text-white/80 hover:text-white transition-colors mr-1 xxs:mr-2 phone:mr-3 lg:mr-0" aria-label="Open AI GenSpace">
-            <div className="w-8 h-8 rounded-full bg-white/20 flex items-center justify-center">
-              <Wand2 size={16} className="text-white" />
+          <DialogTrigger className="hidden lg:flex items-center gap-3 text-white/80 hover:text-white transition-colors mr-1 sm:mr-2 md:mr-3 lg:mr-0" aria-label="Open Booking">
+            <div className="flex items-center justify-center w-10 h-10 lg:w-12 lg:h-12 3xl:w-14 3xl:h-14 4xl:w-16 4xl:h-16 5xl:w-20 5xl:h-20 rounded-full bg-white border-2 border-[var(--hell-dusty-blue)]">
+              <Calendar className="w-5 h-5 lg:w-6 lg:h-6 3xl:w-7 3xl:h-7 4xl:w-8 4xl:h-8 5xl:w-10 5xl:h-10 text-[var(--hell-dusty-blue)]" />
             </div>
-            <span className="hidden lg:inline font-comfortaa" style={{ fontSize: '14px', fontWeight: '400' }}>AI GenSpace</span>
+            <span className="hidden lg:inline font-comfortaa font-normal text-sm lg:text-base 3xl:text-lg">Booking</span>
           </DialogTrigger>
 
           <DialogContent className="top-0 left-0 translate-x-0 translate-y-0 w-full h-vp max-w-none sm:max-w-none rounded-none border-0 p-0 bg-transparent">
             <DialogHeader className="sr-only">
-              <DialogTitle>AI GenSpace</DialogTitle>
-              <DialogDescription>Menu and AI Space Generator modal</DialogDescription>
+              <DialogTitle>Booking</DialogTitle>
+              <DialogDescription>Menu and Booking modal</DialogDescription>
             </DialogHeader>
             <div className="relative min-h-vp">
               <div className="flex flex-col lg:flex-row min-h-vp">
                 {/* Left Side - Hero-like panel */}
-                <div className="w-full lg:w-1/2 bg-[#5B9AB8] flex flex-col justify-center hero-left-padding py-12 phone:py-16 lg:py-24">
-                  <div className="max-w-xl px-6 phone:px-8 lg:px-12">
+                <div className="w-full lg:w-1/2 bg-[#5B9AB8] flex flex-col justify-center xl:pl-32 py-12 md:py-16 lg:py-24">
+                  <div className="max-w-xl px-6 md:px-8 lg:px-12">
                     <h1 className="mb-8 lg:mb-12 font-heading" style={{ fontSize: 'clamp(48px, 8vw, 96px)', fontWeight: '900', lineHeight: '0.9', color: '#5a3a2a' }}>
                       Hell<br />University
                     </h1>
@@ -83,7 +96,7 @@ export function Header() {
         {/* Mobile Menu Button */}
         <button
           onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
-          className="md:hidden text-white p-2 xxs:p-3 phone:absolute phone:right-4 phone:top-1/2 phone:-translate-y-1/2 min-[639px]:max-md:absolute min-[639px]:max-md:right-4 min-[639px]:max-md:top-1/2 min-[639px]:max-md:-translate-y-1/2"
+          className="lg:hidden text-white p-2 sm:p-3 sm:absolute sm:right-4 sm:top-1/2 sm:-translate-y-1/2"
           aria-label="Toggle navigation"
         >
           {mobileMenuOpen ? <X size={22} /> : <Menu size={22} />}
@@ -92,16 +105,16 @@ export function Header() {
 
 
       {/* Bottom Row: Desktop Nav */}
-      <nav className="hidden md:flex items-center justify-center gap-8 lg:gap-14 xl:gap-16 max-w-[1920px] mx-auto mb-0 lg:mb-0">
-        <Link href="/" className="transition-colors text-white hover:text-white font-comfortaa" style={{ fontSize: '22px', fontWeight: '400' }}>Home</Link>
-        <Link href="/about" className="transition-colors text-white hover:text-white font-comfortaa" style={{ fontSize: '22px', fontWeight: '400' }}>About</Link>
-        <Link href="/studio-gallery" className="transition-colors text-white hover:text-white font-comfortaa" style={{ fontSize: '22px', fontWeight: '400' }}>Studio/Gallery</Link>
-        <Link href="/contact" className="transition-colors text-white hover:text-white font-comfortaa" style={{ fontSize: '22px', fontWeight: '400' }}>Contact</Link>
+      <nav className="hidden lg:flex items-center justify-center gap-8 lg:gap-14 xl:gap-16 max-w-none mx-auto mb-0 lg:mb-0">
+        <Link href="/" className="transition-colors text-white hover:text-white font-comfortaa text-[clamp(18px,1.2vw,28px)] font-normal">Home</Link>
+        <Link href="/about" className="transition-colors text-white hover:text-white font-comfortaa text-[clamp(18px,1.2vw,28px)] font-normal">About</Link>
+        <Link href="/studio-gallery" className="transition-colors text-white hover:text-white font-comfortaa text-[clamp(18px,1.2vw,28px)] font-normal">Studio/Gallery</Link>
+        <Link href="/contact" className="transition-colors text-white hover:text-white font-comfortaa text-[clamp(18px,1.2vw,28px)] font-normal">Contact</Link>
       </nav>
 
       {/* Mobile Menu Overlay */}
       {mobileMenuOpen && (
-        <div className="md:hidden fixed inset-0 z-40 bg-[#2a2520]/95 backdrop-blur-sm">
+        <div className="lg:hidden fixed inset-0 z-40 bg-[#2a2520]/95 backdrop-blur-sm">
           <nav className="flex flex-col items-center justify-center h-full gap-8 mb-0 lg:mb-0">
             {/* Logo shown at top of menu on small screens */}
             <div className="mb-4">

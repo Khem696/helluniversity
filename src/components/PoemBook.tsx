@@ -44,10 +44,10 @@ export function PoemBook({ className }: PoemBookProps) {
 
 	return (
 		<div
-			className={"relative select-none origin-top-left lg:scale-100 xl:scale-[.72] " + (className ?? "")}
+			className={"relative select-none " + (className ?? "")}
 		>
 			{/* Book Container matches hero portrait container: object-left, contained within max width */}
-			<div className="relative w-full max-w-[720px] md:max-w-[640px] lg:max-w-[520px] xl:max-w-[720px]">
+			<div className="relative w-full overflow-hidden max-w-[clamp(280px,88vw,720px)] min-[769px]:max-w-[clamp(360px,44vw,720px)] lg:max-w-[clamp(420px,40vw,460px)] xl:max-w-[460px]">
 				{/* Base image determines container size */}
 				<img
 					src={baseBackground}
@@ -63,16 +63,15 @@ export function PoemBook({ className }: PoemBookProps) {
 				<img
 					src={pages[index]}
 					alt={`Poem page ${index + 1}`}
-					className="absolute inset-0 w-full h-full object-contain object-left"
+					className="absolute left-0 top-[16%] sm:top-[16%] min-[769px]:top-[16%] lg:top-[16%] xl:top-[16%] w-full h-auto object-contain object-left"
 					width={1600}
 					height={2000}
 					loading="lazy"
 					decoding="async"
 				/>
-			</div>
 
-				{/* Controls - centered at bottom */}
-				<div className="absolute bottom-4 left-1/2 -translate-x-1/2 flex items-center gap-4">
+				{/* Controls - centered at bottom within book container */}
+				<div className="absolute bottom-4 left-0 right-0 flex items-center justify-center gap-4">
 					<button
 						onClick={goPrev}
 						className="inline-flex h-10 w-10 items-center justify-center rounded-full bg-black/60 text-white hover:bg-black/80 transition focus:outline-none focus:ring-2 focus:ring-white/60"
@@ -91,6 +90,7 @@ export function PoemBook({ className }: PoemBookProps) {
 						<ChevronRight size={20} />
 					</button>
 				</div>
+			</div>
 			</div>
 	)
 }

@@ -9,20 +9,11 @@ module.exports = {
   ],
   theme: {
     screens: {
-      xxs: "320px",       // smallest mobile (iPhone SE, many Android compacts)
-      xs: "360px",        // small phones (Galaxy S8+)
-      phone: "390px",     // modern iPhones (12/13/14)
-      "phone-lg": "414px", // large phones (iPhone Plus / XR)
-      "tablet-sm": "600px", // small tablets / large phones (Pixel Fold portrait)
-      "tablet-md": "820px", // iPad Air/10th-gen portrait logical width
-      "tablet-lg": "834px", // iPad Pro 11" portrait
-      sm: "640px",        // Tailwind default small breakpoint
-      md: "768px",        // tablets (iPad)
-      lg: "1024px",       // large tablets / small laptops (iPad Pro)
-      xl: "1280px",       // laptops
-      desktop: "1440px",  // common desktop width
-      "2xl": "1536px",   // Tailwind default 2xl
-      "3xl": "1920px",   // full HD desktops
+      sm: "640px",
+      md: "768px",
+      lg: "1024px",
+      xl: "1280px",
+      "2xl": "1536px",
     },
     container: {
       center: true,
@@ -99,5 +90,5 @@ module.exports = {
       },
     },
   },
-  plugins: [require("tailwindcss-animate")],
+  plugins: [],
 }

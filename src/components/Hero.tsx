@@ -2,31 +2,30 @@
 import { withBasePath } from "@/lib/utils"
 
 import { Facebook, Twitter, Instagram } from "lucide-react"
-import { ImageWithFallback } from "./figma/ImageWithFallback"
 
 export function Hero() {
   return (
-    <section className="relative min-h-vp overflow-visible no-horiz-overflow">
-      <div className="flex flex-col lg:flex-row h-full">
+    <section className="relative min-h-vp lg:h-[100dvh] overflow-visible no-horiz-overflow">
+      <div className="flex flex-col lg:flex-row lg:items-stretch h-full">
         {/* Left Side - Blue */}
-        <div className="w-full lg:w-1/2 min-w-0 bg-[#3e82bb] flex flex-col justify-center lg:justify-start hero-left-padding py-10 xxs:py-12 phone:py-16 tablet-md:py-20 lg:pt-4 lg:pb-16 mobile-center">
-          <div className="max-w-xl pl-6 sm:pl-0 pr-3 xxs:pr-4 phone:pr-6 md:pr-6 tablet-md:pr-8 lg:pr-0 mt-16 md:mt-32 lg:mt-48 xl:mt-48 desktop:mt-52 w-full">
+        <div className="w-full lg:w-1/2 min-w-0 bg-[#3e82bb] flex flex-col justify-start 4xl:justify-center 5xl:justify-center pl-6 sm:pl-6 min-[769px]:pl-8 lg:pl-10 xl:pl-32 3xl:pl-40 4xl:pl-56 5xl:pl-72 pt-[calc(var(--header-h)+2rem)] lg:pt-[calc(var(--header-h)+3rem)] 4xl:pt-0 pb-[clamp(2rem,8vh,5rem)] lg:pb-[clamp(3rem,10vh,6rem)] 4xl:pb-0">
+          <div className="pl-0 pr-3 sm:pr-4 min-[769px]:pr-6 lg:pr-8 xl:pr-0 w-full max-w-[44rem] 3xl:max-w-[50rem] 4xl:max-w-[56rem] 5xl:max-w-[62rem]">
             {/* Main Title */}
-            <h1 className="mb-8 tablet-md:mb-10 lg:mb-12 font-acumin" style={{ fontSize: 'clamp(48px, 7.5vw, 96px)', fontWeight: '900', lineHeight: '0.9', color: '#42210b' }}>
+            <h1 className="mb-8 md:mb-10 lg:mb-12 font-acumin text-[clamp(48px,7.5vw,132px)] font-black leading-[0.9] text-[#42210b]">
               Hell<br />University
             </h1>
 
             {/* Culture House */}
-            <h2 className="text-white mb-10 phone:mb-12 lg:mb-16 font-urbanist" style={{ fontSize: 'clamp(30px, 5.5vw, 56px)', fontWeight: '800', lineHeight: '1.2' }}>
+            <h2 className="text-white mb-10 sm:mb-12 lg:mb-16 font-urbanist text-[clamp(30px,5.5vw,72px)] font-extrabold leading-[1.2]">
               Culture Hub
             </h2>
 
             {/* Studio Section */}
             <div className="mb-8 lg:mb-12">
-              <h3 className="text-white mb-4 font-comfortaa" style={{ fontSize: 'clamp(28px, 4.5vw, 40px)', fontWeight: '400' }}>
+              <h3 className="text-white mb-4 font-comfortaa text-[clamp(28px,4.5vw,48px)] font-normal">
                 Studio
               </h3>
-              <p className="text-white/90 font-comfortaa" style={{ fontSize: '14px', fontWeight: '300', lineHeight: '1.6' }}>
+              <p className="text-white/90 font-comfortaa text-[clamp(14px,1vw,18px)] font-light leading-[1.6]">
                 Hongsee Culture House is a creative hub<br />
                 for cultural events and the artistic community.
               </p>
@@ -34,10 +33,10 @@ export function Hero() {
 
             {/* Gallery Section */}
             <div>
-              <h3 className="text-white mb-4 font-comfortaa" style={{ fontSize: 'clamp(28px, 4.5vw, 40px)', fontWeight: '400' }}>
+              <h3 className="text-white mb-4 font-comfortaa text-[clamp(28px,4.5vw,48px)] font-normal">
                 Gallery
               </h3>
-              <p className="text-white/90 font-comfortaa" style={{ fontSize: '14px', fontWeight: '300', lineHeight: '1.6' }}>
+              <p className="text-white/90 font-comfortaa text-[clamp(14px,1vw,18px)] font-light leading-[1.6]">
                 Hell University, an archive and gallery<br />
                 dedicated to research and education.
               </p>
@@ -46,7 +45,7 @@ export function Hero() {
         </div>
 
         {/* Right Side - Textured Red/Brown with Image */}
-        <div className="w-full lg:w-1/2 min-w-0 relative overflow-visible lg:overflow-hidden min-h-[420px] xxs:min-h-[460px] phone:min-h-[520px] tablet-md:min-h-[640px] lg:min-h-[100dvh]">
+        <div className="w-full lg:w-1/2 min-w-0 relative overflow-visible lg:overflow-hidden lg:h-full">
           {/* Texture Overlay */}
           <div 
             className="absolute inset-0 opacity-100"
@@ -64,12 +63,12 @@ export function Hero() {
           />
 
           {/* Portrait Image */}
-          <div className="flex items-center lg:items-start justify-start px-4 sm:px-6 md:px-8 lg:absolute lg:inset-0 lg:pl-0 lg:pr-12 pt-8 md:pt-10 lg:pt-52 desktop:pt-56">
-            <div className="relative w-full max-w-[560px] md:max-w-[620px] lg:max-w-[660px] aspect-square">
+          <div className="flex items-stretch 4xl:items-center 5xl:items-center justify-start px-4 sm:px-6 min-[769px]:px-8 lg:pl-0 lg:pr-12 3xl:pr-20 4xl:pr-28 5xl:pr-36 pt-[calc(var(--header-h)+2rem)] lg:pt-[calc(var(--header-h)+3rem)] 4xl:pt-0 pb-[clamp(2rem,8vh,5rem)] lg:pb-[clamp(3rem,10vh,6rem)] 4xl:pb-0 relative lg:h-full">
+            <div className="relative self-start 4xl:self-center 5xl:self-center w-full lg:w-fit overflow-hidden h-auto max-w-[560px] min-[769px]:max-w-[620px] lg:max-w-[700px] 3xl:max-w-[780px] 4xl:max-w-[880px] 5xl:max-w-[980px]">
               <img
                 src={withBasePath('/assets/portrait/portrait_kade.png')}
                 alt="Kade Javanalikikorn"
-                className="absolute inset-0 w-full h-full object-contain object-left grayscale contrast-110"
+                className="w-full h-auto lg:max-h-screen object-contain object-left grayscale contrast-110"
                 width={1600}
                 height={1800}
                 loading="eager"
@@ -78,13 +77,13 @@ export function Hero() {
               />
               
               {/* Quote Overlay */}
-              <div className="absolute bottom-3 xxs:bottom-4 phone:bottom-6 left-3 xxs:left-4 phone:left-6 right-3 xxs:right-4 phone:right-6">
-                <p className="text-[#D4AF37] mb-4 phone:mb-6 xxs:block hidden font-comfortaa" style={{ fontSize: '14px', fontWeight: '300', lineHeight: '1.8', fontStyle: 'regular' }}>
+              <div className="absolute left-[clamp(0.75rem,3%,3rem)] bottom-[clamp(0.75rem,3%,2rem)] lg:bottom-0 max-w-[min(90%,48ch)]">
+                <p className="text-[#D4AF37] font-comfortaa text-[clamp(12px,1.2vw,16px)] font-light leading-[1.8] mb-[clamp(0.75rem,2vw,1.5rem)]">
                   Some wonders seem to have no explanation<br />
                   but could only be perceived by an opening<br />
                   and extension of the mind.
                 </p>
-                <p className="text-white font-urbanist" style={{ fontSize: '14px', fontWeight: '800' ,fontStyle: 'ExtraBold'}}>
+                <p className="text-white font-urbanist text-[clamp(12px,1vw,18px)] font-extrabold">
                   Kade Javanalikikorn
                 </p>
               </div>
@@ -92,7 +91,7 @@ export function Hero() {
       </div>
 
           {/* Social Icons */}
-          <div className="absolute bottom-3 xxs:bottom-5 phone:bottom-10 right-2 xxs:right-4 phone:right-6 lg:right-12 flex flex-row phone:flex-col gap-3 xxs:gap-4 phone:gap-6">
+          <div className="absolute bottom-3 sm:bottom-5 min-[769px]:bottom-10 right-2 sm:right-4 min-[769px]:right-6 lg:right-12 3xl:right-16 4xl:right-24 5xl:right-32 flex flex-row min-[769px]:flex-col gap-3 sm:gap-4 min-[769px]:gap-6">
             <button className="text-white hover:text-[#D4AF37] transition-colors">
               <Facebook size={18} />
             </button>
