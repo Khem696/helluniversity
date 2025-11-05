@@ -22,6 +22,7 @@ export function Header() {
   const [selectedDate, setSelectedDate] = useState<Date>()
   const [turnstileToken, setTurnstileToken] = useState<string | null>(null)
   const [isTurnstileVerified, setIsTurnstileVerified] = useState(false)
+  const [isSubmitting, setIsSubmitting] = useState(false)
   const [formData, setFormData] = useState({
     name: "",
     email: "",
@@ -73,7 +74,7 @@ export function Header() {
     }
   }
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     
     // Validate Turnstile
@@ -96,22 +97,48 @@ export function Header() {
       return
     }
     
-    console.log("Form submitted:", { ...formData, date: selectedDate, turnstileToken })
-    alert("Thank you for your reservation request! We'll be in touch soon.")
-    setFormData({
-      name: "",
-      email: "",
-      phone: "",
-      guests: "",
-      eventType: "",
-      introduction: "",
-      biography: "",
-      specialRequests: ""
-    })
-    setSelectedDate(undefined)
-    setTurnstileToken(null)
-    setIsTurnstileVerified(false)
-    setBookingOpen(false)
+    setIsSubmitting(true)
+    
+    try {
+      const response = await fetch("/api/booking", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          token: turnstileToken,
+          ...formData,
+          date: selectedDate?.toISOString(),
+        }),
+      })
+      
+      const data = await response.json()
+      
+      if (!data.success) {
+        throw new Error(data.error || "Failed to submit booking")
+      }
+      
+      alert("Thank you for your reservation request! We'll be in touch soon.")
+      setFormData({
+        name: "",
+        email: "",
+        phone: "",
+        guests: "",
+        eventType: "",
+        introduction: "",
+        biography: "",
+        specialRequests: ""
+      })
+      setSelectedDate(undefined)
+      setTurnstileToken(null)
+      setIsTurnstileVerified(false)
+      setBookingOpen(false)
+    } catch (error) {
+      console.error("Booking submission error:", error)
+      alert("Failed to submit booking. Please try again.")
+    } finally {
+      setIsSubmitting(false)
+    }
   }
 
   // Header height is provided via CSS defaults in globals to avoid first-paint jumps.
@@ -150,20 +177,20 @@ export function Header() {
             <span className="hidden sm:inline font-comfortaa font-normal text-sm md:text-base">Booking</span>
           </DialogTrigger>
 
-          <DialogContent className="top-0 left-0 translate-x-0 translate-y-0 w-full h-vp max-w-none sm:max-w-none rounded-none border-0 p-0 bg-transparent">
+          <DialogContent className="top-0 left-0 translate-x-0 translate-y-0 w-full h-screen max-w-none sm:max-w-none rounded-none border-0 p-0 bg-transparent overflow-hidden">
             <DialogHeader className="sr-only">
               <DialogTitle>Booking</DialogTitle>
               <DialogDescription>Menu and Booking modal</DialogDescription>
             </DialogHeader>
-            <div className="relative min-h-vp">
-              <div className="flex flex-col lg:flex-row min-h-vp">
+            <div className="relative h-full flex flex-col overflow-hidden">
+              <div className="flex flex-col lg:flex-row h-full min-h-0">
                 {/* Left Side - Hero-like panel */}
-                <div className="w-full lg:w-1/2 bg-[#5B9AB8] flex flex-col justify-center xl:pl-16 2xl:pl-24 py-8 sm:py-10 md:py-12 lg:py-16 xl:py-20">
-                  <div className="max-w-xl px-6 sm:px-8 md:px-10 lg:px-12">
-                    <h1 className="mb-6 sm:mb-8 lg:mb-10 xl:mb-12 font-heading" style={{ fontSize: 'clamp(40px, 6vw, 80px)', fontWeight: '900', lineHeight: '0.9', color: '#5a3a2a' }}>
+                <div className="w-full lg:w-1/2 bg-[#5B9AB8] flex flex-col justify-center xl:pl-12 2xl:pl-16 py-6 sm:py-8 md:py-10 lg:py-8 xl:py-10 shrink-0 overflow-y-auto">
+                  <div className="max-w-xl px-6 sm:px-8 md:px-10 lg:px-8 xl:px-10">
+                    <h1 className="mb-4 sm:mb-6 lg:mb-6 xl:mb-8 font-heading" style={{ fontSize: 'clamp(32px, 4vw, 56px)', fontWeight: '900', lineHeight: '0.9', color: '#5a3a2a' }}>
                       Hell<br />University
                     </h1>
-                    <h2 className="text-white mb-6 sm:mb-8 lg:mb-10 font-comfortaa" style={{ fontSize: 'clamp(24px, 3.5vw, 32px)', fontWeight: '400' }}>
+                    <h2 className="text-white mb-4 sm:mb-6 lg:mb-6 xl:mb-8 font-comfortaa" style={{ fontSize: 'clamp(20px, 2.5vw, 28px)', fontWeight: '400' }}>
                       Menu
                     </h2>
                     <nav className="grid grid-cols-2 gap-2 sm:gap-3 text-white/95">
@@ -176,42 +203,44 @@ export function Header() {
                 </div>
 
                 {/* Right Side - Booking Form */}
-                <div className="w-full lg:w-1/2 bg-[#f4f1ed] flex items-start justify-center px-4 sm:px-6 lg:px-6 xl:px-8 py-6 sm:py-8 lg:py-10 xl:py-12 overflow-y-auto no-horiz-overflow">
-                  <div className="w-full max-w-xl lg:max-w-2xl xl:max-w-[600px] bg-white/90 border rounded-lg p-4 sm:p-5 lg:p-6 xl:p-8 shadow-lg">
-                    <div className="mb-4 sm:mb-5 lg:mb-6">
-                      <h3 className="text-[#5a3a2a] font-comfortaa mb-2" style={{ fontSize: 'clamp(20px, 2vw, 24px)', fontWeight: '700' }}>
+                <div className="w-full lg:w-1/2 bg-[#f4f1ed] flex items-start lg:items-center justify-center min-h-0 overflow-y-auto lg:overflow-y-visible" style={{ padding: 'clamp(1rem, 1.2vw, 1.5rem) clamp(0.75rem, 1vw, 1.5rem)' }}>
+                  <div className="w-full max-w-xl lg:max-w-lg xl:max-w-xl bg-white/90 border rounded-lg shadow-lg" style={{ padding: 'clamp(0.75rem, 1vw, 1.5rem)' }}>
+                    <div style={{ marginBottom: 'clamp(0.5rem, 0.8vw, 1rem)' }}>
+                      <h3 className="text-[#5a3a2a] font-comfortaa mb-1" style={{ fontSize: 'clamp(1.125rem, 1.4vw, 1.25rem)', fontWeight: '700' }}>
                         Reservation Inquiry
                       </h3>
-                      <p className="text-[#5a3a2a]/70 font-comfortaa" style={{ fontSize: 'clamp(11px, 1.2vw, 13px)', fontWeight: '300' }}>
+                      <p className="text-[#5a3a2a]/70 font-comfortaa leading-tight" style={{ fontSize: 'clamp(0.6875rem, 0.75vw, 0.8125rem)', fontWeight: '300' }}>
                         Share your vision with us and allow our curators to craft an extraordinary experience tailored to your unique sensibilities.
                       </p>
                     </div>
 
-                    <form onSubmit={handleSubmit} className="space-y-4 sm:space-y-5 lg:space-y-6">
+                    <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: 'clamp(0.75rem, 0.9vw, 1rem)' }}>
                       {/* Turnstile CAPTCHA - Must be verified before using the form */}
-                      <div className="space-y-2 sm:space-y-3 pb-3 sm:pb-4 border-b border-gray-200">
-                        <p className="text-xs sm:text-sm text-[#5a3a2a]/70 font-comfortaa">
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: 'clamp(0.375rem, 0.5vw, 0.5rem)', paddingBottom: 'clamp(0.375rem, 0.5vw, 0.5rem)', borderBottom: '1px solid rgb(229 231 235)' }}>
+                        <p className="text-[#5a3a2a]/70 font-comfortaa" style={{ fontSize: 'clamp(0.625rem, 0.7vw, 0.75rem)' }}>
                           Please verify you're human before proceeding:
                         </p>
-                        <Turnstile
-                          onVerify={handleTurnstileVerify}
-                          onError={handleTurnstileError}
-                          onExpire={handleTurnstileExpire}
-                          size="normal"
-                        />
+                        <div className="lg:scale-75 xl:scale-90 origin-left">
+                          <Turnstile
+                            onVerify={handleTurnstileVerify}
+                            onError={handleTurnstileError}
+                            onExpire={handleTurnstileExpire}
+                            size="compact"
+                          />
+                        </div>
                         {!isTurnstileVerified && (
-                          <p className="text-xs text-[#5a3a2a]/60 font-comfortaa italic">
+                          <p className="text-[#5a3a2a]/60 font-comfortaa italic" style={{ fontSize: 'clamp(0.625rem, 0.7vw, 0.75rem)' }}>
                             Complete verification to enable form fields
                           </p>
                         )}
                       </div>
 
                       {/* Basic Information */}
-                      <div className="space-y-3 sm:space-y-4">
-                        <h4 className="text-[#5a3a2a] font-comfortaa font-semibold text-base sm:text-lg">Basic Information</h4>
-                        <div className="grid grid-cols-1 lg:grid-cols-2 gap-3 sm:gap-4">
-                          <div className="space-y-2">
-                            <Label htmlFor="name" className="text-[#5a3a2a] font-comfortaa">Full Name *</Label>
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: 'clamp(0.375rem, 0.5vw, 0.5rem)' }}>
+                        <h4 className="text-[#5a3a2a] font-comfortaa font-semibold" style={{ fontSize: 'clamp(0.75rem, 0.8vw, 0.875rem)' }}>Basic Information</h4>
+                        <div className="grid grid-cols-1 lg:grid-cols-2" style={{ gap: 'clamp(0.375rem, 0.5vw, 0.75rem)' }}>
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: 'clamp(0.25rem, 0.3vw, 0.375rem)' }}>
+                            <Label htmlFor="name" className="text-[#5a3a2a] font-comfortaa" style={{ fontSize: 'clamp(0.6875rem, 0.7vw, 0.75rem)' }}>Full Name *</Label>
                             <Input
                               id="name"
                               required
@@ -220,10 +249,11 @@ export function Header() {
                               placeholder="Your full name"
                               disabled={!isTurnstileVerified}
                               className={`font-comfortaa ${!isTurnstileVerified ? "opacity-50 cursor-not-allowed bg-gray-100" : ""}`}
+                              style={{ fontSize: 'clamp(0.75rem, 0.8vw, 0.875rem)', height: 'clamp(2rem, 2.2vw, 2.25rem)' }}
                             />
                           </div>
-                          <div className="space-y-2">
-                            <Label htmlFor="email" className="text-[#5a3a2a] font-comfortaa">Email Address *</Label>
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: 'clamp(0.25rem, 0.3vw, 0.375rem)' }}>
+                            <Label htmlFor="email" className="text-[#5a3a2a] font-comfortaa" style={{ fontSize: 'clamp(0.6875rem, 0.7vw, 0.75rem)' }}>Email Address *</Label>
                             <Input
                               id="email"
                               type="email"
@@ -233,10 +263,11 @@ export function Header() {
                               placeholder="your@email.com"
                               disabled={!isTurnstileVerified}
                               className={`font-comfortaa ${!isTurnstileVerified ? "opacity-50 cursor-not-allowed bg-gray-100" : ""}`}
+                              style={{ fontSize: 'clamp(0.75rem, 0.8vw, 0.875rem)', height: 'clamp(2rem, 2.2vw, 2.25rem)' }}
                             />
                           </div>
-                          <div className="space-y-2">
-                            <Label htmlFor="phone" className="text-[#5a3a2a] font-comfortaa">Phone Number *</Label>
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: 'clamp(0.25rem, 0.3vw, 0.375rem)' }}>
+                            <Label htmlFor="phone" className="text-[#5a3a2a] font-comfortaa" style={{ fontSize: 'clamp(0.6875rem, 0.7vw, 0.75rem)' }}>Phone Number *</Label>
                             <Input
                               id="phone"
                               required
@@ -245,12 +276,13 @@ export function Header() {
                               placeholder="+1 (555) 123-4567"
                               disabled={!isTurnstileVerified}
                               className={`font-comfortaa ${!isTurnstileVerified ? "opacity-50 cursor-not-allowed bg-gray-100" : ""}`}
+                              style={{ fontSize: 'clamp(0.75rem, 0.8vw, 0.875rem)', height: 'clamp(2rem, 2.2vw, 2.25rem)' }}
                             />
                           </div>
-                          <div className="space-y-2">
-                            <Label htmlFor="guests" className="text-[#5a3a2a] font-comfortaa">Number of Guests *</Label>
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: 'clamp(0.25rem, 0.3vw, 0.375rem)' }}>
+                            <Label htmlFor="guests" className="text-[#5a3a2a] font-comfortaa" style={{ fontSize: 'clamp(0.6875rem, 0.7vw, 0.75rem)' }}>Number of Guests *</Label>
                             <Select value={formData.guests} onValueChange={(value) => handleInputChange("guests", value)} disabled={!isTurnstileVerified}>
-                              <SelectTrigger className={`font-comfortaa ${!isTurnstileVerified ? "opacity-50 cursor-not-allowed" : ""}`}>
+                              <SelectTrigger className={`font-comfortaa ${!isTurnstileVerified ? "opacity-50 cursor-not-allowed" : ""}`} style={{ fontSize: 'clamp(0.75rem, 0.8vw, 0.875rem)', height: 'clamp(2rem, 2.2vw, 2.25rem)' }}>
                                 <SelectValue placeholder="Select guest count" />
                               </SelectTrigger>
                               <SelectContent>
@@ -266,19 +298,20 @@ export function Header() {
                       </div>
 
                       {/* Event Details */}
-                      <div className="space-y-3 sm:space-y-4">
-                        <h4 className="text-[#5a3a2a] font-comfortaa font-semibold text-base sm:text-lg">Event Details</h4>
-                        <div className="grid grid-cols-1 lg:grid-cols-2 gap-3 sm:gap-4">
-                          <div className="space-y-2">
-                            <Label className="text-[#5a3a2a] font-comfortaa">Desired Date *</Label>
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: 'clamp(0.375rem, 0.5vw, 0.5rem)' }}>
+                        <h4 className="text-[#5a3a2a] font-comfortaa font-semibold" style={{ fontSize: 'clamp(0.75rem, 0.8vw, 0.875rem)' }}>Event Details</h4>
+                        <div className="grid grid-cols-1 lg:grid-cols-2" style={{ gap: 'clamp(0.375rem, 0.5vw, 0.75rem)' }}>
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: 'clamp(0.25rem, 0.3vw, 0.375rem)' }}>
+                            <Label className="text-[#5a3a2a] font-comfortaa" style={{ fontSize: 'clamp(0.6875rem, 0.7vw, 0.75rem)' }}>Desired Date *</Label>
                             <Popover>
                               <PopoverTrigger asChild>
                                 <Button
                                   variant="outline"
                                   disabled={!isTurnstileVerified}
                                   className={`w-full justify-start text-left font-normal font-comfortaa ${!isTurnstileVerified ? "opacity-50 cursor-not-allowed" : ""}`}
+                                  style={{ fontSize: 'clamp(0.75rem, 0.8vw, 0.875rem)', height: 'clamp(2rem, 2.2vw, 2.25rem)' }}
                                 >
-                                  <CalendarIcon className="mr-2 h-4 w-4" />
+                                  <CalendarIcon className="mr-2" style={{ width: 'clamp(0.75rem, 0.8vw, 1rem)', height: 'clamp(0.75rem, 0.8vw, 1rem)' }} />
                                   {selectedDate ? format(selectedDate, "PPP") : "Pick a date"}
                                 </Button>
                               </PopoverTrigger>
@@ -293,10 +326,10 @@ export function Header() {
                               </PopoverContent>
                             </Popover>
                           </div>
-                          <div className="space-y-2">
-                            <Label htmlFor="eventType" className="text-[#5a3a2a] font-comfortaa">Event Type *</Label>
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: 'clamp(0.25rem, 0.3vw, 0.375rem)' }}>
+                            <Label htmlFor="eventType" className="text-[#5a3a2a] font-comfortaa" style={{ fontSize: 'clamp(0.6875rem, 0.7vw, 0.75rem)' }}>Event Type *</Label>
                             <Select value={formData.eventType} onValueChange={(value) => handleInputChange("eventType", value)} disabled={!isTurnstileVerified}>
-                              <SelectTrigger className={`font-comfortaa ${!isTurnstileVerified ? "opacity-50 cursor-not-allowed" : ""}`}>
+                              <SelectTrigger className={`font-comfortaa ${!isTurnstileVerified ? "opacity-50 cursor-not-allowed" : ""}`} style={{ fontSize: 'clamp(0.75rem, 0.8vw, 0.875rem)', height: 'clamp(2rem, 2.2vw, 2.25rem)' }}>
                                 <SelectValue placeholder="Select event type" />
                               </SelectTrigger>
                               <SelectContent>
@@ -316,59 +349,66 @@ export function Header() {
                       </div>
 
                       {/* Personal Information */}
-                      <div className="space-y-3 sm:space-y-4">
-                        <h4 className="text-[#5a3a2a] font-comfortaa font-semibold text-base sm:text-lg">Share Your Story</h4>
-                        <div className="space-y-3 sm:space-y-4">
-                          <div className="space-y-2">
-                            <Label htmlFor="introduction" className="text-[#5a3a2a] font-comfortaa">Brief Introduction *</Label>
+                      <div className="space-y-2 sm:space-y-3 lg:space-y-1.5">
+                        <h4 className="text-[#5a3a2a] font-comfortaa font-semibold" style={{ fontSize: 'clamp(0.75rem, 0.8vw, 0.875rem)' }}>Share Your Story</h4>
+                        <div className="space-y-2 sm:space-y-2.5 lg:space-y-1.5">
+                          <div className="space-y-1">
+                            <Label htmlFor="introduction" className="text-[#5a3a2a] font-comfortaa" style={{ fontSize: 'clamp(0.6875rem, 0.7vw, 0.75rem)' }}>Brief Introduction *</Label>
                             <Textarea
                               id="introduction"
                               required
                               value={formData.introduction}
                               onChange={(e) => handleInputChange("introduction", e.target.value)}
-                              placeholder={isTurnstileVerified ? "Tell us a bit about yourself and what brings you to Hell University..." : "Please complete CAPTCHA verification first..."}
+                              placeholder={isTurnstileVerified ? "Tell us a bit about yourself..." : "Please complete CAPTCHA verification first..."}
                               disabled={!isTurnstileVerified}
-                              rows={3}
-                              className={`font-comfortaa ${!isTurnstileVerified ? "opacity-50 cursor-not-allowed bg-gray-100" : ""}`}
+                              rows={2}
+                              className={`font-comfortaa resize-none ${!isTurnstileVerified ? "opacity-50 cursor-not-allowed bg-gray-100" : ""}`}
+                              style={{ fontSize: 'clamp(0.75rem, 0.8vw, 0.875rem)', minHeight: 'clamp(3rem, 3.5vw, 4rem)' }}
                             />
                           </div>
-                          <div className="space-y-2">
-                            <Label htmlFor="biography" className="text-[#5a3a2a] font-comfortaa">Background & Interests</Label>
+                          <div className="space-y-1">
+                            <Label htmlFor="biography" className="text-[#5a3a2a] font-comfortaa" style={{ fontSize: 'clamp(0.6875rem, 0.7vw, 0.75rem)' }}>Background & Interests</Label>
                             <Textarea
                               id="biography"
                               value={formData.biography}
                               onChange={(e) => handleInputChange("biography", e.target.value)}
-                              placeholder={isTurnstileVerified ? "Share your interests, profession, or anything that helps us understand your style and preferences..." : "Please complete CAPTCHA verification first..."}
+                              placeholder={isTurnstileVerified ? "Share your interests, profession..." : "Please complete CAPTCHA verification first..."}
                               disabled={!isTurnstileVerified}
-                              rows={4}
-                              className={`font-comfortaa ${!isTurnstileVerified ? "opacity-50 cursor-not-allowed bg-gray-100" : ""}`}
+                              rows={2}
+                              className={`font-comfortaa resize-none ${!isTurnstileVerified ? "opacity-50 cursor-not-allowed bg-gray-100" : ""}`}
+                              style={{ fontSize: 'clamp(0.75rem, 0.8vw, 0.875rem)', minHeight: 'clamp(3rem, 3.5vw, 4rem)' }}
                             />
                           </div>
-                          <div className="space-y-2">
-                            <Label htmlFor="specialRequests" className="text-[#5a3a2a] font-comfortaa">Special Requests or Vision</Label>
+                          <div className="space-y-1">
+                            <Label htmlFor="specialRequests" className="text-[#5a3a2a] font-comfortaa" style={{ fontSize: 'clamp(0.6875rem, 0.7vw, 0.75rem)' }}>Special Requests or Vision</Label>
                             <Textarea
                               id="specialRequests"
                               value={formData.specialRequests}
                               onChange={(e) => handleInputChange("specialRequests", e.target.value)}
-                              placeholder={isTurnstileVerified ? "Describe your vision, any special requirements, dietary restrictions, or how you'd like us to help make your event unique..." : "Please complete CAPTCHA verification first..."}
+                              placeholder={isTurnstileVerified ? "Describe your vision, special requirements..." : "Please complete CAPTCHA verification first..."}
                               disabled={!isTurnstileVerified}
-                              rows={4}
-                              className={`font-comfortaa ${!isTurnstileVerified ? "opacity-50 cursor-not-allowed bg-gray-100" : ""}`}
+                              rows={2}
+                              className={`font-comfortaa resize-none ${!isTurnstileVerified ? "opacity-50 cursor-not-allowed bg-gray-100" : ""}`}
+                              style={{ fontSize: 'clamp(0.75rem, 0.8vw, 0.875rem)', minHeight: 'clamp(3rem, 3.5vw, 4rem)' }}
                             />
                           </div>
                         </div>
                       </div>
 
                       {/* Submit Button */}
-                      <div className="flex flex-col items-center space-y-3 sm:space-y-4 pt-3 sm:pt-4">
+                      <div className="flex flex-col items-center space-y-1.5 sm:space-y-2 lg:space-y-1 pt-2 sm:pt-2.5 lg:pt-1.5">
                         <Button
                           type="submit"
-                          disabled={!isTurnstileVerified}
-                          className="font-comfortaa bg-[#5B9AB8] hover:bg-[#4d8ea7] text-white px-6 sm:px-8 py-4 sm:py-5 lg:py-6 text-base sm:text-lg disabled:opacity-50 disabled:cursor-not-allowed"
+                          disabled={!isTurnstileVerified || isSubmitting}
+                          className="font-comfortaa bg-[#5B9AB8] hover:bg-[#4d8ea7] text-white disabled:opacity-50 disabled:cursor-not-allowed"
+                          style={{ 
+                            padding: 'clamp(0.5rem, 0.6vw, 0.75rem) clamp(1rem, 1.2vw, 1.5rem)',
+                            fontSize: 'clamp(0.75rem, 0.85vw, 0.875rem)'
+                          }}
                         >
-                          Submit Inquiry
+                          {isSubmitting ? "Submitting..." : "Submit Inquiry"}
                         </Button>
-                        <p className="text-xs text-[#5a3a2a]/70 text-center max-w-lg font-comfortaa leading-relaxed px-2">
+                        <p className="text-[#5a3a2a]/70 text-center max-w-lg font-comfortaa leading-tight px-2" style={{ fontSize: 'clamp(0.5625rem, 0.6vw, 0.625rem)' }}>
                           Your inquiry will be carefully reviewed by our curation team. We honor each request with thoughtful consideration and will respond within 48 hours.
                         </p>
                       </div>

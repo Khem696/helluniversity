@@ -54,7 +54,11 @@ const withPWA = require('next-pwa')({
 
 /** @type {import('next').NextConfig} */
 const nextConfig = {
-  output: 'export',
+  // Only use static export for production builds (GitHub Pages)
+  // In development, API routes will work normally
+  ...(process.env.NODE_ENV === 'production' && process.env.STATIC_EXPORT !== 'false' 
+    ? { output: 'export' } 
+    : {}),
   trailingSlash: true,
   images: {
     unoptimized: true,
@@ -62,6 +66,23 @@ const nextConfig = {
       {
         protocol: 'https',
         hostname: 'images.unsplash.com',
+      },
+      // BlackForest Labs delivery domains (for reference - images should be proxied)
+      {
+        protocol: 'https',
+        hostname: 'delivery-eu1.bfl.ai',
+      },
+      {
+        protocol: 'https',
+        hostname: 'delivery-us1.bfl.ai',
+      },
+      {
+        protocol: 'https',
+        hostname: 'delivery-eu.bfl.ai',
+      },
+      {
+        protocol: 'https',
+        hostname: 'delivery-us.bfl.ai',
       },
     ],
     formats: ['image/webp', 'image/avif'],
