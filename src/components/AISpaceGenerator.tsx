@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useEffect, useRef } from "react"
+import { useState, useEffect, useRef, useMemo, useCallback, memo } from "react"
 import { withBasePath } from "@/lib/utils"
 import { Turnstile } from "./Turnstile"
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogClose } from "./ui/dialog"
@@ -13,6 +13,7 @@ import {
   type CarouselApi,
 } from "./ui/carousel"
 import { Progress } from "./ui/progress"
+import { Checkbox } from "./ui/checkbox"
 
 const STORAGE_KEY = "helluniversity_ai_generated_images"
 
@@ -22,6 +23,97 @@ interface StoredGeneratedImages {
   prompt: string
   selectedImages: string[]
 }
+
+// Static style object - created once
+const IMAGE_STYLE: React.CSSProperties = {
+  width: '100%',
+  height: '100%',
+  objectFit: 'cover',
+  objectPosition: 'center',
+  display: 'block',
+  margin: 0,
+  padding: 0,
+  imageRendering: 'auto',
+  contentVisibility: 'auto',
+  backfaceVisibility: 'hidden',
+  transform: 'translateZ(0)',
+  contain: 'layout style paint'
+}
+
+// Simplified image slide item component
+const ImageSlideItem = memo(function ImageSlideItem({
+  url,
+  isSelected,
+  isTurnstileVerified,
+  onToggle,
+  index
+}: {
+  url: string
+  isSelected: boolean
+  isTurnstileVerified: boolean
+  onToggle: (url: string) => void
+  index: number
+}) {
+  const fileName = url.split("/").pop() || url
+  
+  // Use smaller dimensions for carousel thumbnails (max 280px)
+  const displayWidth = 280
+  const displayHeight = 280
+  
+  return (
+    <CarouselItem className="pl-2 md:pl-4 basis-auto">
+      <div
+        onClick={() => isTurnstileVerified && onToggle(url)}
+        className={`relative group cursor-pointer rounded-lg border-2 overflow-hidden bg-gray-100 w-[200px] h-[200px] sm:w-[240px] sm:h-[240px] md:w-[280px] md:h-[280px] ${
+          isSelected ? 'border-[#5B9AB8] ring-2 ring-[#5B9AB8]/20' : 'border-gray-200 hover:border-gray-300'
+        } ${!isTurnstileVerified ? 'opacity-50 cursor-not-allowed pointer-events-none' : ''}`}
+        role="button"
+        tabIndex={isTurnstileVerified ? 0 : -1}
+        aria-label={`Select image ${fileName}`}
+        onKeyDown={(e) => {
+          if ((e.key === 'Enter' || e.key === ' ') && isTurnstileVerified) {
+            e.preventDefault()
+            onToggle(url)
+          }
+        }}
+      >
+        <img
+          src={url}
+          alt={fileName}
+          className="absolute inset-0"
+          style={{
+            ...IMAGE_STYLE,
+            maxWidth: '280px',
+            maxHeight: '280px'
+          }}
+          width={displayWidth}
+          height={displayHeight}
+          loading={index < 3 ? "eager" : "lazy"}
+          decoding="async"
+          fetchPriority={index < 3 ? "high" : "low"}
+          sizes="(max-width: 640px) 200px, (max-width: 768px) 240px, 280px"
+        />
+        <div className={`absolute inset-0 z-[1] transition-opacity duration-150 ${
+          isSelected ? 'bg-[#5B9AB8]/20 opacity-100' : 'bg-black/0 group-hover:bg-black/10 opacity-0 group-hover:opacity-100'
+        }`} />
+        <div className="absolute top-2 right-2 z-[2] pointer-events-none">
+          <div className={`flex items-center justify-center rounded-full transition-colors duration-150 ${
+            isSelected 
+              ? 'bg-[#5B9AB8] text-white shadow-lg' 
+              : 'bg-white/90 group-hover:bg-white text-gray-600 shadow-md'
+          }`}>
+            <Checkbox
+              checked={isSelected}
+              disabled={!isTurnstileVerified}
+              className="size-5 sm:size-6 pointer-events-none"
+              aria-label={`Select ${fileName}`}
+            />
+          </div>
+        </div>
+      </div>
+    </CarouselItem>
+  )
+})
 
 // Helper function to check if URL is from BFL delivery domain
 function isBFLDeliveryUrl(url: string): boolean {
@@ -53,6 +145,7 @@ export function AISpaceGenerator() {
   const [currentImageIndex, setCurrentImageIndex] = useState(0)
   const [loadingProgress, setLoadingProgress] = useState(0)
   const [isLoadingImages, setIsLoadingImages] = useState(true)
+  const [imageLoadErrors, setImageLoadErrors] = useState<Set<number>>(new Set())
   const turnstileKeyRef = useRef(0) // Force Turnstile re-render
 
   // Load generated images from localStorage on component mount
@@ -104,6 +197,10 @@ export function AISpaceGenerator() {
       return
     }
     setResultsModalOpen(open)
+    // Reset image load errors when modal closes
+    if (!open) {
+      setImageLoadErrors(new Set())
+    }
   }
 
   // Reset CAPTCHA when user wants to generate again
@@ -118,6 +215,8 @@ export function AISpaceGenerator() {
     setResults([])
     setPrompt("")
     setSelectedImages([])
+    setImageLoadErrors(new Set())
+    setCurrentImageIndex(0)
     // Clear localStorage
     if (typeof window !== "undefined") {
       localStorage.removeItem(STORAGE_KEY)
@@ -201,19 +300,22 @@ export function AISpaceGenerator() {
       setResults(generatedImages)
       setLoadingProgress(100)
       
-      // Save generated images to localStorage
+      // Save generated images to localStorage (defer to avoid blocking)
       if (typeof window !== "undefined" && generatedImages.length > 0) {
-        try {
-          const dataToSave: StoredGeneratedImages = {
-            images: generatedImages,
-            timestamp: Date.now(),
-            prompt: prompt,
-            selectedImages: selectedImages,
+        // Use setTimeout to defer localStorage write and avoid blocking UI
+        setTimeout(() => {
+          try {
+            const dataToSave: StoredGeneratedImages = {
+              images: generatedImages,
+              timestamp: Date.now(),
+              prompt: prompt,
+              selectedImages: selectedImages,
+            }
+            localStorage.setItem(STORAGE_KEY, JSON.stringify(dataToSave))
+          } catch (e) {
+            console.error("Failed to save generated images to localStorage:", e)
           }
-          localStorage.setItem(STORAGE_KEY, JSON.stringify(dataToSave))
-        } catch (e) {
-          console.error("Failed to save generated images to localStorage:", e)
-        }
+        }, 0)
       }
       
       // Log batch information if available
@@ -253,17 +355,26 @@ export function AISpaceGenerator() {
     }
   }
 
-  function toggleImage(url: string) {
+  // Memoize selected images set for O(1) lookup
+  const selectedImagesSet = useMemo(() => new Set(selectedImages), [selectedImages])
+
+  // Stable toggle handler - O(1) operations using Set
+  const handleToggleImage = useCallback((url: string) => {
+    if (!isTurnstileVerified) return
+    
     setSelectedImages((prev) => {
-      if (prev.includes(url)) {
-        setError("") // Clear error when deselecting
-        return prev.filter((u) => u !== url)
+      const prevSet = new Set(prev)
+      if (prevSet.has(url)) {
+        setError("")
+        prevSet.delete(url)
+        return Array.from(prevSet)
       } else {
-        setError("") // Clear error when successfully selecting
-        return [...prev, url]
+        setError("")
+        prevSet.add(url)
+        return Array.from(prevSet)
       }
     })
-  }
+  }, [isTurnstileVerified])
 
   // Fetch studio images dynamically on component mount
   useEffect(() => {
@@ -296,10 +407,27 @@ export function AISpaceGenerator() {
   useEffect(() => {
     if (!carouselApi) return
 
-    carouselApi.on("select", () => {
+    const onSelect = () => {
       setCurrentImageIndex(carouselApi.selectedScrollSnap())
-    })
+    }
+    
+    // Set initial index
+    setCurrentImageIndex(carouselApi.selectedScrollSnap())
+    
+    carouselApi.on("select", onSelect)
+
+    return () => {
+      carouselApi.off("select", onSelect)
+    }
   }, [carouselApi])
+
+  // Reset carousel index when modal opens or results change
+  useEffect(() => {
+    if (resultsModalOpen && carouselApi && results.length > 0) {
+      carouselApi.scrollTo(0)
+      setCurrentImageIndex(0)
+    }
+  }, [resultsModalOpen, results.length, carouselApi])
 
   // Simulate loading progress (optional enhancement)
   useEffect(() => {
@@ -340,7 +468,7 @@ export function AISpaceGenerator() {
       </div>
 
       <div className="flex flex-col" style={{ gap: 'clamp(0.375rem, 0.5vw, 0.5rem)' }}>
-        <div className="flex items-center justify-between">
+        <div className="flex items-center justify-between flex-wrap" style={{ gap: 'clamp(0.25rem, 0.3vw, 0.375rem)' }}>
           <p className="text-[#5a3a2a]/70 font-comfortaa" style={{ fontSize: 'clamp(0.625rem, 0.7vw, 0.75rem)' }}>
             Select images (each image processed separately):
           </p>
@@ -353,51 +481,62 @@ export function AISpaceGenerator() {
             )}
           </span>
         </div>
-        <div className="flex flex-wrap" style={{ gap: 'clamp(0.375rem, 0.5vw, 0.5rem)' }}>
-          {isLoadingImages ? (
-            <p className="text-[#5a3a2a]/60 font-comfortaa italic" style={{ fontSize: 'clamp(0.625rem, 0.7vw, 0.75rem)' }}>
-              Loading images...
-            </p>
-          ) : studioImages.length === 0 ? (
-            <p className="text-[#5a3a2a]/60 font-comfortaa italic" style={{ fontSize: 'clamp(0.625rem, 0.7vw, 0.75rem)' }}>
-              No images available. Please add images to public/aispaces/studio/
-            </p>
-          ) : (
-            studioImages.map((url) => (
-              <button
-                key={url}
-                type="button"
-                onClick={() => toggleImage(url)}
-                disabled={!isTurnstileVerified}
-                className={`rounded border transition-opacity ${
-                  selectedImages.includes(url) ? "bg-[#5B9AB8] text-white" : "bg-white text-black"
-                } ${!isTurnstileVerified ? "opacity-50 cursor-not-allowed" : ""}`}
-                style={{ 
-                  padding: 'clamp(0.25rem, 0.3vw, 0.375rem) clamp(0.5rem, 0.6vw, 0.75rem)',
-                  fontSize: 'clamp(0.625rem, 0.7vw, 0.75rem)'
-                }}
-                aria-pressed={selectedImages.includes(url)}
-                aria-disabled={!isTurnstileVerified}
-              >
-                {url.split("/").slice(-2).join("/")}
-              </button>
-            ))
-          )}
-        </div>
+        {isLoadingImages ? (
+          <p className="text-[#5a3a2a]/60 font-comfortaa italic" style={{ fontSize: 'clamp(0.625rem, 0.7vw, 0.75rem)' }}>
+            Loading images...
+          </p>
+        ) : studioImages.length === 0 ? (
+          <p className="text-[#5a3a2a]/60 font-comfortaa italic" style={{ fontSize: 'clamp(0.625rem, 0.7vw, 0.75rem)' }}>
+            No images available. Please add images to public/aispaces/studio/
+          </p>
+        ) : (
+          <div className="relative w-full">
+            <Carousel
+              opts={{
+                align: "start",
+                loop: false,
+              }}
+              className="w-full"
+            >
+              <CarouselContent className="-ml-2 md:-ml-4">
+                {studioImages.map((url, index) => (
+                  <ImageSlideItem
+                    key={url}
+                    url={url}
+                    isSelected={selectedImagesSet.has(url)}
+                    isTurnstileVerified={isTurnstileVerified}
+                    onToggle={handleToggleImage}
+                    index={index}
+                  />
+                ))}
+              </CarouselContent>
+              <CarouselPrevious className="left-2 md:left-4 bg-white/95 hover:bg-white border border-gray-300 shadow-md disabled:opacity-50" />
+              <CarouselNext className="right-2 md:right-4 bg-white/95 hover:bg-white border border-gray-300 shadow-md disabled:opacity-50" />
+            </Carousel>
+          </div>
+        )}
       </div>
 
-      <textarea
-        value={prompt}
-        onChange={(e) => setPrompt(e.target.value)}
-        placeholder={isTurnstileVerified ? "Describe the decoration style you want..." : "Please complete CAPTCHA verification first..."}
-        disabled={!isTurnstileVerified}
-        className={`w-full border rounded resize-none font-comfortaa ${!isTurnstileVerified ? "opacity-50 cursor-not-allowed bg-gray-100" : ""}`}
-        style={{ 
-          minHeight: 'clamp(3rem, 3.5vw, 4rem)',
-          padding: 'clamp(0.5rem, 0.6vw, 0.75rem)',
-          fontSize: 'clamp(0.75rem, 0.8vw, 0.875rem)'
-        }}
-      />
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 'clamp(0.25rem, 0.3vw, 0.375rem)' }}>
+        <label htmlFor="prompt" className="text-[#5a3a2a]/70 font-comfortaa" style={{ fontSize: 'clamp(0.625rem, 0.7vw, 0.75rem)' }}>
+          Describe the decoration style you want
+        </label>
+        <textarea
+          id="prompt"
+          name="prompt"
+          autoComplete="off"
+          value={prompt}
+          onChange={(e) => setPrompt(e.target.value)}
+          placeholder={isTurnstileVerified ? "Describe the decoration style you want..." : "Please complete CAPTCHA verification first..."}
+          disabled={!isTurnstileVerified}
+          className={`w-full border rounded resize-none font-comfortaa ${!isTurnstileVerified ? "opacity-50 cursor-not-allowed bg-gray-100" : ""}`}
+          style={{ 
+            minHeight: 'clamp(3rem, 3.5vw, 4rem)',
+            padding: 'clamp(0.5rem, 0.6vw, 0.75rem)',
+            fontSize: 'clamp(0.75rem, 0.8vw, 0.875rem)'
+          }}
+        />
+      </div>
 
       <div className="flex items-center" style={{ gap: 'clamp(0.5rem, 0.6vw, 0.75rem)' }}>
         <button
@@ -463,7 +602,21 @@ export function AISpaceGenerator() {
 
       {/* Results Modal with Carousel */}
       <Dialog open={resultsModalOpen} onOpenChange={handleResultsModalOpenChange}>
-        <DialogContent className="p-0 border-0 max-w-none sm:max-w-none md:max-w-none lg:max-w-none w-screen h-screen top-0 left-0 translate-x-0 translate-y-0 rounded-none bg-black overflow-hidden">
+        <DialogContent 
+          className="p-0 border-0 max-w-none sm:max-w-none md:max-w-none lg:max-w-none w-screen h-screen top-0 left-0 translate-x-0 translate-y-0 rounded-none bg-black overflow-hidden [&>button]:hidden"
+          onInteractOutside={(e) => {
+            // Prevent closing when loading
+            if (isLoading) {
+              e.preventDefault()
+            }
+          }}
+          onEscapeKeyDown={(e) => {
+            // Prevent closing when loading
+            if (isLoading) {
+              e.preventDefault()
+            }
+          }}
+        >
           <DialogHeader className="sr-only">
             <DialogTitle>Generated Images</DialogTitle>
             <DialogDescription>AI-generated space designs</DialogDescription>
@@ -472,8 +625,8 @@ export function AISpaceGenerator() {
             {/* Header */}
             <div className="absolute top-0 left-0 right-0 z-50 bg-black/80 backdrop-blur-sm px-4 py-3 flex items-center justify-between">
               <div className="text-white font-comfortaa">
-                <h3 className="text-lg font-semibold">Generated Images</h3>
-                <p className="text-sm text-white/70">
+                <h3 className="text-lg font-semibold" id="modal-title">Generated Images</h3>
+                <p className="text-sm text-white/70" aria-live="polite" aria-atomic="true">
                   {currentImageIndex + 1} of {results.length}
                 </p>
               </div>
@@ -521,13 +674,42 @@ export function AISpaceGenerator() {
                     {results.map((url, idx) => (
                       <CarouselItem key={`${url}-${idx}`} className="h-full pl-0">
                         <div className="flex items-center justify-center w-full h-full bg-black">
-                          <img
-                            src={url}
-                            alt={`AI generated image ${idx + 1}`}
-                            className="object-contain w-auto h-auto"
-                            style={{ maxWidth: 'calc(100vw - 6rem)', maxHeight: 'calc(100vh - 6rem)' }}
-                            loading={idx === 0 ? "eager" : "lazy"}
-                          />
+                          {imageLoadErrors.has(idx) ? (
+                            <div className="flex flex-col items-center justify-center text-white p-8">
+                              <p className="font-comfortaa text-lg mb-2">Failed to load image</p>
+                              <p className="font-comfortaa text-sm text-white/70">Image {idx + 1} of {results.length}</p>
+                              <button
+                                onClick={() => {
+                                  setImageLoadErrors(prev => {
+                                    const next = new Set(prev)
+                                    next.delete(idx)
+                                    return next
+                                  })
+                                }}
+                                className="mt-4 px-4 py-2 rounded bg-white/10 hover:bg-white/20 text-white font-comfortaa transition-colors"
+                              >
+                                Retry
+                              </button>
+                            </div>
+                          ) : (
+                            <img
+                              src={url}
+                              alt={`AI generated space design ${idx + 1} of ${results.length}${prompt ? `: ${prompt.substring(0, 50)}${prompt.length > 50 ? '...' : ''}` : ''}`}
+                              className="object-contain w-auto h-auto"
+                              style={{ maxWidth: 'calc(100vw - 6rem)', maxHeight: 'calc(100vh - 6rem)' }}
+                              loading={idx === 0 ? "eager" : "lazy"}
+                              onError={() => {
+                                setImageLoadErrors(prev => new Set(prev).add(idx))
+                              }}
+                              onLoad={() => {
+                                setImageLoadErrors(prev => {
+                                  const next = new Set(prev)
+                                  next.delete(idx)
+                                  return next
+                                })
+                              }}
+                            />
+                          )}
                         </div>
                       </CarouselItem>
                     ))}

@@ -488,13 +488,15 @@ export function StudioGalleryPage() {
           </div>
           {/* Action button under Gallery grid */}
           <div className="mt-4 sm:mt-5 md:mt-6 flex justify-center">
-            <button
-              type="button"
+            <a
+              href="https://www.facebook.com/kadejavanalikhikara"
+              target="_blank"
+              rel="noopener noreferrer"
               aria-label="Visit Our Gallery"
               className="font-comfortaa inline-flex items-center justify-center w-auto whitespace-nowrap rounded-full bg-[#5B9AB8] text-white px-5 sm:px-6 md:px-8 py-2 md:py-3 text-[clamp(1.00rem,3.2vw,1.25rem)] shadow-sm hover:bg-[#4d8ea7] focus:outline-hidden focus-visible:ring-2 focus-visible:ring-white/70 transition-colors"
             >
               Visit Our Gallery
-            </button>
+            </a>
           </div>
         </div>
       </div>
