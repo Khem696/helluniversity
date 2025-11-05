@@ -1,8 +1,9 @@
 "use client"
 
 import Link from "next/link"
-import { useRef, useState } from "react"
-import { Calendar as CalendarIcon, Menu, X } from "lucide-react"
+import { useRef, useState, useEffect, useCallback } from "react"
+import { Calendar as CalendarIcon, Menu, X, AlertCircle, RefreshCw } from "lucide-react"
+import { toast } from "sonner"
 import { Dialog, DialogTrigger, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -15,6 +16,32 @@ import { format } from "date-fns"
 import { withBasePath } from "@/lib/utils"
 import { Turnstile } from "./Turnstile"
 
+const STORAGE_KEY = "helluniversity_booking_form"
+const DEBOUNCE_DELAY = 500 // milliseconds
+
+interface FormData {
+  name: string
+  email: string
+  phone: string
+  guests: string
+  eventType: string
+  introduction: string
+  biography: string
+  specialRequests: string
+}
+
+interface StoredFormData {
+  formData: FormData
+  selectedDate: string | null
+  timestamp: number
+}
+
+interface FormError {
+  type: "network" | "validation" | "server" | "turnstile"
+  message: string
+  retryable?: boolean
+}
+
 export function Header() {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false)
   const headerRef = useRef<HTMLElement | null>(null)
@@ -23,7 +50,7 @@ export function Header() {
   const [turnstileToken, setTurnstileToken] = useState<string | null>(null)
   const [isTurnstileVerified, setIsTurnstileVerified] = useState(false)
   const [isSubmitting, setIsSubmitting] = useState(false)
-  const [formData, setFormData] = useState({
+  const [formData, setFormData] = useState<FormData>({
     name: "",
     email: "",
     phone: "",
@@ -33,73 +60,178 @@ export function Header() {
     biography: "",
     specialRequests: ""
   })
+  const [error, setError] = useState<FormError | null>(null)
+  const [retryCount, setRetryCount] = useState(0)
+  const saveTimeoutRef = useRef<NodeJS.Timeout | null>(null)
+  const turnstileKeyRef = useRef(0) // Force Turnstile re-render
+
+  // Load form data from localStorage on component mount
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      const stored = localStorage.getItem(STORAGE_KEY)
+      if (stored) {
+        try {
+          const parsed: StoredFormData = JSON.parse(stored)
+          // Only restore if data is less than 24 hours old
+          const hoursSinceSave = (Date.now() - parsed.timestamp) / (1000 * 60 * 60)
+          if (hoursSinceSave < 24) {
+            setFormData(parsed.formData)
+            if (parsed.selectedDate) {
+              setSelectedDate(new Date(parsed.selectedDate))
+            }
+          } else {
+            // Clear old data
+            localStorage.removeItem(STORAGE_KEY)
+          }
+        } catch (e) {
+          console.error("Failed to parse stored form data:", e)
+          localStorage.removeItem(STORAGE_KEY)
+        }
+      }
+    }
+  }, [])
+
+  // Auto-save form data to localStorage with debouncing
+  const saveFormData = useCallback(() => {
+    if (typeof window !== "undefined") {
+      const dataToSave: StoredFormData = {
+        formData,
+        selectedDate: selectedDate?.toISOString() || null,
+        timestamp: Date.now()
+      }
+      try {
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(dataToSave))
+      } catch (e) {
+        console.error("Failed to save form data:", e)
+      }
+    }
+  }, [formData, selectedDate])
+
+  // Debounced save function
+  useEffect(() => {
+    if (saveTimeoutRef.current) {
+      clearTimeout(saveTimeoutRef.current)
+    }
+    saveTimeoutRef.current = setTimeout(() => {
+      saveFormData()
+    }, DEBOUNCE_DELAY)
+
+    return () => {
+      if (saveTimeoutRef.current) {
+        clearTimeout(saveTimeoutRef.current)
+      }
+    }
+  }, [formData, selectedDate, saveFormData])
 
   const handleInputChange = (field: string, value: string) => {
     setFormData(prev => ({ ...prev, [field]: value }))
+    // Clear error when user starts typing
+    if (error) {
+      setError(null)
+    }
+  }
+
+  const handleDateChange = (date: Date | undefined) => {
+    setSelectedDate(date)
+    // Clear error when user selects a date
+    if (error) {
+      setError(null)
+    }
   }
 
   function handleTurnstileVerify(token: string) {
     setTurnstileToken(token)
     setIsTurnstileVerified(true)
+    setError(null) // Clear any previous errors
   }
 
   function handleTurnstileError() {
     setTurnstileToken(null)
     setIsTurnstileVerified(false)
+    setError({
+      type: "turnstile",
+      message: "CAPTCHA verification failed. Please try again.",
+      retryable: true
+    })
   }
 
   function handleTurnstileExpire() {
     setTurnstileToken(null)
     setIsTurnstileVerified(false)
+    setError({
+      type: "turnstile",
+      message: "CAPTCHA verification expired. Please verify again to continue.",
+      retryable: true
+    })
   }
 
-  // Reset Turnstile when modal closes
+  // Reset Turnstile when modal opens (but preserve form data)
   const handleBookingOpenChange = (open: boolean) => {
+    // Prevent closing the modal when submitting
+    if (!open && isSubmitting) {
+      return
+    }
     setBookingOpen(open)
-    if (!open) {
-      // Reset form and Turnstile when modal closes
-      setFormData({
-        name: "",
-        email: "",
-        phone: "",
-        guests: "",
-        eventType: "",
-        introduction: "",
-        biography: "",
-        specialRequests: ""
-      })
-      setSelectedDate(undefined)
+    if (open) {
+      // Modal opened - reset captcha verification but keep form data
       setTurnstileToken(null)
       setIsTurnstileVerified(false)
+      setError(null)
+      setRetryCount(0)
+      // Force Turnstile to re-render by incrementing key
+      turnstileKeyRef.current += 1
+    } else {
+      // Modal closed - only clear on successful submission
+      // Form data persists in localStorage
     }
   }
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
+    setError(null)
     
     // Validate Turnstile
     if (!isTurnstileVerified || !turnstileToken) {
-      alert("Please complete the CAPTCHA verification first.")
+      setError({
+        type: "turnstile",
+        message: "Please complete the CAPTCHA verification first.",
+        retryable: false
+      })
       return
     }
     
     // Validate required fields
     if (!selectedDate) {
-      alert("Please select a desired date.")
+      setError({
+        type: "validation",
+        message: "Please select a desired date.",
+        retryable: false
+      })
       return
     }
     if (!formData.guests) {
-      alert("Please select the number of guests.")
+      setError({
+        type: "validation",
+        message: "Please select the number of guests.",
+        retryable: false
+      })
       return
     }
     if (!formData.eventType) {
-      alert("Please select an event type.")
+      setError({
+        type: "validation",
+        message: "Please select an event type.",
+        retryable: false
+      })
       return
     }
     
     setIsSubmitting(true)
     
     try {
+      const controller = new AbortController()
+      const timeoutId = setTimeout(() => controller.abort(), 30000) // 30 second timeout
+
       const response = await fetch("/api/booking", {
         method: "POST",
         headers: {
@@ -110,15 +242,56 @@ export function Header() {
           ...formData,
           date: selectedDate?.toISOString(),
         }),
+        signal: controller.signal
       })
-      
-      const data = await response.json()
-      
-      if (!data.success) {
-        throw new Error(data.error || "Failed to submit booking")
+
+      clearTimeout(timeoutId)
+
+      // Handle non-JSON responses
+      let data
+      try {
+        data = await response.json()
+      } catch (jsonError) {
+        throw new Error("Server returned invalid response. Please try again.")
       }
       
-      alert("Thank you for your reservation request! We'll be in touch soon.")
+      if (!response.ok) {
+        // Handle different HTTP error status codes
+        if (response.status === 400) {
+          throw new Error(data.error || "Invalid request. Please check your input and try again.")
+        } else if (response.status === 401 || response.status === 403) {
+          throw new Error("Authentication failed. Please refresh the page and try again.")
+        } else if (response.status === 429) {
+          throw new Error("Too many requests. Please wait a moment and try again.")
+        } else if (response.status >= 500) {
+          throw new Error("Server error. Please try again in a few moments.")
+        } else {
+          throw new Error(data.error || `Request failed with status ${response.status}`)
+        }
+      }
+      
+      if (!data.success) {
+        // Extract error message, including details if available
+        const errorMsg = data.error || "Failed to submit booking"
+        const details = data.details ? ` ${data.details}` : ""
+        throw new Error(errorMsg + details)
+      }
+      
+      // Success - clear form data and localStorage
+      toast.success("Reservation submitted successfully!", {
+        description: "Thank you for your reservation request! We'll be in touch soon.",
+        duration: 5000,
+        className: "bg-green-50 border-green-200 text-green-900 rounded-lg shadow-lg font-comfortaa",
+        style: {
+          backgroundColor: "#f0fdf4",
+          borderColor: "#bbf7d0",
+          color: "#14532d",
+          borderRadius: "0.5rem",
+          padding: "1rem",
+          boxShadow: "0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05)",
+        },
+      })
+      
       setFormData({
         name: "",
         email: "",
@@ -132,12 +305,87 @@ export function Header() {
       setSelectedDate(undefined)
       setTurnstileToken(null)
       setIsTurnstileVerified(false)
+      
+      // Clear localStorage on successful submission
+      if (typeof window !== "undefined") {
+        localStorage.removeItem(STORAGE_KEY)
+      }
+      
       setBookingOpen(false)
-    } catch (error) {
+      setRetryCount(0)
+      setError(null)
+      
+    } catch (error: any) {
       console.error("Booking submission error:", error)
-      alert("Failed to submit booking. Please try again.")
+      
+      let errorMessage = "Failed to submit booking. Please try again."
+      let errorType: FormError["type"] = "network"
+      let retryable = true
+
+      if (error.name === "AbortError") {
+        errorMessage = "Request timed out. Please check your connection and try again."
+        errorType = "network"
+        retryable = true
+      } else if (error.message) {
+        errorMessage = error.message
+        // Check for email-related errors
+        if (error.message.includes("email") || error.message.includes("confirmation")) {
+          errorType = "server"
+          errorMessage = "Failed to send confirmation emails. Your form data has been saved. Please verify CAPTCHA again below and try submitting once more."
+          retryable = true
+        } else if (error.message.includes("network") || error.message.includes("fetch")) {
+          errorType = "network"
+          retryable = true
+        } else if (error.message.includes("validation") || error.message.includes("required")) {
+          errorType = "validation"
+          retryable = false
+        } else if (error.message.includes("server") || error.message.includes("500")) {
+          errorType = "server"
+          retryable = true
+        }
+      }
+
+      // On error, reset CAPTCHA but keep form data in localStorage
+      // User must verify CAPTCHA again to retry
+      setTurnstileToken(null)
+      setIsTurnstileVerified(false)
+      turnstileKeyRef.current += 1
+
+      // Form data stays in localStorage and form fields - user can retry
+      setError({
+        type: errorType,
+        message: errorMessage,
+        retryable
+      })
+
+      // Show error toast notification
+      toast.error("Failed to submit reservation", {
+        description: errorMessage,
+        duration: 7000,
+        className: "bg-red-50 border-red-200 text-red-900 rounded-lg shadow-lg font-comfortaa",
+        style: {
+          backgroundColor: "#fef2f2",
+          borderColor: "#fecaca",
+          color: "#991b1b",
+          borderRadius: "0.5rem",
+          padding: "1rem",
+          boxShadow: "0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05)",
+        },
+      })
     } finally {
       setIsSubmitting(false)
+    }
+  }
+
+  // Retry submission handler
+  const handleRetry = () => {
+    if (error?.retryable && retryCount < 3) {
+      setRetryCount(prev => prev + 1)
+      setError(null)
+      // Reset captcha to force re-verification
+      setTurnstileToken(null)
+      setIsTurnstileVerified(false)
+      turnstileKeyRef.current += 1
     }
   }
 
@@ -177,7 +425,19 @@ export function Header() {
             <span className="hidden sm:inline font-comfortaa font-normal text-sm md:text-base">Booking</span>
           </DialogTrigger>
 
-          <DialogContent className="top-0 left-0 translate-x-0 translate-y-0 w-full h-screen max-w-none sm:max-w-none rounded-none border-0 p-0 bg-transparent overflow-hidden">
+          <DialogContent 
+            className={`top-0 left-0 translate-x-0 translate-y-0 w-full h-screen max-w-none sm:max-w-none rounded-none border-0 p-0 bg-transparent overflow-hidden ${isSubmitting ? '[&>button]:hidden [&>button]:pointer-events-none [&>button]:opacity-0' : ''}`}
+            onEscapeKeyDown={(e) => {
+              if (isSubmitting) {
+                e.preventDefault()
+              }
+            }}
+            onInteractOutside={(e) => {
+              if (isSubmitting) {
+                e.preventDefault()
+              }
+            }}
+          >
             <DialogHeader className="sr-only">
               <DialogTitle>Booking</DialogTitle>
               <DialogDescription>Menu and Booking modal</DialogDescription>
@@ -222,6 +482,7 @@ export function Header() {
                         </p>
                         <div className="lg:scale-75 xl:scale-90 origin-left">
                           <Turnstile
+                            key={turnstileKeyRef.current}
                             onVerify={handleTurnstileVerify}
                             onError={handleTurnstileError}
                             onExpire={handleTurnstileExpire}
@@ -229,8 +490,11 @@ export function Header() {
                           />
                         </div>
                         {!isTurnstileVerified && (
-                          <p className="text-[#5a3a2a]/60 font-comfortaa italic" style={{ fontSize: 'clamp(0.625rem, 0.7vw, 0.75rem)' }}>
-                            Complete verification to enable form fields
+                          <p className={`font-comfortaa italic ${error ? "text-orange-600 font-medium" : "text-[#5a3a2a]/60"}`} style={{ fontSize: 'clamp(0.625rem, 0.7vw, 0.75rem)' }}>
+                            {error 
+                              ? "⚠️ Please verify CAPTCHA again to retry submission"
+                              : "Complete verification to enable form fields"
+                            }
                           </p>
                         )}
                       </div>
@@ -319,7 +583,7 @@ export function Header() {
                                 <Calendar
                                   mode="single"
                                   selected={selectedDate}
-                                  onSelect={setSelectedDate}
+                                  onSelect={handleDateChange}
                                   disabled={(date) => date < new Date() || !isTurnstileVerified}
                                   initialFocus
                                 />
@@ -394,6 +658,43 @@ export function Header() {
                           </div>
                         </div>
                       </div>
+
+                      {/* Error Display */}
+                      {error && (
+                        <div 
+                          className={`flex items-start gap-2 p-3 rounded-lg border ${
+                            error.type === "validation" 
+                              ? "bg-yellow-50 border-yellow-200 text-yellow-800"
+                              : error.type === "network"
+                              ? "bg-red-50 border-red-200 text-red-800"
+                              : error.type === "turnstile"
+                              ? "bg-orange-50 border-orange-200 text-orange-800"
+                              : "bg-red-50 border-red-200 text-red-800"
+                          }`}
+                          style={{ fontSize: 'clamp(0.6875rem, 0.75vw, 0.8125rem)' }}
+                        >
+                          <AlertCircle className="w-4 h-4 mt-0.5 flex-shrink-0" />
+                          <div className="flex-1">
+                            <p className="font-comfortaa font-medium mb-1">{error.message}</p>
+                            {(error.type === "server" || error.type === "network") && (
+                              <div className="mt-2 p-2 bg-white/50 rounded border border-current/20">
+                                <p className="font-comfortaa text-xs mb-1 font-semibold">
+                                  Your form data has been saved. To retry:
+                                </p>
+                                <ol className="font-comfortaa text-xs list-decimal list-inside space-y-0.5 ml-1">
+                                  <li>Verify CAPTCHA again below</li>
+                                  <li>Click Submit Inquiry</li>
+                                </ol>
+                              </div>
+                            )}
+                            {error.retryable && retryCount >= 3 && (
+                              <p className="font-comfortaa text-sm mt-2 opacity-75">
+                                Maximum retry attempts reached. Please refresh the page or try again later.
+                              </p>
+                            )}
+                          </div>
+                        </div>
+                      )}
 
                       {/* Submit Button */}
                       <div className="flex flex-col items-center space-y-1.5 sm:space-y-2 lg:space-y-1 pt-2 sm:pt-2.5 lg:pt-1.5">

@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server"
+import { sendReservationEmails, verifyEmailConfig } from "@/lib/email"
 
 export async function POST(request: Request) {
   try {
@@ -51,14 +52,72 @@ export async function POST(request: Request) {
       )
     }
 
-    // Here you would typically save the booking to your database
-    // For now, we'll just log it and return success
-    console.log("Booking received:", bookingData)
+    // Validate required booking data
+    if (!bookingData.name || !bookingData.email || !bookingData.date) {
+      return NextResponse.json(
+        { success: false, error: "Missing required booking information" },
+        { status: 400 }
+      )
+    }
 
-    return NextResponse.json({
-      success: true,
-      message: "Booking request received successfully",
-    })
+    // Verify email configuration first
+    const emailConfigCheck = verifyEmailConfig()
+    if (!emailConfigCheck.valid) {
+      return NextResponse.json(
+        { 
+          success: false, 
+          error: "Email service is not configured. Please contact support.",
+          details: emailConfigCheck.errors
+        },
+        { status: 500 }
+      )
+    }
+
+    // Send emails - booking fails if email fails (blocking)
+    try {
+      const emailStatus = await sendReservationEmails(bookingData)
+      
+      // Check if both emails were sent successfully
+      if (!emailStatus.adminSent || !emailStatus.userSent) {
+        const errorMessages = emailStatus.errors.join("; ")
+        console.error("Email sending failed:", errorMessages)
+        
+        return NextResponse.json(
+          { 
+            success: false, 
+            error: "Failed to send confirmation emails. Please try again.",
+            details: errorMessages,
+            emailStatus: {
+              adminNotification: emailStatus.adminSent,
+              userConfirmation: emailStatus.userSent,
+            }
+          },
+          { status: 500 }
+        )
+      }
+
+      // Log successful booking
+      console.log("Booking received and emails sent successfully:", bookingData)
+
+      // Return success only if emails were sent successfully
+      return NextResponse.json({
+        success: true,
+        message: "Booking request received successfully. Confirmation emails have been sent.",
+      })
+    } catch (emailError) {
+      // Email sending failed - booking fails
+      const errorMessage = emailError instanceof Error ? emailError.message : "Unknown email error"
+      console.error("Email sending error - booking failed:", emailError)
+      
+      return NextResponse.json(
+        { 
+          success: false, 
+          error: "Failed to send confirmation emails. Please check your connection and try again.",
+          details: errorMessage
+        },
+        { status: 500 }
+      )
+    }
   } catch (error) {
     console.error("Booking submission error:", error)
     return NextResponse.json(
