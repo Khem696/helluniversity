@@ -17,14 +17,15 @@ function getImageUrl(imagePath: string): string {
   return `${baseUrl}${basePath}${normalizedPath}`
 }
 
-// Helper function to convert image URL to base64 (for API if needed)
+// Helper function to convert image URL to base64 (for BFL API)
+// BFL API accepts base64 encoded image without data URI prefix, or image URL
 async function imageUrlToBase64(url: string): Promise<string> {
   try {
     const response = await fetch(url)
     const buffer = await response.arrayBuffer()
+    // BFL API expects base64 without data URI prefix
     const base64 = Buffer.from(buffer).toString('base64')
-    const contentType = response.headers.get('content-type') || 'image/jpeg'
-    return `data:${contentType};base64,${base64}`
+    return base64
   } catch (error) {
     console.error(`Failed to convert image to base64: ${url}`, error)
     throw new Error(`Failed to process image: ${url}`)
@@ -33,6 +34,7 @@ async function imageUrlToBase64(url: string): Promise<string> {
 
 // Helper function to make BFL API requests with proper error handling and retry logic
 // Implements recommendations from: https://docs.bfl.ai/api_integration/integration_guidelines#best-practices
+// API Documentation: https://docs.bfl.ai/kontext/kontext_image_editing#flux-1-kontext-image-editing-parameters
 async function makeBFLRequest(
   url: string,
   apiKey: string,
@@ -45,7 +47,8 @@ async function makeBFLRequest(
       const response = await fetch(url, {
         method: "POST",
         headers: {
-          "Authorization": `Bearer ${apiKey}`,
+          "x-key": apiKey, // BFL API uses x-key header, not Authorization Bearer
+          "accept": "application/json",
           "Content-Type": "application/json",
         },
         body: JSON.stringify(requestBody),
@@ -111,11 +114,14 @@ async function makeBFLRequest(
       }
 
       // Check if response contains polling_url (for async requests)
-      if (data.polling_url && data.status && data.status !== 'Ready') {
-        // Handle async polling if needed
+      // Per BFL docs: Initial response contains id and polling_url
+      // https://docs.bfl.ai/kontext/kontext_image_editing#create-request
+      if (data.polling_url && data.id) {
+        // Handle async polling - poll until status is "Ready"
         return await pollForResult(data.polling_url, apiKey, batchNumber)
       }
 
+      // If no polling_url, assume synchronous response (shouldn't happen with BFL API)
       return { success: true, data }
       
     } catch (error) {
@@ -147,7 +153,7 @@ async function pollForResult(
   pollingUrl: string,
   apiKey: string,
   batchNumber: number,
-  maxAttempts: number = 60, // 30 seconds max (0.5s intervals)
+  maxAttempts: number = 120, // Increased to 60 seconds max (0.5s intervals) for image generation
   pollInterval: number = 500 // 500ms between polls
 ): Promise<{ success: boolean; data?: any; error?: string; status?: number }> {
   for (let attempt = 0; attempt < maxAttempts; attempt++) {
@@ -155,12 +161,20 @@ async function pollForResult(
       const response = await fetch(pollingUrl, {
         method: "GET",
         headers: {
-          "Authorization": `Bearer ${apiKey}`,
+          "x-key": apiKey, // BFL API uses x-key header, not Authorization Bearer
           "accept": "application/json",
         },
+        // Prevent caching issues
+        cache: 'no-store',
       })
 
       if (!response.ok) {
+        // Don't fail immediately on non-OK status, might be temporary
+        if (response.status >= 500 && attempt < maxAttempts - 1) {
+          // Server error, wait and retry
+          await new Promise(resolve => setTimeout(resolve, pollInterval))
+          continue
+        }
         return {
           success: false,
           error: `Polling failed: ${response.statusText}`,
@@ -175,7 +189,7 @@ async function pollForResult(
       } else if (result.status === 'Error' || result.status === 'Failed') {
         return {
           success: false,
-          error: result.error || 'Generation failed',
+          error: result.error || result.message || 'Generation failed',
           status: 500,
         }
       }
@@ -184,6 +198,15 @@ async function pollForResult(
       await new Promise(resolve => setTimeout(resolve, pollInterval))
       
     } catch (error) {
+      // Handle network errors more gracefully
+      if (error instanceof Error) {
+        // If it's a network error and we haven't reached max attempts, retry
+        if (error.message.includes('fetch') && attempt < maxAttempts - 1) {
+          await new Promise(resolve => setTimeout(resolve, pollInterval))
+          continue
+        }
+      }
+      
       if (attempt === maxAttempts - 1) {
         return {
           success: false,
@@ -279,64 +302,66 @@ export async function POST(request: Request) {
       )
     }
 
+    // Validate that all images are from the allowed studio directory
+    const studioImagePrefix = "/aispaces/studio/"
+    const invalidImages = selectedImages.filter(
+      (path: string) => !path.startsWith(studioImagePrefix) && !path.includes(studioImagePrefix)
+    )
+    
+    if (invalidImages.length > 0) {
+      return NextResponse.json(
+        { success: false, error: "All images must be from the studio directory" },
+        { status: 400 }
+      )
+    }
+
     // Convert image paths to full URLs
     const imageUrls = selectedImages.map(getImageUrl)
 
-    // Split images into batches of 4 (BlackForest Lab API limit)
-    const MAX_IMAGES_PER_REQUEST = 4
-    const batches: string[][] = []
-    for (let i = 0; i < imageUrls.length; i += MAX_IMAGES_PER_REQUEST) {
-      batches.push(imageUrls.slice(i, i + MAX_IMAGES_PER_REQUEST))
-    }
-
-    console.log(`Processing ${selectedImages.length} images in ${batches.length} batch(es)`)
+    console.log(`Processing ${selectedImages.length} image(s) for AI space generation`)
 
     // Use primary global endpoint per BFL documentation: https://docs.bfl.ai/api_integration/integration_guidelines
+    // API Reference: https://docs.bfl.ai/kontext/kontext_image_editing#flux-1-kontext-image-editing-parameters
     // Options: api.bfl.ai (global), api.eu.bfl.ai (EU), api.us.bfl.ai (US)
     const bflApiUrl = process.env.BFL_API_URL || "https://api.bfl.ai/v1/flux-kontext-pro"
     const allGeneratedImages: string[] = []
 
-    // Process each batch sequentially
-    for (let batchIndex = 0; batchIndex < batches.length; batchIndex++) {
-      const batch = batches[batchIndex]
-      console.log(`Processing batch ${batchIndex + 1}/${batches.length} with ${batch.length} image(s)`)
+    // Process each image separately (FLUX.1 Kontext Pro only accepts one input_image per request)
+    // Per BFL docs: input_image can be base64 encoded image or URL (up to 20MB or 20 megapixels)
+    for (let imageIndex = 0; imageIndex < imageUrls.length; imageIndex++) {
+      const imageUrl = imageUrls[imageIndex]
+      console.log(`Processing image ${imageIndex + 1}/${imageUrls.length}`)
 
-      // Convert images to base64 format for the API
-      const imageBase64Promises = batch.map(imageUrlToBase64)
-      const imageBase64Array = await Promise.all(imageBase64Promises)
+      // Convert image to base64 format for the API
+      // BFL API accepts base64 encoded image (without data URI prefix) or image URL
+      const imageBase64 = await imageUrlToBase64(imageUrl)
 
-      // Prepare request body - adjust fields based on actual API requirements
+      // Prepare request body according to BFL API documentation
+      // Required: prompt (string), input_image (string - base64 or URL)
+      // Optional: aspect_ratio, seed, prompt_upsampling, safety_tolerance, output_format, webhook_url, webhook_secret
       const requestBody: any = {
         prompt: prompt,
+        input_image: imageBase64, // Base64 encoded image (without data URI prefix)
       }
 
-      // Add image(s) based on count
-      if (imageBase64Array.length === 1) {
-        // Single image: use 'image' field
-        requestBody.image = imageBase64Array[0]
-      } else {
-        // Multiple images (up to 4): use 'images' array
-        requestBody.images = imageBase64Array
-      }
-
-      // Optional parameters that may be supported
-      // Uncomment and adjust based on actual API documentation
-      // requestBody.num_images = 1
-      // requestBody.aspect_ratio = "16:9"
-      // requestBody.output_format = "jpeg"
-      // requestBody.output_quality = 90
-      // requestBody.seed = undefined // Optional seed for reproducibility
-      // requestBody.guidance_scale = 3.5 // Optional guidance scale
+      // Optional parameters per BFL API documentation
+      // aspect_ratio: string | null (default: "1:1", supports 3:7 to 7:3)
+      // seed: integer | null (default: null, random seed if omitted)
+      // prompt_upsampling: boolean (default: false)
+      // safety_tolerance: integer (default: 2, range 0-6)
+      // output_format: string (default: "jpeg", can be "jpeg" or "png")
+      // webhook_url: string | null (default: null)
+      // webhook_secret: string | null (default: null)
       
       // Make API request with retry logic and proper error handling
-      const bflResponse = await makeBFLRequest(bflApiUrl, apiKey, requestBody, batchIndex + 1)
+      const bflResponse = await makeBFLRequest(bflApiUrl, apiKey, requestBody, imageIndex + 1)
 
       if (!bflResponse.success) {
-        // If one batch fails, return error but include any images generated so far
+        // If one image fails, return error but include any images generated so far
         return NextResponse.json(
           {
             success: false,
-            error: `Batch ${batchIndex + 1} failed: ${bflResponse.error}`,
+            error: `Image ${imageIndex + 1} failed: ${bflResponse.error}`,
             images: allGeneratedImages.length > 0 ? allGeneratedImages : undefined,
             details: process.env.NODE_ENV === 'development' ? bflResponse.details : undefined,
           },
@@ -346,85 +371,83 @@ export async function POST(request: Request) {
 
       const bflData = bflResponse.data
 
-      console.log(`BlackForest Lab API response (batch ${batchIndex + 1}):`, {
+      console.log(`BlackForest Lab API response (image ${imageIndex + 1}):`, {
         keys: Object.keys(bflData),
-        hasData: !!bflData.data,
-        hasImages: !!bflData.images,
-        hasUrl: !!bflData.url,
-        hasImageUrl: !!bflData.image_url,
+        hasPollingUrl: !!bflData.polling_url,
+        hasId: !!bflData.id,
         hasResult: !!bflData.result,
+        status: bflData.status,
       })
 
-      // Extract generated image URLs from the response
-      // Per BFL docs: result.sample contains delivery URL (expires in 10 minutes)
+      // Extract generated image URL from the response
+      // Per BFL docs: After polling, result.sample contains delivery URL (expires in 10 minutes)
+      // https://docs.bfl.ai/kontext/kontext_image_editing#poll-for-result
       // https://docs.bfl.ai/api_integration/integration_guidelines#content-delivery-and-storage-guidelines
-      let batchGeneratedImages: string[] = []
+      let generatedImageUrl: string | null = null
 
-      // Handle async polling result format (result.sample)
+      // Handle polling result format (result.sample)
       if (bflData.result && bflData.result.sample) {
-        batchGeneratedImages = Array.isArray(bflData.result.sample) 
+        generatedImageUrl = typeof bflData.result.sample === 'string' 
           ? bflData.result.sample 
-          : [bflData.result.sample]
+          : bflData.result.sample.url || bflData.result.sample
       } 
-      // Handle direct response format
-      else if (bflData.data && Array.isArray(bflData.data)) {
-        batchGeneratedImages = bflData.data
-          .map((item: any) => {
-            if (typeof item === 'string') return item
-            return item.url || item.image_url || item.image || item.output_url || item.sample
-          })
-          .filter(Boolean)
-      } else if (bflData.data && typeof bflData.data === 'object') {
-        const item = bflData.data
-        const url = item.url || item.image_url || item.image || item.output_url || item.sample
-        if (url) batchGeneratedImages = [url]
-      } else if (bflData.image_url || bflData.sample) {
-        batchGeneratedImages = [bflData.image_url || bflData.sample]
-      } else if (bflData.images && Array.isArray(bflData.images)) {
-        batchGeneratedImages = bflData.images.map((img: any) => 
-          typeof img === 'string' ? img : (img.url || img.image_url || img.sample || img)
-        ).filter(Boolean)
-      } else if (bflData.url) {
-        batchGeneratedImages = [bflData.url]
-      } else if (bflData.output) {
-        batchGeneratedImages = Array.isArray(bflData.output) ? bflData.output : [bflData.output]
+      // Handle direct response format (shouldn't happen with async API, but handle just in case)
+      else if (bflData.sample) {
+        generatedImageUrl = typeof bflData.sample === 'string' ? bflData.sample : bflData.sample.url
+      } else if (bflData.result && typeof bflData.result === 'string') {
+        generatedImageUrl = bflData.result
       } else {
-        console.warn(`Unexpected API response format (batch ${batchIndex + 1}). Full response:`, JSON.stringify(bflData, null, 2))
-        throw new Error(`Unexpected response format from AI service (batch ${batchIndex + 1}). Check API documentation for correct format.`)
+        console.warn(`Unexpected API response format (image ${imageIndex + 1}). Full response:`, JSON.stringify(bflData, null, 2))
+        throw new Error(`Unexpected response format from AI service (image ${imageIndex + 1}). Check API documentation for correct format.`)
+      }
+
+      if (!generatedImageUrl) {
+        throw new Error(`No image URL returned for image ${imageIndex + 1}`)
       }
 
       // Note: Delivery URLs expire after 10 minutes and don't support CORS
       // For production, download images immediately and serve from your own infrastructure
       // See: https://docs.bfl.ai/api_integration/integration_guidelines#recommended-image-handling
 
-      // Add batch results to overall results
-      allGeneratedImages.push(...batchGeneratedImages)
+      // Add result to overall results
+      allGeneratedImages.push(generatedImageUrl)
       
-      console.log(`Batch ${batchIndex + 1} completed: ${batchGeneratedImages.length} image(s) generated`)
+      console.log(`Image ${imageIndex + 1} completed: generated successfully`)
     }
 
     if (allGeneratedImages.length === 0) {
-      throw new Error("No images were generated from any batch")
+      throw new Error("No images were generated")
     }
 
-    console.log(`All batches completed: ${allGeneratedImages.length} total image(s) generated`)
+    console.log(`All images processed: ${allGeneratedImages.length} total image(s) generated`)
 
     return NextResponse.json({
       success: true,
       images: allGeneratedImages,
-      batchesProcessed: batches.length,
       totalImages: allGeneratedImages.length,
     })
   } catch (error) {
     console.error("AI space generation error:", error)
     
-    const errorMessage = error instanceof Error 
-      ? error.message 
-      : "Internal server error"
+    let errorMessage = "Internal server error"
+    let statusCode = 500
+    
+    if (error instanceof Error) {
+      errorMessage = error.message
+      
+      // Handle specific error types
+      if (error.message.includes("timeout")) {
+        statusCode = 408
+        errorMessage = "Request timed out. Image generation is taking longer than expected. Please try again."
+      } else if (error.message.includes("fetch") || error.message.includes("network")) {
+        statusCode = 503
+        errorMessage = "Network error occurred. Please try again."
+      }
+    }
     
     return NextResponse.json(
       { success: false, error: errorMessage },
-      { status: 500 }
+      { status: statusCode }
     )
   }
 }
