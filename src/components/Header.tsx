@@ -507,6 +507,9 @@ export function Header() {
                             <Label htmlFor="name" className="text-[#5a3a2a] font-comfortaa" style={{ fontSize: 'clamp(0.6875rem, 0.7vw, 0.75rem)' }}>Full Name *</Label>
                             <Input
                               id="name"
+                              name="name"
+                              type="text"
+                              autoComplete="name"
                               required
                               value={formData.name}
                               onChange={(e) => handleInputChange("name", e.target.value)}
@@ -520,7 +523,9 @@ export function Header() {
                             <Label htmlFor="email" className="text-[#5a3a2a] font-comfortaa" style={{ fontSize: 'clamp(0.6875rem, 0.7vw, 0.75rem)' }}>Email Address *</Label>
                             <Input
                               id="email"
+                              name="email"
                               type="email"
+                              autoComplete="email"
                               required
                               value={formData.email}
                               onChange={(e) => handleInputChange("email", e.target.value)}
@@ -534,6 +539,9 @@ export function Header() {
                             <Label htmlFor="phone" className="text-[#5a3a2a] font-comfortaa" style={{ fontSize: 'clamp(0.6875rem, 0.7vw, 0.75rem)' }}>Phone Number *</Label>
                             <Input
                               id="phone"
+                              name="phone"
+                              type="tel"
+                              autoComplete="tel"
                               required
                               value={formData.phone}
                               onChange={(e) => handleInputChange("phone", e.target.value)}
@@ -543,10 +551,37 @@ export function Header() {
                               style={{ fontSize: 'clamp(0.75rem, 0.8vw, 0.875rem)', height: 'clamp(2rem, 2.2vw, 2.25rem)' }}
                             />
                           </div>
-                          <div style={{ display: 'flex', flexDirection: 'column', gap: 'clamp(0.25rem, 0.3vw, 0.375rem)' }}>
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: 'clamp(0.25rem, 0.3vw, 0.375rem)', position: 'relative' }}>
                             <Label htmlFor="guests" className="text-[#5a3a2a] font-comfortaa" style={{ fontSize: 'clamp(0.6875rem, 0.7vw, 0.75rem)' }}>Number of Guests *</Label>
+                            {/* Native select for form validation - visually hidden but accessible to browsers */}
+                            <select
+                              id="guests"
+                              name="guests"
+                              value={formData.guests}
+                              onChange={(e) => handleInputChange("guests", e.target.value)}
+                              disabled={!isTurnstileVerified}
+                              style={{ 
+                                position: 'absolute',
+                                width: '1px',
+                                height: '1px',
+                                padding: 0,
+                                margin: '-1px',
+                                overflow: 'hidden',
+                                clip: 'rect(0, 0, 0, 0)',
+                                whiteSpace: 'nowrap',
+                                borderWidth: 0
+                              }}
+                              tabIndex={-1}
+                            >
+                              <option value="">Select guest count</option>
+                              {Array.from({ length: 15 }, (_, i) => i + 1).map((num) => (
+                                <option key={num} value={num.toString()}>
+                                  {num} {num === 1 ? "guest" : "guests"}
+                                </option>
+                              ))}
+                            </select>
                             <Select value={formData.guests} onValueChange={(value) => handleInputChange("guests", value)} disabled={!isTurnstileVerified}>
-                              <SelectTrigger className={`font-comfortaa ${!isTurnstileVerified ? "opacity-50 cursor-not-allowed" : ""}`} style={{ fontSize: 'clamp(0.75rem, 0.8vw, 0.875rem)', height: 'clamp(2rem, 2.2vw, 2.25rem)' }}>
+                              <SelectTrigger id="guests-visual" aria-labelledby="guests-label" className={`font-comfortaa ${!isTurnstileVerified ? "opacity-50 cursor-not-allowed" : ""}`} style={{ fontSize: 'clamp(0.75rem, 0.8vw, 0.875rem)', height: 'clamp(2rem, 2.2vw, 2.25rem)' }}>
                                 <SelectValue placeholder="Select guest count" />
                               </SelectTrigger>
                               <SelectContent>
@@ -565,11 +600,38 @@ export function Header() {
                       <div style={{ display: 'flex', flexDirection: 'column', gap: 'clamp(0.375rem, 0.5vw, 0.5rem)' }}>
                         <h4 className="text-[#5a3a2a] font-comfortaa font-semibold" style={{ fontSize: 'clamp(0.75rem, 0.8vw, 0.875rem)' }}>Event Details</h4>
                         <div className="grid grid-cols-1 lg:grid-cols-2" style={{ gap: 'clamp(0.375rem, 0.5vw, 0.75rem)' }}>
-                          <div style={{ display: 'flex', flexDirection: 'column', gap: 'clamp(0.25rem, 0.3vw, 0.375rem)' }}>
-                            <Label className="text-[#5a3a2a] font-comfortaa" style={{ fontSize: 'clamp(0.6875rem, 0.7vw, 0.75rem)' }}>Desired Date *</Label>
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: 'clamp(0.25rem, 0.3vw, 0.375rem)', position: 'relative' }}>
+                            <Label htmlFor="desiredDate" className="text-[#5a3a2a] font-comfortaa" style={{ fontSize: 'clamp(0.6875rem, 0.7vw, 0.75rem)' }}>Desired Date *</Label>
+                            {/* Native date input for form validation - visually hidden but accessible to browsers */}
+                            <input
+                              id="desiredDate"
+                              name="date"
+                              type="date"
+                              value={selectedDate ? selectedDate.toISOString().split('T')[0] : ""}
+                              onChange={(e) => {
+                                if (e.target.value) {
+                                  handleDateChange(new Date(e.target.value))
+                                }
+                              }}
+                              disabled={!isTurnstileVerified}
+                              style={{ 
+                                position: 'absolute',
+                                width: '1px',
+                                height: '1px',
+                                padding: 0,
+                                margin: '-1px',
+                                overflow: 'hidden',
+                                clip: 'rect(0, 0, 0, 0)',
+                                whiteSpace: 'nowrap',
+                                borderWidth: 0
+                              }}
+                              tabIndex={-1}
+                            />
                             <Popover>
                               <PopoverTrigger asChild>
                                 <Button
+                                  id="desiredDate-visual"
+                                  aria-labelledby="desiredDate-label"
                                   variant="outline"
                                   disabled={!isTurnstileVerified}
                                   className={`w-full justify-start text-left font-normal font-comfortaa ${!isTurnstileVerified ? "opacity-50 cursor-not-allowed" : ""}`}
@@ -590,10 +652,41 @@ export function Header() {
                               </PopoverContent>
                             </Popover>
                           </div>
-                          <div style={{ display: 'flex', flexDirection: 'column', gap: 'clamp(0.25rem, 0.3vw, 0.375rem)' }}>
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: 'clamp(0.25rem, 0.3vw, 0.375rem)', position: 'relative' }}>
                             <Label htmlFor="eventType" className="text-[#5a3a2a] font-comfortaa" style={{ fontSize: 'clamp(0.6875rem, 0.7vw, 0.75rem)' }}>Event Type *</Label>
+                            {/* Native select for form validation - visually hidden but accessible to browsers */}
+                            <select
+                              id="eventType"
+                              name="eventType"
+                              value={formData.eventType}
+                              onChange={(e) => handleInputChange("eventType", e.target.value)}
+                              disabled={!isTurnstileVerified}
+                              style={{ 
+                                position: 'absolute',
+                                width: '1px',
+                                height: '1px',
+                                padding: 0,
+                                margin: '-1px',
+                                overflow: 'hidden',
+                                clip: 'rect(0, 0, 0, 0)',
+                                whiteSpace: 'nowrap',
+                                borderWidth: 0
+                              }}
+                              tabIndex={-1}
+                            >
+                              <option value="">Select event type</option>
+                              <option value="reunion">Reunion</option>
+                              <option value="family-friends">Family & Friends</option>
+                              <option value="baby-shower">Baby Shower</option>
+                              <option value="engagement">Engagement</option>
+                              <option value="art-workshop">Art Workshop</option>
+                              <option value="painting-workshop">Painting Workshop</option>
+                              <option value="ceramics-workshop">Ceramics Workshop</option>
+                              <option value="brainstorming-session">Brainstorming Session</option>
+                              <option value="other">Other</option>
+                            </select>
                             <Select value={formData.eventType} onValueChange={(value) => handleInputChange("eventType", value)} disabled={!isTurnstileVerified}>
-                              <SelectTrigger className={`font-comfortaa ${!isTurnstileVerified ? "opacity-50 cursor-not-allowed" : ""}`} style={{ fontSize: 'clamp(0.75rem, 0.8vw, 0.875rem)', height: 'clamp(2rem, 2.2vw, 2.25rem)' }}>
+                              <SelectTrigger id="eventType-visual" aria-labelledby="eventType-label" className={`font-comfortaa ${!isTurnstileVerified ? "opacity-50 cursor-not-allowed" : ""}`} style={{ fontSize: 'clamp(0.75rem, 0.8vw, 0.875rem)', height: 'clamp(2rem, 2.2vw, 2.25rem)' }}>
                                 <SelectValue placeholder="Select event type" />
                               </SelectTrigger>
                               <SelectContent>
@@ -620,6 +713,8 @@ export function Header() {
                             <Label htmlFor="introduction" className="text-[#5a3a2a] font-comfortaa" style={{ fontSize: 'clamp(0.6875rem, 0.7vw, 0.75rem)' }}>Brief Introduction *</Label>
                             <Textarea
                               id="introduction"
+                              name="introduction"
+                              autoComplete="off"
                               required
                               value={formData.introduction}
                               onChange={(e) => handleInputChange("introduction", e.target.value)}
@@ -634,6 +729,8 @@ export function Header() {
                             <Label htmlFor="biography" className="text-[#5a3a2a] font-comfortaa" style={{ fontSize: 'clamp(0.6875rem, 0.7vw, 0.75rem)' }}>Background & Interests</Label>
                             <Textarea
                               id="biography"
+                              name="biography"
+                              autoComplete="off"
                               value={formData.biography}
                               onChange={(e) => handleInputChange("biography", e.target.value)}
                               placeholder={isTurnstileVerified ? "Share your interests, profession..." : "Please complete CAPTCHA verification first..."}
@@ -647,6 +744,8 @@ export function Header() {
                             <Label htmlFor="specialRequests" className="text-[#5a3a2a] font-comfortaa" style={{ fontSize: 'clamp(0.6875rem, 0.7vw, 0.75rem)' }}>Special Requests or Vision</Label>
                             <Textarea
                               id="specialRequests"
+                              name="specialRequests"
+                              autoComplete="off"
                               value={formData.specialRequests}
                               onChange={(e) => handleInputChange("specialRequests", e.target.value)}
                               placeholder={isTurnstileVerified ? "Describe your vision, special requirements..." : "Please complete CAPTCHA verification first..."}

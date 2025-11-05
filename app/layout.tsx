@@ -4,6 +4,7 @@ import { GoogleAnalytics } from '@next/third-parties/google'
 import { Toaster } from '@/components/ui/sonner'
 import { Header } from '@/components/Header'
 import { DisableServiceWorker } from '@/components/DisableServiceWorker'
+import { GlobalErrorHandler } from '@/components/GlobalErrorHandler'
 import { organizationStructuredData, websiteStructuredData, localBusinessStructuredData, eventStructuredData } from '@/lib/structured-data'
 import './globals.css'
 import { bodyFont, headingFont, uiFont, comfortaaFont, urbanistFont, acuminAlt } from '@/lib/fonts'
@@ -126,6 +127,7 @@ export default function RootLayout({
         >
           Skip to content
         </a>
+        <GlobalErrorHandler />
         <DisableServiceWorker />
         <Header />
         {children}

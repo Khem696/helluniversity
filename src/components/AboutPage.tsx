@@ -53,18 +53,6 @@ export function AboutPage() {
               </div>
             </div>
           </div>
-
-          <div className="flex gap-5 sm:gap-6 md:gap-8 mt-8 md:mt-0">
-            <button className="text-white hover:text-[#87CEEB] transition-colors">
-              <Facebook size={18} />
-            </button>
-            <button className="text-white hover:text-[#87CEEB] transition-colors">
-              <Twitter size={18} />
-            </button>
-            <button className="text-white hover:text-[#87CEEB] transition-colors">
-              <Instagram size={18} />
-            </button>
-          </div>
         </div>
       </div>
 
@@ -75,8 +63,8 @@ export function AboutPage() {
         />
 
         {/* Book positioned similar to hero portrait container */}
-        <div className="flex items-start 4xl:items-center justify-center min-[769px]:justify-center lg:justify-start px-4 sm:px-6 min-[769px]:px-8 lg:pl-0 lg:pr-12 3xl:pr-20 4xl:pr-28 5xl:pr-36 pt-10 min-[769px]:pt-12 lg:pt-52 3xl:pt-52 4xl:pt-0 5xl:pt-0 lg:pb-24 4xl:pb-0 5xl:pb-0 lg:h-full">
-          <div className="relative w-full max-w-[720px] max-[768px]:flex max-[768px]:justify-center max-[768px]:mx-auto min-[769px]:mx-auto min-[769px]:flex min-[769px]:justify-center lg:block lg:mx-0 4xl:pl-0 5xl:pl-1">
+        <div className="flex items-start max-[768px]:items-center 4xl:items-center justify-center min-[769px]:justify-center lg:justify-start px-4 sm:px-6 min-[769px]:px-8 lg:pl-0 lg:pr-12 3xl:pr-20 4xl:pr-28 5xl:pr-36 pt-10 min-[769px]:pt-12 lg:pt-52 3xl:pt-52 4xl:pt-0 5xl:pt-0 lg:pb-24 4xl:pb-0 5xl:pb-0 max-[768px]:h-full lg:h-full">
+          <div className="relative max-w-[720px] max-[768px]:flex max-[768px]:justify-center max-[768px]:mx-auto min-[769px]:mx-auto min-[769px]:flex min-[769px]:justify-center lg:block lg:mx-0 4xl:pl-0 5xl:pl-1">
             <PoemBook />
           </div>
         </div>
