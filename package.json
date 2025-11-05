@@ -4,11 +4,14 @@
   "private": true,
   "scripts": {
     "dev": "next dev",
-    "build": "next build",
+    "build": "npm run generate:manifest && next build",
+    "build:static": "node scripts/build-static.js",
+    "build:server": "cross-env STATIC_EXPORT=false next build",
+    "generate:manifest": "node scripts/generate-image-manifest.js",
     "start": "next start",
     "lint": "next lint",
-    "analyze": "ANALYZE=true next build",
-    "deploy": "npm run build && touch out/.nojekyll"
+    "analyze": "cross-env ANALYZE=true next build",
+    "deploy": "npm run build:static && touch out/.nojekyll"
   },
   "dependencies": {
     "@hookform/resolvers": "^5.2.2",
@@ -80,6 +83,7 @@
     "@types/react": "^19.2.2",
     "@types/react-dom": "^19.2.2",
     "autoprefixer": "^10.4.16",
+    "cross-env": "^10.1.0",
     "eslint": "^9.39.1",
     "eslint-config-next": "^16.0.1",
     "postcss": "^8.4.32",
