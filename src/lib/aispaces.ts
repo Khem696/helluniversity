@@ -1,22 +1,25 @@
-export const HONGSEE_IMAGES: string[] = [
-  "/aispaces/hongsee/1.jpg",
-  "/aispaces/hongsee/2.jpg",
-  "/aispaces/hongsee/3.jpg",
-  "/aispaces/hongsee/4.jpg",
-  "/aispaces/hongsee/5.jpg",
-];
+import { withBasePath } from "@/lib/utils";
 
-export const GALLERY_IMAGES: string[] = [
-  "/aispaces/gallery/1.jpg",
-  "/aispaces/gallery/2.jpg",
-  "/aispaces/gallery/3.jpg",
-  "/aispaces/gallery/4.jpg",
-  "/aispaces/gallery/5.jpg",
-];
+/**
+ * AI Space Generator Image Utilities
+ * 
+ * Helper functions for working with AI space generator images.
+ * Images are now discovered dynamically from the public/aispaces/studio/ directory
+ * via the /api/ai-space/images endpoint.
+ */
 
-export const ALL_ALLOWED_IMAGES: Set<string> = new Set([
-  ...HONGSEE_IMAGES,
-  ...GALLERY_IMAGES,
-]);
+/**
+ * Helper function to validate if an image path is from the studio directory
+ */
+export function isStudioImage(path: string): boolean {
+  return path.includes("/aispaces/studio/")
+}
+
+/**
+ * Helper function to get the studio directory path
+ */
+export function getStudioImagePath(filename: string): string {
+  return withBasePath(`/aispaces/studio/${filename}`)
+}
 
 
