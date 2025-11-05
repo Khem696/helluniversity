@@ -5,7 +5,7 @@ import { ChevronDown } from "lucide-react";
 import { ImageWithFallback } from "./figma/ImageWithFallback";
 import { withBasePath } from "@/lib/utils";
 import { ARTWORK_STUDIO_IMAGES, BUILDING_STUDIO_IMAGES, GALLERY_IMAGES_PUBLIC } from "@/lib/imageManifests";
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "./ui/dialog";
+import { Dialog, DialogTrigger, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "./ui/dialog";
 import {
   Carousel,
   CarouselContent,
@@ -14,6 +14,7 @@ import {
   CarouselPrevious,
   type CarouselApi,
 } from "./ui/carousel";
+import { AISpaceGenerator } from "./AISpaceGenerator";
 
 type Indices = { a: number; b: number; c: number };
 
@@ -122,6 +123,7 @@ export function StudioGalleryPage() {
   const [viewerIndex, setViewerIndex] = useState(0);
   const [viewerMode, setViewerMode] = useState<"studio" | "gallery">("studio");
   const [carouselApi, setCarouselApi] = useState<CarouselApi | null>(null);
+  const [aiSpaceGenOpen, setAiSpaceGenOpen] = useState(false);
 
   // Measure header blocks above each grid so tiles can grow to the largest
   // 16:9 size that still fits inside the stripe height.
@@ -380,13 +382,56 @@ export function StudioGalleryPage() {
           </div>
           {/* Action button under Studio grid */}
           <div className="mt-4 sm:mt-5 md:mt-6 flex justify-center">
-            <button
-              type="button"
-              aria-label="Tailor Your Desire"
-              className="font-comfortaa inline-flex items-center justify-center w-auto whitespace-nowrap rounded-full bg-[#5B9AB8] text-white px-5 sm:px-6 md:px-8 py-2 md:py-3 text-[clamp(1.00rem,3.2vw,1.25rem)] shadow-sm hover:bg-[#4d8ea7] focus:outline-hidden focus-visible:ring-2 focus-visible:ring-white/70 transition-colors"
-            >
-              Tailor Your Desire
-            </button>
+            <Dialog open={aiSpaceGenOpen} onOpenChange={setAiSpaceGenOpen}>
+              <DialogTrigger asChild>
+                <button
+                  type="button"
+                  aria-label="Tailor Your Desire"
+                  className="font-comfortaa inline-flex items-center justify-center w-auto whitespace-nowrap rounded-full bg-[#5B9AB8] text-white px-5 sm:px-6 md:px-8 py-2 md:py-3 text-[clamp(1.00rem,3.2vw,1.25rem)] shadow-sm hover:bg-[#4d8ea7] focus:outline-hidden focus-visible:ring-2 focus-visible:ring-white/70 transition-colors"
+                >
+                  Tailor Your Desire
+                </button>
+              </DialogTrigger>
+              <DialogContent className="top-0 left-0 translate-x-0 translate-y-0 w-full h-screen max-w-none sm:max-w-none rounded-none border-0 p-0 bg-transparent overflow-hidden">
+                <DialogHeader className="sr-only">
+                  <DialogTitle>AI Space Generator</DialogTitle>
+                  <DialogDescription>Generate AI spaces by selecting images and describing your decoration style</DialogDescription>
+                </DialogHeader>
+                <div className="relative h-full flex flex-col overflow-hidden">
+                  <div className="flex flex-col lg:flex-row h-full min-h-0">
+                    {/* Left Side - Hero-like panel */}
+                    <div className="w-full lg:w-1/2 bg-[#5B9AB8] flex flex-col justify-center xl:pl-12 2xl:pl-16 py-6 sm:py-8 md:py-10 lg:py-8 xl:py-10 shrink-0 overflow-y-auto">
+                      <div className="max-w-xl px-6 sm:px-8 md:px-10 lg:px-8 xl:px-10">
+                        <h1 className="mb-4 sm:mb-6 lg:mb-6 xl:mb-8 font-heading" style={{ fontSize: 'clamp(32px, 4vw, 56px)', fontWeight: '900', lineHeight: '0.9', color: '#5a3a2a' }}>
+                          Hell<br />University
+                        </h1>
+                        <h2 className="text-white mb-4 sm:mb-6 lg:mb-6 xl:mb-8 font-comfortaa" style={{ fontSize: 'clamp(20px, 2.5vw, 28px)', fontWeight: '400' }}>
+                          Tailor Your Desire
+                        </h2>
+                        <p className="text-white/90 font-comfortaa text-sm sm:text-base lg:text-sm xl:text-base leading-relaxed">
+                          Select images and describe your decoration style to generate AI-powered space designs.
+                        </p>
+                      </div>
+                    </div>
+
+                    {/* Right Side - Generator panel */}
+                    <div className="w-full lg:w-1/2 bg-[#f4f1ed] flex items-start lg:items-center justify-center min-h-0 overflow-y-auto lg:overflow-y-visible" style={{ padding: 'clamp(1rem, 1.2vw, 1.5rem) clamp(0.75rem, 1vw, 1.5rem)' }}>
+                      <div className="w-full max-w-xl lg:max-w-lg xl:max-w-xl bg-white/90 border rounded-lg shadow-lg" style={{ padding: 'clamp(0.75rem, 1vw, 1.5rem)' }}>
+                        <div style={{ marginBottom: 'clamp(0.5rem, 0.8vw, 1rem)' }}>
+                          <h3 className="text-[#5a3a2a] font-comfortaa mb-1" style={{ fontSize: 'clamp(1.125rem, 1.4vw, 1.25rem)', fontWeight: '700' }}>
+                            AI Space Generator
+                          </h3>
+                          <p className="text-[#5a3a2a]/70 font-comfortaa leading-tight" style={{ fontSize: 'clamp(0.6875rem, 0.75vw, 0.8125rem)', fontWeight: '300' }}>
+                            Select images and describe your decoration style.
+                          </p>
+                        </div>
+                        <AISpaceGenerator />
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </DialogContent>
+            </Dialog>
           </div>
           </div>
         </div>

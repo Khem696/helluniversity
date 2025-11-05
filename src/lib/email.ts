@@ -1,0 +1,602 @@
+import nodemailer, { type Transporter } from 'nodemailer'
+
+interface ReservationData {
+  name: string
+  email: string
+  phone: string
+  guests: string
+  eventType: string
+  date: string
+  introduction: string
+  biography: string
+  specialRequests: string
+}
+
+// Create reusable transporter
+let transporter: Transporter | null = null
+let transporterVerified = false
+
+/**
+ * Get or create the email transporter with connection verification
+ * Uses nodemailer v7 compatible configuration
+ */
+async function getTransporter(): Promise<Transporter> {
+  if (transporter && transporterVerified) {
+    return transporter
+  }
+
+  const config = {
+    host: process.env.SMTP_HOST || 'smtp.gmail.com',
+    port: parseInt(process.env.SMTP_PORT || '587'),
+    secure: process.env.SMTP_SECURE === 'true', // true for 465, false for other ports
+    auth: {
+      user: process.env.SMTP_USER || '',
+      pass: process.env.SMTP_PASSWORD || '',
+    },
+    // Connection timeout (milliseconds)
+    connectionTimeout: 10000,
+    // Socket timeout (milliseconds)
+    socketTimeout: 10000,
+    // Greeting timeout (milliseconds)
+    greetingTimeout: 5000,
+  }
+
+  // Validate required configuration
+  if (!config.auth?.user || !config.auth?.pass) {
+    throw new Error('SMTP credentials not configured. Please set SMTP_USER and SMTP_PASSWORD environment variables.')
+  }
+
+  transporter = nodemailer.createTransport(config)
+
+  // Verify transporter connection (nodemailer v7 best practice)
+  try {
+    await transporter.verify()
+    transporterVerified = true
+    console.log('SMTP connection verified successfully')
+  } catch (error) {
+    console.error('SMTP connection verification failed:', error)
+    // Don't throw here - allow retry on next attempt
+    transporterVerified = false
+    throw new Error(
+      `SMTP connection failed: ${error instanceof Error ? error.message : 'Unknown error'}. ` +
+      'Please check your SMTP configuration and credentials.'
+    )
+  }
+
+  return transporter
+}
+
+/**
+ * Reset transporter (useful for testing or reconfiguration)
+ */
+export function resetTransporter(): void {
+  transporter?.close()
+  transporter = null
+  transporterVerified = false
+}
+
+// Format event type for display
+function formatEventType(eventType: string): string {
+  const eventTypes: Record<string, string> = {
+    'reunion': 'Reunion',
+    'family-friends': 'Family & Friends',
+    'baby-shower': 'Baby Shower',
+    'engagement': 'Engagement',
+    'art-workshop': 'Art Workshop',
+    'painting-workshop': 'Painting Workshop',
+    'ceramics-workshop': 'Ceramics Workshop',
+    'brainstorming-session': 'Brainstorming Session',
+    'other': 'Other',
+  }
+  return eventTypes[eventType] || eventType
+}
+
+// Format date for display
+function formatDate(dateString: string): string {
+  try {
+    const date = new Date(dateString)
+    return date.toLocaleDateString('en-US', {
+      weekday: 'long',
+      year: 'numeric',
+      month: 'long',
+      day: 'numeric',
+    })
+  } catch {
+    return dateString
+  }
+}
+
+/**
+ * Sanitize HTML content to prevent XSS attacks
+ * Basic sanitization for email templates
+ */
+function sanitizeHTML(html: string): string {
+  return html
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#039;')
+}
+
+/**
+ * Sanitize user input for safe email content
+ */
+function sanitizeUserInput(input: string): string {
+  // Remove any potentially dangerous characters
+  return input
+    .replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi, '')
+    .replace(/javascript:/gi, '')
+    .replace(/on\w+\s*=/gi, '')
+    .trim()
+}
+
+// Generate HTML email template for admin notification
+function generateAdminEmailHTML(data: ReservationData): string {
+  const formattedDate = formatDate(data.date)
+  const formattedEventType = formatEventType(data.eventType)
+
+  return `
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <style>
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+      line-height: 1.6;
+      color: #333;
+      max-width: 600px;
+      margin: 0 auto;
+      padding: 20px;
+    }
+    .header {
+      background-color: #5B9AB8;
+      color: white;
+      padding: 20px;
+      border-radius: 8px 8px 0 0;
+    }
+    .content {
+      background-color: #f9f9f9;
+      padding: 30px;
+      border: 1px solid #e0e0e0;
+      border-top: none;
+      border-radius: 0 0 8px 8px;
+    }
+    .section {
+      margin-bottom: 25px;
+    }
+    .section-title {
+      font-size: 18px;
+      font-weight: 600;
+      color: #5a3a2a;
+      margin-bottom: 12px;
+      border-bottom: 2px solid #5B9AB8;
+      padding-bottom: 5px;
+    }
+    .field {
+      margin-bottom: 10px;
+    }
+    .field-label {
+      font-weight: 600;
+      color: #5a3a2a;
+      display: inline-block;
+      min-width: 140px;
+    }
+    .field-value {
+      color: #333;
+    }
+    .text-content {
+      background-color: white;
+      padding: 15px;
+      border-radius: 4px;
+      margin-top: 8px;
+      border-left: 3px solid #5B9AB8;
+    }
+    .footer {
+      margin-top: 30px;
+      padding-top: 20px;
+      border-top: 1px solid #e0e0e0;
+      font-size: 12px;
+      color: #666;
+      text-align: center;
+    }
+    .timestamp {
+      font-size: 12px;
+      color: #666;
+      margin-top: 20px;
+      font-style: italic;
+    }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <h1 style="margin: 0;">New Reservation Inquiry</h1>
+  </div>
+  <div class="content">
+    <div class="section">
+      <div class="section-title">Booking Details</div>
+      <div class="field">
+        <span class="field-label">Name:</span>
+        <span class="field-value">${sanitizeHTML(data.name)}</span>
+      </div>
+      <div class="field">
+        <span class="field-label">Email:</span>
+        <span class="field-value"><a href="mailto:${data.email}">${sanitizeHTML(data.email)}</a></span>
+      </div>
+      <div class="field">
+        <span class="field-label">Phone:</span>
+        <span class="field-value"><a href="tel:${data.phone}">${sanitizeHTML(data.phone)}</a></span>
+      </div>
+      <div class="field">
+        <span class="field-label">Number of Guests:</span>
+        <span class="field-value">${sanitizeHTML(data.guests)}</span>
+      </div>
+      <div class="field">
+        <span class="field-label">Event Type:</span>
+        <span class="field-value">${sanitizeHTML(formattedEventType)}</span>
+      </div>
+      <div class="field">
+        <span class="field-label">Desired Date:</span>
+        <span class="field-value">${sanitizeHTML(formattedDate)}</span>
+      </div>
+    </div>
+
+    <div class="section">
+      <div class="section-title">Guest Information</div>
+      <div class="field">
+        <span class="field-label">Introduction:</span>
+        <div class="text-content">${sanitizeUserInput(data.introduction).replace(/\n/g, '<br>')}</div>
+      </div>
+      ${data.biography ? `
+      <div class="field">
+        <span class="field-label">Background & Interests:</span>
+        <div class="text-content">${sanitizeUserInput(data.biography).replace(/\n/g, '<br>')}</div>
+      </div>
+      ` : ''}
+      ${data.specialRequests ? `
+      <div class="field">
+        <span class="field-label">Special Requests:</span>
+        <div class="text-content">${sanitizeUserInput(data.specialRequests).replace(/\n/g, '<br>')}</div>
+      </div>
+      ` : ''}
+    </div>
+
+    <div class="timestamp">
+      Received: ${new Date().toLocaleString('en-US', {
+        timeZone: 'UTC',
+        dateStyle: 'long',
+        timeStyle: 'long',
+      })}
+    </div>
+  </div>
+  <div class="footer">
+    <p>This email was automatically generated from the Hell University reservation form.</p>
+  </div>
+</body>
+</html>
+  `.trim()
+}
+
+// Generate plain text version for admin notification
+function generateAdminEmailText(data: ReservationData): string {
+  const formattedDate = formatDate(data.date)
+  const formattedEventType = formatEventType(data.eventType)
+
+  return `
+NEW RESERVATION INQUIRY - HELL UNIVERSITY
+
+BOOKING DETAILS:
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Name: ${data.name}
+Email: ${data.email}
+Phone: ${data.phone}
+Number of Guests: ${data.guests}
+Event Type: ${formattedEventType}
+Desired Date: ${formattedDate}
+
+GUEST INFORMATION:
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Introduction:
+${data.introduction}
+
+${data.biography ? `Background & Interests:\n${data.biography}\n\n` : ''}${data.specialRequests ? `Special Requests:\n${data.specialRequests}\n\n` : ''}
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Received: ${new Date().toLocaleString('en-US', {
+    timeZone: 'UTC',
+    dateStyle: 'long',
+    timeStyle: 'long',
+  })}
+  `.trim()
+}
+
+// Generate HTML email template for user auto-reply
+function generateUserEmailHTML(data: ReservationData): string {
+  const formattedDate = formatDate(data.date)
+  const formattedEventType = formatEventType(data.eventType)
+
+  return `
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <style>
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+      line-height: 1.6;
+      color: #333;
+      max-width: 600px;
+      margin: 0 auto;
+      padding: 20px;
+    }
+    .header {
+      background-color: #5B9AB8;
+      color: white;
+      padding: 20px;
+      border-radius: 8px 8px 0 0;
+      text-align: center;
+    }
+    .content {
+      background-color: #f9f9f9;
+      padding: 30px;
+      border: 1px solid #e0e0e0;
+      border-top: none;
+      border-radius: 0 0 8px 8px;
+    }
+    .summary {
+      background-color: white;
+      padding: 20px;
+      border-radius: 4px;
+      margin: 20px 0;
+      border-left: 3px solid #5B9AB8;
+    }
+    .summary-item {
+      margin-bottom: 10px;
+    }
+    .summary-label {
+      font-weight: 600;
+      color: #5a3a2a;
+    }
+    .footer {
+      margin-top: 30px;
+      padding-top: 20px;
+      border-top: 1px solid #e0e0e0;
+      text-align: center;
+      color: #666;
+      font-size: 14px;
+    }
+    .signature {
+      margin-top: 20px;
+      color: #5a3a2a;
+      font-weight: 600;
+    }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <h1 style="margin: 0;">Reservation Inquiry Received</h1>
+  </div>
+  <div class="content">
+    <p>Dear ${sanitizeHTML(data.name)},</p>
+    
+    <p>Thank you for your reservation inquiry with Hell University! We have received your request and our curation team will carefully review it.</p>
+    
+    <div class="summary">
+      <h3 style="margin-top: 0; color: #5a3a2a;">Your Inquiry Summary:</h3>
+      <div class="summary-item">
+        <span class="summary-label">Event Type:</span> ${formattedEventType}
+      </div>
+      <div class="summary-item">
+        <span class="summary-label">Desired Date:</span> ${formattedDate}
+      </div>
+      <div class="summary-item">
+        <span class="summary-label">Number of Guests:</span> ${data.guests}
+      </div>
+    </div>
+    
+    <p>We honor each request with thoughtful consideration and will respond within <strong>48 hours</strong> to discuss your vision and craft an extraordinary experience tailored to your unique sensibilities.</p>
+    
+    <p>If you have any urgent questions or need to modify your inquiry, please don't hesitate to contact us.</p>
+    
+    <div class="signature">
+      Best regards,<br>
+      The Hell University Team
+    </div>
+  </div>
+  <div class="footer">
+    <p>This is an automated confirmation email. Please do not reply to this message.</p>
+    <p style="margin-top: 10px;">
+      <a href="mailto:helluniversity.cm@gmail.com" style="color: #5B9AB8;">helluniversity.cm@gmail.com</a>
+    </p>
+  </div>
+</body>
+</html>
+  `.trim()
+}
+
+// Generate plain text version for user auto-reply
+function generateUserEmailText(data: ReservationData): string {
+  const formattedDate = formatDate(data.date)
+  const formattedEventType = formatEventType(data.eventType)
+
+  return `
+RESERVATION INQUIRY RECEIVED - HELL UNIVERSITY
+
+Dear ${data.name},
+
+Thank you for your reservation inquiry with Hell University! We have received your request and our curation team will carefully review it.
+
+YOUR INQUIRY SUMMARY:
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Event Type: ${formattedEventType}
+Desired Date: ${formattedDate}
+Number of Guests: ${data.guests}
+
+We honor each request with thoughtful consideration and will respond within 48 hours to discuss your vision and craft an extraordinary experience tailored to your unique sensibilities.
+
+If you have any urgent questions or need to modify your inquiry, please don't hesitate to contact us.
+
+Best regards,
+The Hell University Team
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+This is an automated confirmation email. Please do not reply to this message.
+For inquiries: helluniversity.cm@gmail.com
+  `.trim()
+}
+
+/**
+ * Send reservation notification email to admin
+ * Uses nodemailer v7 compatible API
+ */
+export async function sendAdminNotification(data: ReservationData): Promise<void> {
+  const recipientEmail = process.env.RESERVATION_EMAIL || process.env.SMTP_USER
+
+  if (!recipientEmail) {
+    throw new Error('RESERVATION_EMAIL or SMTP_USER not configured')
+  }
+
+  const formattedEventType = formatEventType(data.eventType)
+  const formattedDate = formatDate(data.date)
+
+  const mailOptions: nodemailer.SendMailOptions = {
+    from: `"Hell University Reservation System" <${process.env.SMTP_USER}>`,
+    to: recipientEmail,
+    replyTo: data.email,
+    subject: `New Reservation Inquiry - ${formattedEventType} - ${formattedDate}`,
+    text: generateAdminEmailText(data),
+    html: generateAdminEmailHTML(data),
+  }
+
+  const emailTransporter = await getTransporter()
+  const result = await emailTransporter.sendMail(mailOptions)
+  
+  // Log successful send (nodemailer v7 returns messageId)
+  console.log('Admin notification email sent:', result.messageId)
+}
+
+/**
+ * Send auto-reply confirmation email to user
+ * Uses nodemailer v7 compatible API
+ */
+export async function sendUserConfirmation(data: ReservationData): Promise<void> {
+  const mailOptions: nodemailer.SendMailOptions = {
+    from: `"Hell University" <${process.env.SMTP_USER}>`,
+    to: data.email,
+    subject: 'Reservation Inquiry Received - Hell University',
+    text: generateUserEmailText(data),
+    html: generateUserEmailHTML(data),
+  }
+
+  const emailTransporter = await getTransporter()
+  const result = await emailTransporter.sendMail(mailOptions)
+  
+  // Log successful send (nodemailer v7 returns messageId)
+  console.log('User confirmation email sent:', result.messageId)
+}
+
+/**
+ * Send both admin notification and user confirmation
+ * Returns success status and any errors
+ * Uses nodemailer v7 compatible error handling
+ */
+export async function sendReservationEmails(
+  data: ReservationData
+): Promise<{ adminSent: boolean; userSent: boolean; errors: string[] }> {
+  const errors: string[] = []
+  let adminSent = false
+  let userSent = false
+
+  // Send admin notification
+  try {
+    await sendAdminNotification(data)
+    adminSent = true
+  } catch (error) {
+    // Handle different types of errors
+    let errorMessage = 'Unknown error'
+    
+    if (error instanceof Error) {
+      errorMessage = error.message
+      
+      // Check for specific nodemailer error codes
+      if ('code' in error) {
+        const errorCode = (error as { code?: string }).code
+        if (errorCode === 'EAUTH') {
+          errorMessage = 'SMTP authentication failed. Please check your credentials.'
+        } else if (errorCode === 'ECONNECTION') {
+          errorMessage = 'SMTP connection failed. Please check your network and SMTP settings.'
+        } else if (errorCode === 'ETIMEDOUT') {
+          errorMessage = 'SMTP connection timeout. Please check your SMTP host and port.'
+        }
+      }
+    }
+    
+    errors.push(`Admin notification failed: ${errorMessage}`)
+    console.error('Failed to send admin notification:', error)
+    
+    // Reset transporter if connection failed (allows retry on next attempt)
+    if (errorMessage.includes('connection') || errorMessage.includes('SMTP')) {
+      resetTransporter()
+    }
+  }
+
+  // Send user confirmation
+  try {
+    await sendUserConfirmation(data)
+    userSent = true
+  } catch (error) {
+    // Handle different types of errors
+    let errorMessage = 'Unknown error'
+    
+    if (error instanceof Error) {
+      errorMessage = error.message
+      
+      // Check for specific nodemailer error codes
+      if ('code' in error) {
+        const errorCode = (error as { code?: string }).code
+        if (errorCode === 'EAUTH') {
+          errorMessage = 'SMTP authentication failed. Please check your credentials.'
+        } else if (errorCode === 'ECONNECTION') {
+          errorMessage = 'SMTP connection failed. Please check your network and SMTP settings.'
+        } else if (errorCode === 'ETIMEDOUT') {
+          errorMessage = 'SMTP connection timeout. Please check your SMTP host and port.'
+        }
+      }
+    }
+    
+    errors.push(`User confirmation failed: ${errorMessage}`)
+    console.error('Failed to send user confirmation:', error)
+    
+    // Reset transporter if connection failed (allows retry on next attempt)
+    if (errorMessage.includes('connection') || errorMessage.includes('SMTP')) {
+      resetTransporter()
+    }
+  }
+
+  return { adminSent, userSent, errors }
+}
+
+/**
+ * Verify email configuration
+ */
+export function verifyEmailConfig(): { valid: boolean; errors: string[] } {
+  const errors: string[] = []
+
+  if (!process.env.SMTP_HOST && !process.env.SMTP_USER) {
+    errors.push('SMTP configuration not found. Email sending will be disabled.')
+  }
+
+  if (process.env.SMTP_USER && !process.env.SMTP_PASSWORD) {
+    errors.push('SMTP_PASSWORD is required when SMTP_USER is set')
+  }
+
+  if (!process.env.RESERVATION_EMAIL && !process.env.SMTP_USER) {
+    errors.push('RESERVATION_EMAIL or SMTP_USER must be set')
+  }
+
+  return {
+    valid: errors.length === 0,
+    errors,
+  }
+}
+
