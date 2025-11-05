@@ -1,52 +1,25 @@
 import { withBasePath } from "@/lib/utils";
 
 /**
- * AI Space Generator Image Manifests
+ * AI Space Generator Image Utilities
  * 
- * These images are used as reference images for the AI Space Generator.
- * Images should be placed in the public/aispaces/ directory.
- * 
- * Directory Structure:
- * - public/aispaces/hongsee/ - Hongsee reference images (1.jpg, 2.jpg, etc.)
- * - public/aispaces/gallery/ - Gallery reference images (1.jpg, 2.jpg, etc.)
+ * Helper functions for working with AI space generator images.
+ * Images are now discovered dynamically from the public/aispaces/studio/ directory
+ * via the /api/ai-space/images endpoint.
  */
-
-export const HONGSEE_IMAGES: string[] = [
-  withBasePath("/aispaces/hongsee/1.jpg"),
-  withBasePath("/aispaces/hongsee/2.jpg"),
-  withBasePath("/aispaces/hongsee/3.jpg"),
-  withBasePath("/aispaces/hongsee/4.jpg"),
-  withBasePath("/aispaces/hongsee/5.jpg"),
-];
-
-export const GALLERY_IMAGES: string[] = [
-  withBasePath("/aispaces/gallery/1.jpg"),
-  withBasePath("/aispaces/gallery/2.jpg"),
-  withBasePath("/aispaces/gallery/3.jpg"),
-  withBasePath("/aispaces/gallery/4.jpg"),
-  withBasePath("/aispaces/gallery/5.jpg"),
-];
-
-export const ALL_ALLOWED_IMAGES: Set<string> = new Set([
-  ...HONGSEE_IMAGES,
-  ...GALLERY_IMAGES,
-]);
 
 /**
- * Helper function to get all available image categories
+ * Helper function to validate if an image path is from the studio directory
  */
-export function getImageCategories() {
-  return {
-    hongsee: HONGSEE_IMAGES,
-    gallery: GALLERY_IMAGES,
-  };
+export function isStudioImage(path: string): boolean {
+  return path.includes("/aispaces/studio/")
 }
 
 /**
- * Helper function to validate if an image path is allowed
+ * Helper function to get the studio directory path
  */
-export function isAllowedImage(path: string): boolean {
-  return ALL_ALLOWED_IMAGES.has(path);
+export function getStudioImagePath(filename: string): string {
+  return withBasePath(`/aispaces/studio/${filename}`)
 }
 
 
