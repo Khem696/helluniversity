@@ -10,7 +10,7 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Textarea } from "@/components/ui/textarea"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
-import { Calendar } from "@/components/ui/calendar"
+import { SimpleCalendar } from "@/components/ui/simple-calendar"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import { format } from "date-fns"
 import { withBasePath } from "@/lib/utils"
@@ -528,7 +528,7 @@ export function Header() {
                           )}
                         </div>
                       )}
-
+  
                       {/* Basic Information */}
                       <div style={{ display: 'flex', flexDirection: 'column', gap: 'clamp(0.375rem, 0.5vw, 0.5rem)' }}>
                         <h4 className="text-[#5a3a2a] font-comfortaa font-semibold" style={{ fontSize: 'clamp(0.75rem, 0.8vw, 0.875rem)' }}>Basic Information</h4>
@@ -672,12 +672,10 @@ export function Header() {
                                 </Button>
                               </PopoverTrigger>
                               <PopoverContent className="w-auto p-0" align="start">
-                                <Calendar
-                                  mode="single"
+                                <SimpleCalendar
                                   selected={selectedDate}
                                   onSelect={handleDateChange}
                                   disabled={(date) => date < new Date() || !isTurnstileVerified || process.env.NEXT_PUBLIC_USE_STATIC_IMAGES === '1'}
-                                  initialFocus
                                 />
                               </PopoverContent>
                             </Popover>
@@ -705,30 +703,20 @@ export function Header() {
                               tabIndex={-1}
                             >
                               <option value="">Select event type</option>
-                              <option value="reunion">Reunion</option>
-                              <option value="family-friends">Family & Friends</option>
-                              <option value="baby-shower">Baby Shower</option>
-                              <option value="engagement">Engagement</option>
-                              <option value="art-workshop">Art Workshop</option>
-                              <option value="painting-workshop">Painting Workshop</option>
-                              <option value="ceramics-workshop">Ceramics Workshop</option>
-                              <option value="brainstorming-session">Brainstorming Session</option>
-                              <option value="other">Other</option>
+                              <option value="Arts & Design Coaching Workshop">Arts & Design Coaching Workshop</option>
+                              <option value="Holiday Festive">Holiday Festive</option>
+                              <option value="Family Gathering">Family Gathering</option>
+                              <option value="Other">Other</option>
                             </select>
                             <Select value={formData.eventType} onValueChange={(value) => handleInputChange("eventType", value)} disabled={!isTurnstileVerified || process.env.NEXT_PUBLIC_USE_STATIC_IMAGES === '1'}>
                               <SelectTrigger id="eventType-visual" aria-labelledby="eventType-label" className={`font-comfortaa ${!isTurnstileVerified ? "opacity-50 cursor-not-allowed" : ""}`} style={{ fontSize: 'clamp(0.75rem, 0.8vw, 0.875rem)', height: 'clamp(2rem, 2.2vw, 2.25rem)' }}>
                                 <SelectValue placeholder="Select event type" />
                               </SelectTrigger>
                               <SelectContent>
-                                <SelectItem value="reunion">Reunion</SelectItem>
-                                <SelectItem value="family-friends">Family & Friends</SelectItem>
-                                <SelectItem value="baby-shower">Baby Shower</SelectItem>
-                                <SelectItem value="engagement">Engagement</SelectItem>
-                                <SelectItem value="art-workshop">Art Workshop</SelectItem>
-                                <SelectItem value="painting-workshop">Painting Workshop</SelectItem>
-                                <SelectItem value="ceramics-workshop">Ceramics Workshop</SelectItem>
-                                <SelectItem value="brainstorming-session">Brainstorming Session</SelectItem>
-                                <SelectItem value="other">Other</SelectItem>
+                                <SelectItem value="Arts & Design Coaching Workshop">Arts & Design Coaching Workshop</SelectItem>
+                                <SelectItem value="Holiday Festive">Holiday Festive</SelectItem>
+                                <SelectItem value="Family Gathering">Family Gathering</SelectItem>
+                                <SelectItem value="Other">Other</SelectItem>
                               </SelectContent>
                             </Select>
                           </div>
