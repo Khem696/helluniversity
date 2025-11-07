@@ -289,11 +289,14 @@ export function AISpaceGenerator() {
       
       // Proxy BFL delivery URLs through our API route for local development
       // This handles CORS and expiration issues
+      // Note: In static export mode (GitHub Pages), proxy won't work since API routes are unavailable
+      const useStaticImages = process.env.NEXT_PUBLIC_USE_STATIC_IMAGES === '1'
       generatedImages = generatedImages.map((url: string) => {
-        if (isBFLDeliveryUrl(url)) {
-          // Use proxy route in development, or if API routes are available
+        if (isBFLDeliveryUrl(url) && !useStaticImages) {
+          // Use proxy route in development/server mode, or if API routes are available
           return `/api/images/proxy?url=${encodeURIComponent(url)}`
         }
+        // In static mode, use BFL URLs directly (they may expire, but API proxy isn't available)
         return url
       })
       
@@ -377,12 +380,43 @@ export function AISpaceGenerator() {
   }, [isTurnstileVerified])
 
   // Fetch studio images dynamically on component mount
+  // Uses static manifest for GitHub Pages (static export) or API route for development/server
   useEffect(() => {
     async function fetchStudioImages() {
       try {
         setIsLoadingImages(true)
-        const response = await fetch("/api/ai-space/images")
-        const data = await response.json()
+        
+        // Check if we should use static manifest (GitHub Pages / static export)
+        const useStaticImages = process.env.NEXT_PUBLIC_USE_STATIC_IMAGES === '1'
+        
+        let data: { success: boolean; images?: string[]; error?: string }
+        
+        if (useStaticImages) {
+          // Load from static manifest file (generated at build time)
+          try {
+            const response = await fetch(withBasePath("/aispaces/studio-images.json"))
+            if (!response.ok) {
+              throw new Error(`Failed to load manifest: ${response.statusText}`)
+            }
+            data = await response.json()
+          } catch (error) {
+            console.error("Error loading static image manifest:", error)
+            // Fallback: try to load from API if available
+            try {
+              const apiResponse = await fetch("/api/ai-space/images")
+              data = await apiResponse.json()
+            } catch (apiError) {
+              throw new Error("Failed to load images from both static manifest and API")
+            }
+          }
+        } else {
+          // Use API route (development/server mode)
+          const response = await fetch("/api/ai-space/images")
+          if (!response.ok) {
+            throw new Error(`API request failed: ${response.statusText}`)
+          }
+          data = await response.json()
+        }
         
         if (data.success && data.images) {
           // Apply base path to each image URL

@@ -2,6 +2,8 @@
 
 This guide will help you deploy your Hell University website to GitHub Pages.
 
+**For detailed information about static vs. server deployment modes, see [GITHUB_PAGES_DEPLOYMENT.md](./GITHUB_PAGES_DEPLOYMENT.md)**
+
 ## Prerequisites
 
 1. A GitHub account

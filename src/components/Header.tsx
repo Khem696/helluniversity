@@ -37,7 +37,7 @@ interface StoredFormData {
 }
 
 interface FormError {
-  type: "network" | "validation" | "server" | "turnstile"
+  type: "network" | "validation" | "server" | "turnstile" | "static"
   message: string
   retryable?: boolean
 }
@@ -190,6 +190,19 @@ export function Header() {
     e.preventDefault()
     setError(null)
     
+    // Check if we're in static export mode (GitHub Pages)
+    const isStaticMode = process.env.NEXT_PUBLIC_USE_STATIC_IMAGES === '1'
+    
+    if (isStaticMode) {
+      // In static mode, API routes don't work - show helpful message
+      setError({
+        type: "static",
+        message: "Reservation form is not available on this static site. Please contact us directly via email or phone.",
+        retryable: false
+      })
+      return
+    }
+    
     // Validate Turnstile
     if (!isTurnstileVerified || !turnstileToken) {
       setError({
@@ -257,7 +270,10 @@ export function Header() {
       
       if (!response.ok) {
         // Handle different HTTP error status codes
-        if (response.status === 400) {
+        if (response.status === 404) {
+          // 404 likely means API route doesn't exist (static export mode)
+          throw new Error("Reservation form is not available on this static site. Please contact us directly via email or phone.")
+        } else if (response.status === 400) {
           throw new Error(data.error || "Invalid request. Please check your input and try again.")
         } else if (response.status === 401 || response.status === 403) {
           throw new Error("Authentication failed. Please refresh the page and try again.")
@@ -475,29 +491,43 @@ export function Header() {
                     </div>
 
                     <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: 'clamp(0.75rem, 0.9vw, 1rem)' }}>
-                      {/* Turnstile CAPTCHA - Must be verified before using the form */}
-                      <div style={{ display: 'flex', flexDirection: 'column', gap: 'clamp(0.375rem, 0.5vw, 0.5rem)', paddingBottom: 'clamp(0.375rem, 0.5vw, 0.5rem)', borderBottom: '1px solid rgb(229 231 235)' }}>
-                        <p className="text-[#5a3a2a]/70 font-comfortaa" style={{ fontSize: 'clamp(0.625rem, 0.7vw, 0.75rem)' }}>
-                          Please verify you're human before proceeding:
-                        </p>
-                        <div className="lg:scale-75 xl:scale-90 origin-left">
-                          <Turnstile
-                            key={turnstileKeyRef.current}
-                            onVerify={handleTurnstileVerify}
-                            onError={handleTurnstileError}
-                            onExpire={handleTurnstileExpire}
-                            size="compact"
-                          />
-                        </div>
-                        {!isTurnstileVerified && (
-                          <p className={`font-comfortaa italic ${error ? "text-orange-600 font-medium" : "text-[#5a3a2a]/60"}`} style={{ fontSize: 'clamp(0.625rem, 0.7vw, 0.75rem)' }}>
-                            {error 
-                              ? "⚠️ Please verify CAPTCHA again to retry submission"
-                              : "Complete verification to enable form fields"
-                            }
+                      {/* Static Mode Notice */}
+                      {process.env.NEXT_PUBLIC_USE_STATIC_IMAGES === '1' && (
+                        <div className="bg-yellow-50 border-2 border-yellow-300 rounded-lg p-3 mb-2">
+                          <p className="text-yellow-800 font-comfortaa text-sm font-medium mb-1">
+                            ⚠️ Reservation Form Unavailable
                           </p>
-                        )}
-                      </div>
+                          <p className="text-yellow-700 font-comfortaa text-xs">
+                            This static site doesn't support online reservations. Please contact us directly via email or phone to make a reservation.
+                          </p>
+                        </div>
+                      )}
+                      
+                      {/* Turnstile CAPTCHA - Must be verified before using the form */}
+                      {process.env.NEXT_PUBLIC_USE_STATIC_IMAGES !== '1' && (
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: 'clamp(0.375rem, 0.5vw, 0.5rem)', paddingBottom: 'clamp(0.375rem, 0.5vw, 0.5rem)', borderBottom: '1px solid rgb(229 231 235)' }}>
+                          <p className="text-[#5a3a2a]/70 font-comfortaa" style={{ fontSize: 'clamp(0.625rem, 0.7vw, 0.75rem)' }}>
+                            Please verify you're human before proceeding:
+                          </p>
+                          <div className="lg:scale-75 xl:scale-90 origin-left">
+                            <Turnstile
+                              key={turnstileKeyRef.current}
+                              onVerify={handleTurnstileVerify}
+                              onError={handleTurnstileError}
+                              onExpire={handleTurnstileExpire}
+                              size="compact"
+                            />
+                          </div>
+                          {!isTurnstileVerified && (
+                            <p className={`font-comfortaa italic ${error ? "text-orange-600 font-medium" : "text-[#5a3a2a]/60"}`} style={{ fontSize: 'clamp(0.625rem, 0.7vw, 0.75rem)' }}>
+                              {error 
+                                ? "⚠️ Please verify CAPTCHA again to retry submission"
+                                : "Complete verification to enable form fields"
+                              }
+                            </p>
+                          )}
+                        </div>
+                      )}
 
                       {/* Basic Information */}
                       <div style={{ display: 'flex', flexDirection: 'column', gap: 'clamp(0.375rem, 0.5vw, 0.5rem)' }}>
@@ -514,7 +544,7 @@ export function Header() {
                               value={formData.name}
                               onChange={(e) => handleInputChange("name", e.target.value)}
                               placeholder="Your full name"
-                              disabled={!isTurnstileVerified}
+                              disabled={!isTurnstileVerified || process.env.NEXT_PUBLIC_USE_STATIC_IMAGES === '1'}
                               className={`font-comfortaa ${!isTurnstileVerified ? "opacity-50 cursor-not-allowed bg-gray-100" : ""}`}
                               style={{ fontSize: 'clamp(0.75rem, 0.8vw, 0.875rem)', height: 'clamp(2rem, 2.2vw, 2.25rem)' }}
                             />
@@ -530,7 +560,7 @@ export function Header() {
                               value={formData.email}
                               onChange={(e) => handleInputChange("email", e.target.value)}
                               placeholder="your@email.com"
-                              disabled={!isTurnstileVerified}
+                              disabled={!isTurnstileVerified || process.env.NEXT_PUBLIC_USE_STATIC_IMAGES === '1'}
                               className={`font-comfortaa ${!isTurnstileVerified ? "opacity-50 cursor-not-allowed bg-gray-100" : ""}`}
                               style={{ fontSize: 'clamp(0.75rem, 0.8vw, 0.875rem)', height: 'clamp(2rem, 2.2vw, 2.25rem)' }}
                             />
@@ -546,7 +576,7 @@ export function Header() {
                               value={formData.phone}
                               onChange={(e) => handleInputChange("phone", e.target.value)}
                               placeholder="+1 (555) 123-4567"
-                              disabled={!isTurnstileVerified}
+                              disabled={!isTurnstileVerified || process.env.NEXT_PUBLIC_USE_STATIC_IMAGES === '1'}
                               className={`font-comfortaa ${!isTurnstileVerified ? "opacity-50 cursor-not-allowed bg-gray-100" : ""}`}
                               style={{ fontSize: 'clamp(0.75rem, 0.8vw, 0.875rem)', height: 'clamp(2rem, 2.2vw, 2.25rem)' }}
                             />
@@ -559,7 +589,7 @@ export function Header() {
                               name="guests"
                               value={formData.guests}
                               onChange={(e) => handleInputChange("guests", e.target.value)}
-                              disabled={!isTurnstileVerified}
+                              disabled={!isTurnstileVerified || process.env.NEXT_PUBLIC_USE_STATIC_IMAGES === '1'}
                               style={{ 
                                 position: 'absolute',
                                 width: '1px',
@@ -580,7 +610,7 @@ export function Header() {
                                 </option>
                               ))}
                             </select>
-                            <Select value={formData.guests} onValueChange={(value) => handleInputChange("guests", value)} disabled={!isTurnstileVerified}>
+                            <Select value={formData.guests} onValueChange={(value) => handleInputChange("guests", value)} disabled={!isTurnstileVerified || process.env.NEXT_PUBLIC_USE_STATIC_IMAGES === '1'}>
                               <SelectTrigger id="guests-visual" aria-labelledby="guests-label" className={`font-comfortaa ${!isTurnstileVerified ? "opacity-50 cursor-not-allowed" : ""}`} style={{ fontSize: 'clamp(0.75rem, 0.8vw, 0.875rem)', height: 'clamp(2rem, 2.2vw, 2.25rem)' }}>
                                 <SelectValue placeholder="Select guest count" />
                               </SelectTrigger>
@@ -613,7 +643,7 @@ export function Header() {
                                   handleDateChange(new Date(e.target.value))
                                 }
                               }}
-                              disabled={!isTurnstileVerified}
+                              disabled={!isTurnstileVerified || process.env.NEXT_PUBLIC_USE_STATIC_IMAGES === '1'}
                               style={{ 
                                 position: 'absolute',
                                 width: '1px',
@@ -633,7 +663,7 @@ export function Header() {
                                   id="desiredDate-visual"
                                   aria-labelledby="desiredDate-label"
                                   variant="outline"
-                                  disabled={!isTurnstileVerified}
+                                  disabled={!isTurnstileVerified || process.env.NEXT_PUBLIC_USE_STATIC_IMAGES === '1'}
                                   className={`w-full justify-start text-left font-normal font-comfortaa ${!isTurnstileVerified ? "opacity-50 cursor-not-allowed" : ""}`}
                                   style={{ fontSize: 'clamp(0.75rem, 0.8vw, 0.875rem)', height: 'clamp(2rem, 2.2vw, 2.25rem)' }}
                                 >
@@ -646,7 +676,7 @@ export function Header() {
                                   mode="single"
                                   selected={selectedDate}
                                   onSelect={handleDateChange}
-                                  disabled={(date) => date < new Date() || !isTurnstileVerified}
+                                  disabled={(date) => date < new Date() || !isTurnstileVerified || process.env.NEXT_PUBLIC_USE_STATIC_IMAGES === '1'}
                                   initialFocus
                                 />
                               </PopoverContent>
@@ -660,7 +690,7 @@ export function Header() {
                               name="eventType"
                               value={formData.eventType}
                               onChange={(e) => handleInputChange("eventType", e.target.value)}
-                              disabled={!isTurnstileVerified}
+                              disabled={!isTurnstileVerified || process.env.NEXT_PUBLIC_USE_STATIC_IMAGES === '1'}
                               style={{ 
                                 position: 'absolute',
                                 width: '1px',
@@ -685,7 +715,7 @@ export function Header() {
                               <option value="brainstorming-session">Brainstorming Session</option>
                               <option value="other">Other</option>
                             </select>
-                            <Select value={formData.eventType} onValueChange={(value) => handleInputChange("eventType", value)} disabled={!isTurnstileVerified}>
+                            <Select value={formData.eventType} onValueChange={(value) => handleInputChange("eventType", value)} disabled={!isTurnstileVerified || process.env.NEXT_PUBLIC_USE_STATIC_IMAGES === '1'}>
                               <SelectTrigger id="eventType-visual" aria-labelledby="eventType-label" className={`font-comfortaa ${!isTurnstileVerified ? "opacity-50 cursor-not-allowed" : ""}`} style={{ fontSize: 'clamp(0.75rem, 0.8vw, 0.875rem)', height: 'clamp(2rem, 2.2vw, 2.25rem)' }}>
                                 <SelectValue placeholder="Select event type" />
                               </SelectTrigger>
@@ -719,7 +749,7 @@ export function Header() {
                               value={formData.introduction}
                               onChange={(e) => handleInputChange("introduction", e.target.value)}
                               placeholder={isTurnstileVerified ? "Tell us a bit about yourself..." : "Please complete CAPTCHA verification first..."}
-                              disabled={!isTurnstileVerified}
+                              disabled={!isTurnstileVerified || process.env.NEXT_PUBLIC_USE_STATIC_IMAGES === '1'}
                               rows={2}
                               className={`font-comfortaa resize-none ${!isTurnstileVerified ? "opacity-50 cursor-not-allowed bg-gray-100" : ""}`}
                               style={{ fontSize: 'clamp(0.75rem, 0.8vw, 0.875rem)', minHeight: 'clamp(3rem, 3.5vw, 4rem)' }}
@@ -734,7 +764,7 @@ export function Header() {
                               value={formData.biography}
                               onChange={(e) => handleInputChange("biography", e.target.value)}
                               placeholder={isTurnstileVerified ? "Share your interests, profession..." : "Please complete CAPTCHA verification first..."}
-                              disabled={!isTurnstileVerified}
+                              disabled={!isTurnstileVerified || process.env.NEXT_PUBLIC_USE_STATIC_IMAGES === '1'}
                               rows={2}
                               className={`font-comfortaa resize-none ${!isTurnstileVerified ? "opacity-50 cursor-not-allowed bg-gray-100" : ""}`}
                               style={{ fontSize: 'clamp(0.75rem, 0.8vw, 0.875rem)', minHeight: 'clamp(3rem, 3.5vw, 4rem)' }}
@@ -749,7 +779,7 @@ export function Header() {
                               value={formData.specialRequests}
                               onChange={(e) => handleInputChange("specialRequests", e.target.value)}
                               placeholder={isTurnstileVerified ? "Describe your vision, special requirements..." : "Please complete CAPTCHA verification first..."}
-                              disabled={!isTurnstileVerified}
+                              disabled={!isTurnstileVerified || process.env.NEXT_PUBLIC_USE_STATIC_IMAGES === '1'}
                               rows={2}
                               className={`font-comfortaa resize-none ${!isTurnstileVerified ? "opacity-50 cursor-not-allowed bg-gray-100" : ""}`}
                               style={{ fontSize: 'clamp(0.75rem, 0.8vw, 0.875rem)', minHeight: 'clamp(3rem, 3.5vw, 4rem)' }}
@@ -768,6 +798,8 @@ export function Header() {
                               ? "bg-red-50 border-red-200 text-red-800"
                               : error.type === "turnstile"
                               ? "bg-orange-50 border-orange-200 text-orange-800"
+                              : error.type === "static"
+                              ? "bg-yellow-50 border-yellow-300 text-yellow-800"
                               : "bg-red-50 border-red-200 text-red-800"
                           }`}
                           style={{ fontSize: 'clamp(0.6875rem, 0.75vw, 0.8125rem)' }}
@@ -799,17 +831,23 @@ export function Header() {
                       <div className="flex flex-col items-center space-y-1.5 sm:space-y-2 lg:space-y-1 pt-2 sm:pt-2.5 lg:pt-1.5">
                         <Button
                           type="submit"
-                          disabled={!isTurnstileVerified || isSubmitting}
+                          disabled={!isTurnstileVerified || isSubmitting || process.env.NEXT_PUBLIC_USE_STATIC_IMAGES === '1'}
                           className="font-comfortaa bg-[#5B9AB8] hover:bg-[#4d8ea7] text-white disabled:opacity-50 disabled:cursor-not-allowed"
                           style={{ 
                             padding: 'clamp(0.5rem, 0.6vw, 0.75rem) clamp(1rem, 1.2vw, 1.5rem)',
                             fontSize: 'clamp(0.75rem, 0.85vw, 0.875rem)'
                           }}
                         >
-                          {isSubmitting ? "Submitting..." : "Submit Inquiry"}
+                          {process.env.NEXT_PUBLIC_USE_STATIC_IMAGES === '1' 
+                            ? "Form Unavailable" 
+                            : isSubmitting 
+                            ? "Submitting..." 
+                            : "Submit Inquiry"}
                         </Button>
                         <p className="text-[#5a3a2a]/70 text-center max-w-lg font-comfortaa leading-tight px-2" style={{ fontSize: 'clamp(0.5625rem, 0.6vw, 0.625rem)' }}>
-                          Your inquiry will be carefully reviewed by our curation team. We honor each request with thoughtful consideration and will respond within 48 hours.
+                          {process.env.NEXT_PUBLIC_USE_STATIC_IMAGES === '1'
+                            ? "Please contact us directly via email or phone to make a reservation."
+                            : "Your inquiry will be carefully reviewed by our curation team. We honor each request with thoughtful consideration and will respond within 48 hours."}
                         </p>
                       </div>
                     </form>

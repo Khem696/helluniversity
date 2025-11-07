@@ -1,3 +1,6 @@
+# Temporary API backup directory (used during static export builds)
+_api-backup/
+
 # Dependencies
 node_modules/
 npm-debug.log*
