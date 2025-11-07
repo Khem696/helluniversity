@@ -231,15 +231,15 @@ export function StudioGalleryPage() {
   // Using Tailwind responsive spacing utilities for vertical rhythm
 
   return (
-    <div className="min-h-vp lg:h-screen lg:overflow-hidden bg-[#7a2d28]">
+    <div className="min-h-vp lg:h-screen lg:overflow-y-auto lg:overflow-x-hidden bg-[#7a2d28]">
       {/* Section wrapper: limits background layers to the Studio/Gallery area only */}
       <section className="relative overflow-hidden pb-0">
         {/* Equal top spacer matching header height (Tailwind scale) */}
         {/* <div aria-hidden className="shrink-0 h-24 sm:h-28 md:h-32 lg:h-36" /> */}
 
         {/* Content block with backgrounds scoped to its height */}
-        <div className="lg:min-h-screen lg:grid lg:place-items-center py-[max(var(--header-h,0px),clamp(24px,6vh,96px))] lg:pt-[var(--header-h,0px)] lg:pb-[var(--header-h,0px)] lg:overflow-hidden">
-          <div className="relative isolate bg-[#42210b] overflow-hidden h-auto lg:min-h-[var(--stripe-h)] w-full lg:grid lg:place-items-center" style={{ ['--stripe-h' as any]: 'calc(100svh - (var(--header-h, 0px) + var(--header-h, 0px)))', ['--cta-h' as any]: 'clamp(3rem,5vh,6rem)' }}>
+        <div className="lg:h-screen lg:grid lg:place-items-center py-[max(var(--header-h,0px),clamp(24px,6vh,96px))] lg:pt-[calc(var(--header-h,0px)+3rem)] lg:pb-[var(--header-h,0px)] lg:overflow-y-auto lg:overflow-x-hidden">
+          <div className="relative isolate bg-[#42210b] overflow-hidden h-auto lg:min-h-[var(--stripe-h)] w-full lg:grid lg:place-items-center" style={{ ['--stripe-h' as any]: 'calc(100svh - (var(--header-h, 0px) + var(--header-h, 0px) + 3rem))', ['--cta-h' as any]: 'clamp(3rem,5vh,6rem)' }}>
 
           {/* Portrait layer (right-center), blended over darker red */}
           <div
@@ -259,7 +259,7 @@ export function StudioGalleryPage() {
       {/* Left Side - Studio */}
       <div className="@container/studio-left w-full lg:w-1/2 min-w-0 relative overflow-hidden" style={{ ['--block-h' as any]: `${leftBlockH}px` }}>
 
-        <div className="relative z-10 flex flex-col h-full px-4 sm:px-6 md:px-8 lg:px-10 pt-4 md:pt-6 lg:pt-8 pb-4 md:pb-6 lg:pb-8">
+        <div className="relative z-10 flex flex-col min-h-full px-4 sm:px-6 md:px-8 lg:px-10 pt-4 md:pt-6 lg:pt-8 pb-4 md:pb-6 lg:pb-8">
           <div ref={leftHeaderRef} className="flex flex-col items-center shrink-0 mb-3 md:mb-4 mt-3 md:mt-4 min-h-20 md:min-h-24 lg:min-h-28">
             <div className="bg-[#5B9AB8]/80 px-5 sm:px-6 md:px-8 py-2 md:py-3 rounded-full mb-3 sm:mb-4 md:mb-6">
               <h2 className="text-white font-comfortaa font-normal text-[clamp(1.25rem,2.2vw,1.75rem)]">
@@ -439,7 +439,7 @@ export function StudioGalleryPage() {
       {/* Right Side - Gallery */}
       <div className="@container/studio-right w-full lg:w-1/2 min-w-0 relative overflow-hidden" style={{ ['--block-h' as any]: `${rightBlockH}px` }}>
 
-        <div className="relative z-10 flex flex-col h-full px-4 sm:px-6 md:px-8 lg:px-10 pt-4 md:pt-6 lg:pt-8 pb-4 md:pb-6 lg:pb-8">
+        <div className="relative z-10 flex flex-col min-h-full px-4 sm:px-6 md:px-8 lg:px-10 pt-4 md:pt-6 lg:pt-8 pb-4 md:pb-6 lg:pb-8">
           <div ref={rightHeaderRef} className="flex flex-col items-center shrink-0 mb-3 md:mb-4 mt-3 md:mt-4 min-h-20 md:min-h-24 lg:min-h-28">
             <div className="bg-[#5B9AB8]/80 px-5 sm:px-6 md:px-8 py-2 md:py-3 rounded-full mb-3 sm:mb-4 md:mb-6">
               <h2 className="text-white font-comfortaa font-normal text-[clamp(1.25rem,2.2vw,1.75rem)]">

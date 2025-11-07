@@ -31,10 +31,12 @@ export function OverlayScrollbar() {
       const html = document.documentElement
       const windowHeight = window.innerHeight
       const documentHeight = html.scrollHeight
+      const documentClientHeight = html.clientHeight
       const scrollTop = html.scrollTop
       
-      // Calculate if page is scrollable
-      const isScrollable = documentHeight > windowHeight
+      // Calculate if page is scrollable - use scrollHeight > clientHeight for accurate check
+      // This is the standard way to detect if an element is scrollable
+      const isScrollable = documentHeight > documentClientHeight
       
       if (!isScrollable) {
         setScrollbarHeight(0)

@@ -167,79 +167,11 @@ html::-webkit-scrollbar {
   padding-bottom: var(--safe-area-bottom);
 }
 
-/* Enable vertical scrolling on desktop when content overflows */
-/* Target: Desktop screens (1024px to 1800px width) with small vertical height (<=990px) */
-/* This allows content to scroll when viewport height is limited */
 /* 
- * Hierarchy of containers affecting AboutPage scrolling:
- * 1. app/about/page.tsx wrapper: lg:h-[100dvh] lg:overflow-hidden
- * 2. AboutPage main container: lg:h-full
- * 3. Left side container: lg:min-h-[100dvh] lg:h-full lg:overflow-hidden
- * 4. Inner content div: h-full overflow-hidden
+ * Note: Components have been refactored to use flexible layouts (min-height instead of fixed height)
+ * This ensures content can grow naturally and scroll when needed without requiring CSS overrides.
+ * The previous workaround has been removed as the root cause has been fixed at the component level.
  */
-@media (min-width: 64rem) and (max-width: 112.5rem) and (max-height: 61.875rem) {
-  /* 
-   * Target 1: Page wrapper containers - allow growth beyond 100dvh
-   * Matches: div with "lg:h-screen" or height classes AND "lg:overflow-hidden"
-   * Example: app/about/page.tsx line 11
-   * Fix: Change from fixed height to min-height to allow content to expand
-   */
-  div[class*="lg:h-screen"][class*="lg:overflow-hidden"],
-  div[class*="lg:overflow-hidden"][class*="h-"] {
-    height: auto !important;
-    min-height: 100dvh !important;
-    overflow-y: auto !important;
-    overflow-x: hidden !important;
-  }
-  
-  /* 
-   * Target 2: AboutPage main container - allow growth
-   * Matches: div with "lg:h-full" and flex layout
-   * Example: AboutPage.tsx line 8
-   * Fix: Change from h-full to min-h-full to allow expansion
-   */
-  div[class*="lg:h-full"][class*="flex"][class*="lg:flex-row"] {
-    height: auto !important;
-    min-height: 100% !important;
-  }
-  
-  /* 
-   * Target 3: Left side container - allow growth and natural flow
-   * Matches: div with "lg:overflow-hidden" AND "lg:h-full" AND "lg:min-h"
-   * Example: AboutPage.tsx line 9 (left side)
-   * Fix: Allow container to grow beyond viewport height, remove overflow constraint
-   */
-  div[class*="lg:overflow-hidden"][class*="lg:h-full"][class*="lg:min-h"] {
-    height: auto !important;
-    min-height: 100dvh !important;
-    overflow-y: visible !important;
-    overflow-x: hidden !important;
-  }
-  
-  /* 
-   * Target 4: Inner content div - allow content to flow naturally
-   * Matches: div with "overflow-hidden" AND "h-full" AND flex-col (but not absolute)
-   * Example: AboutPage.tsx line 23 (inner content div)
-   * Fix: Remove height constraint, allow natural content flow
-   */
-  div[class*="overflow-hidden"][class*="h-full"][class*="flex-col"]:not([class*="absolute"]) {
-    height: auto !important;
-    min-height: 100% !important;
-    overflow-y: visible !important;
-    overflow-x: hidden !important;
-  }
-  
-  /* 
-   * Target 5: Right side container - ensure it matches left side height
-   * Matches: div with "lg:h-full" and "lg:min-h" but NOT "lg:overflow-hidden"
-   * Example: AboutPage.tsx line 59 (right side)
-   * Fix: Allow natural height growth
-   */
-  div[class*="lg:h-full"][class*="lg:min-h"]:not([class*="lg:overflow-hidden"]) {
-    height: auto !important;
-    min-height: 100dvh !important;
-  }
-}
 
 /* Small-device helpers (≤425px) */
 @media (max-width: 425px) {
