@@ -455,7 +455,7 @@ export function Header() {
                     </h2>
                     <nav className="grid grid-cols-2 gap-2 sm:gap-3 text-white/95">
                       <Link href="/" className="hover:text-white/80 transition-colors font-comfortaa text-sm sm:text-base" aria-label="Home">Home</Link>
-                      <Link href="/about" className="hover:text-white/80 transition-colors font-comfortaa text-sm sm:text-base" aria-label="About">About</Link>
+                      <Link href="/about" className="hover:text-white/80 transition-colors font-comfortaa text-sm sm:text-base" aria-label="About">HUStory</Link>
                       <Link href="/studio-gallery" className="hover:text-white/80 transition-colors font-comfortaa text-sm sm:text-base" aria-label="Studio & Gallery">Studio/Gallery</Link>
                       <Link href="/contact" className="hover:text-white/80 transition-colors font-comfortaa text-sm sm:text-base" aria-label="Contact">Contact</Link>
                     </nav>
@@ -834,7 +834,7 @@ export function Header() {
       {/* Bottom Row: Desktop Nav */}
       <nav className="hidden lg:flex items-center justify-center gap-8 lg:gap-14 xl:gap-16 max-w-none mx-auto mb-0 lg:mb-0">
         <Link href="/" className="transition-colors text-white hover:text-white font-comfortaa text-[clamp(18px,1.2vw,28px)] font-normal">Home</Link>
-        <Link href="/about" className="transition-colors text-white hover:text-white font-comfortaa text-[clamp(18px,1.2vw,28px)] font-normal">About</Link>
+        <Link href="/about" className="transition-colors text-white hover:text-white font-comfortaa text-[clamp(18px,1.2vw,28px)] font-normal">HUStory</Link>
         <Link href="/studio-gallery" className="transition-colors text-white hover:text-white font-comfortaa text-[clamp(18px,1.2vw,28px)] font-normal">Studio/Gallery</Link>
         <Link href="/contact" className="transition-colors text-white hover:text-white font-comfortaa text-[clamp(18px,1.2vw,28px)] font-normal">Contact</Link>
       </nav>
@@ -850,7 +850,7 @@ export function Header() {
               </div>
             </div>
             <Link href="/" onClick={() => setMobileMenuOpen(false)} className="transition-colors text-white/80 hover:text-white font-comfortaa" style={{ fontSize: '22px', fontWeight: '400' }}>Home</Link>
-            <Link href="/about" onClick={() => setMobileMenuOpen(false)} className="transition-colors text-white/80 hover:text-white font-comfortaa" style={{ fontSize: '22px', fontWeight: '400' }}>About</Link>
+            <Link href="/about" onClick={() => setMobileMenuOpen(false)} className="transition-colors text-white/80 hover:text-white font-comfortaa" style={{ fontSize: '22px', fontWeight: '400' }}>HUStory</Link>
             <Link href="/studio-gallery" onClick={() => setMobileMenuOpen(false)} className="transition-colors text-white/80 hover:text-white font-comfortaa" style={{ fontSize: '22px', fontWeight: '400' }}>Studio/Gallery</Link>
             <Link href="/contact" onClick={() => setMobileMenuOpen(false)} className="transition-colors text-white/80 hover:text-white font-comfortaa" style={{ fontSize: '22px', fontWeight: '400' }}>Contact</Link>
           </nav>

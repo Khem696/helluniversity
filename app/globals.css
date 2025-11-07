@@ -100,16 +100,20 @@
 html {
   overflow-x: hidden;
   width: 100%;
+  overflow-y: auto;
+  /* NO scrollbar-gutter - scrollbar will overlay on separate z-axis layer */
 }
 body {
   overflow-x: hidden; /* prevent any horizontal scroll entirely */
   max-width: 100%;
+  position: relative;
 }
 
 /* Use small viewport units to avoid mobile URL bar jumps */
 :root {
   --vh: 1svh;
   --safe-area-bottom: env(safe-area-inset-bottom, 0px);
+  --scrollbar-width: 0px; /* Updated by JavaScript - scrollbar width */
 }
 
 /* Robust viewport height helpers (prefer dvh, fall back to svh, then vh) */
@@ -134,6 +138,19 @@ img, picture, video, canvas {
 /* Prevent 100vw gaps due to scrollbar width */
 .no-horiz-overflow {
   overflow-x: clip;
+}
+
+/* Hide native scrollbar - custom overlay scrollbar will replace it */
+html {
+  /* Firefox - hide native scrollbar */
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+
+html::-webkit-scrollbar {
+  width: 0px;
+  background: transparent;
+  display: none;
 }
 
 /* Clamp body width on tiny devices to avoid fractional scrollbar */
