@@ -73,8 +73,7 @@ export async function GET(request: Request) {
       })
       .toFormat(format, {
         quality: quality,
-        mozjpeg: format === "jpeg", // Better JPEG compression
-        webp: format === "webp", // WebP optimization
+        ...(format === "jpeg" && { mozjpeg: true }), // Better JPEG compression
       })
       .toBuffer()
 
