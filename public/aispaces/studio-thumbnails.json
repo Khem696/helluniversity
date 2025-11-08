@@ -1,0 +1,21 @@
+{
+  "success": true,
+  "thumbnails": {
+    "/aispaces/studio/IMG_1067.JPG": "/aispaces/studio/thumbnails/IMG_1067.webp",
+    "/aispaces/studio/IMG_1086.JPG": "/aispaces/studio/thumbnails/IMG_1086.webp",
+    "/aispaces/studio/IMG_1091.JPG": "/aispaces/studio/thumbnails/IMG_1091.webp",
+    "/aispaces/studio/IMG_1105.JPG": "/aispaces/studio/thumbnails/IMG_1105.webp",
+    "/aispaces/studio/IMG_1111.JPG": "/aispaces/studio/thumbnails/IMG_1111.webp",
+    "/aispaces/studio/IMG_1165.JPG": "/aispaces/studio/thumbnails/IMG_1165.webp",
+    "/aispaces/studio/IMG_1181.JPG": "/aispaces/studio/thumbnails/IMG_1181.webp",
+    "/aispaces/studio/IMG_1197.JPG": "/aispaces/studio/thumbnails/IMG_1197.webp"
+  },
+  "count": 8,
+  "generatedAt": "2025-11-08T09:11:12.921Z",
+  "thumbnailSize": {
+    "width": 280,
+    "height": 280,
+    "quality": 80,
+    "format": "webp"
+  }
+}

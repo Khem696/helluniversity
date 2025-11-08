@@ -4,7 +4,7 @@ import { withBasePath } from "@/lib/utils";
 
 export function ContactPage() {
   return (
-    <div className="@container/contact flex flex-col lg:flex-row justify-center items-center lg:justify-center min-h-screen lg:min-h-screen lg:items-center overflow-hidden bg-[#3a3a3e] no-horiz-overflow pt-[calc(var(--header-h)+1rem)] pb-[clamp(3rem,6vw,5rem)] lg:py-0">
+    <div className="@container/contact flex flex-col lg:flex-row justify-center items-center lg:justify-center min-h-screen lg:h-screen lg:items-center overflow-y-auto overflow-x-hidden bg-[#3a3a3e] no-horiz-overflow pt-[calc(var(--header-h)+1rem)] pb-[clamp(3rem,6vw,5rem)] lg:py-0">
       {/* Left: artwork as full background (half width) */}
       <div className="w-full lg:w-1/2 relative overflow-hidden lg:flex lg:items-start lg:justify-center">
           <div className="w-[clamp(18rem,90vw,44rem)] lg:w-[clamp(18rem,46vw,48rem)] mx-auto -translate-y-[clamp(0rem,2vw,1rem)] lg:translate-y-0">
@@ -22,14 +22,14 @@ export function ContactPage() {
 
       {/* Right: contact content segment (half width) */}
       <div className="w-full lg:w-1/2 relative">
-          <div className="w-11/12 max-w-3xl xl:max-w-none px-[clamp(1rem,3vw,4rem)] py-[clamp(2.5rem,6vw,6rem)] mx-auto -translate-y-[clamp(0rem,2vw,1rem)] lg:translate-y-0">
+          <div className="w-11/12 max-w-3xl xl:max-w-none px-[clamp(1rem,3vw,4rem)] py-[clamp(1.5rem,4vw,3rem)] mx-auto -translate-y-[clamp(0rem,2vw,1rem)] lg:translate-y-0">
             <div className="max-w-md">
-              <h1 className="text-[#87CEEB] mb-[clamp(0.75rem,2vw,1.5rem)] font-comfortaa font-bold tracking-wider text-[clamp(2.25rem,6vw,5rem)] @min-[80rem]/contact:text-[clamp(4rem,7vw,7rem)] 3xl:tracking-[0.2em] 4xl:tracking-[0.25em] 5xl:tracking-[0.3em]">
+              <h1 className="text-[#87CEEB] mb-[clamp(0.5rem,1.5vw,1rem)] font-comfortaa font-bold tracking-wider text-[clamp(1.5rem,4vw,3rem)] @min-[80rem]/contact:text-[clamp(2.5rem,5vw,4rem)] 3xl:tracking-[0.2em] 4xl:tracking-[0.25em] 5xl:tracking-[0.3em]">
               CONTACT
             </h1>
 
               {/* Location Link */}
-              <div className="mb-6">
+              <div className="mb-4">
                 <a 
                   href="https://maps.app.goo.gl/gnW3rP7SsAdhd2ft9?g_st=ipc" 
                   target="_blank" 
@@ -42,7 +42,7 @@ export function ContactPage() {
               </div>
 
               {/* QR Code */}
-              <div className="mb-[clamp(2rem,4vw,3rem)]">
+              <div className="mb-[clamp(1.5rem,3vw,2.5rem)]">
                 <ImageWithFallback
                   src={withBasePath('/assets/qrcode/location.jpg')}
                   alt="Location QR Code"
@@ -53,7 +53,7 @@ export function ContactPage() {
                 />
               </div>
 
-              <div className="space-y-4 mb-[clamp(2.5rem,5vw,4rem)]">
+              <div className="space-y-4 mb-[clamp(1.5rem,3vw,2.5rem)]">
                 {/* <p className="text-white/80 font-light text-[clamp(1rem,1.1vw,1.125rem)]">
                 Text.
               </p>
@@ -66,7 +66,7 @@ export function ContactPage() {
               </div> */}
             </div>
 
-            <div className="flex gap-[clamp(1rem,2vw,2rem)] mb-[clamp(2rem,4vw,3rem)]">
+            <div className="flex gap-[clamp(1rem,2vw,2rem)] mb-[clamp(1.5rem,3vw,2.5rem)]">
               <a 
                 href="https://www.facebook.com/kadejavanalikhikara" 
                 target="_blank" 

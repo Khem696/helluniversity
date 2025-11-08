@@ -214,6 +214,8 @@ export function StudioGalleryPage() {
   const renderGallerySlice = (key: string, colPct: number, rowPct: number) => {
     const curSrc = galleryImages[galleryCurrent] || "";
     const nextSrc = galleryNextIndex !== null ? galleryImages[galleryNextIndex] : curSrc;
+    
+    // Use fixed scale that works well for jigsaw effect
     return (
       <button
         key={key}
@@ -222,8 +224,8 @@ export function StudioGalleryPage() {
         className="relative aspect-[16/9] overflow-hidden focus:outline-hidden"
         aria-label="Open gallery image viewer"
       >
-        {tileLayer(key, "current", galleryShowNext ? "opacity-0" : "opacity-100", makeBgStyle(curSrc, "290% 290%", `${colPct}% ${rowPct}%`))}
-        {tileLayer(key, "next", galleryShowNext ? "opacity-100" : "opacity-0", makeBgStyle(nextSrc, "290% 290%", `${colPct}% ${rowPct}%`))}
+        {tileLayer(key, "current", galleryShowNext ? "opacity-0" : "opacity-100", makeBgStyle(curSrc, "300% 300%", `${colPct}% ${rowPct}%`))}
+        {tileLayer(key, "next", galleryShowNext ? "opacity-100" : "opacity-0", makeBgStyle(nextSrc, "300% 300%", `${colPct}% ${rowPct}%`))}
       </button>
     );
   };
@@ -231,15 +233,15 @@ export function StudioGalleryPage() {
   // Using Tailwind responsive spacing utilities for vertical rhythm
 
   return (
-    <div className="min-h-vp lg:h-screen lg:overflow-hidden bg-[#7a2d28]">
+    <div className="min-h-vp lg:h-screen lg:overflow-y-auto lg:overflow-x-hidden bg-[#7a2d28]">
       {/* Section wrapper: limits background layers to the Studio/Gallery area only */}
       <section className="relative overflow-hidden pb-0">
         {/* Equal top spacer matching header height (Tailwind scale) */}
         {/* <div aria-hidden className="shrink-0 h-24 sm:h-28 md:h-32 lg:h-36" /> */}
 
         {/* Content block with backgrounds scoped to its height */}
-        <div className="lg:min-h-screen lg:grid lg:place-items-center py-[max(var(--header-h,0px),clamp(24px,6vh,96px))] lg:pt-[var(--header-h,0px)] lg:pb-[var(--header-h,0px)] lg:overflow-hidden">
-          <div className="relative isolate bg-[#42210b] overflow-hidden h-auto lg:min-h-[var(--stripe-h)] w-full lg:grid lg:place-items-center" style={{ ['--stripe-h' as any]: 'calc(100svh - (var(--header-h, 0px) + var(--header-h, 0px)))', ['--cta-h' as any]: 'clamp(3rem,5vh,6rem)' }}>
+        <div className="lg:h-screen lg:grid lg:place-items-center py-[max(var(--header-h,0px),clamp(24px,6vh,96px))] lg:pt-[calc(var(--header-h,0px)+3rem)] lg:pb-[var(--header-h,0px)] lg:overflow-y-auto lg:overflow-x-hidden">
+          <div className="relative isolate bg-[#42210b] overflow-hidden h-auto lg:min-h-[var(--stripe-h)] w-full lg:grid lg:place-items-center" style={{ ['--stripe-h' as any]: 'calc(100svh - (var(--header-h, 0px) + var(--header-h, 0px) + 3rem))', ['--cta-h' as any]: 'clamp(3rem,5vh,6rem)' }}>
 
           {/* Portrait layer (right-center), blended over darker red */}
           <div
@@ -259,7 +261,7 @@ export function StudioGalleryPage() {
       {/* Left Side - Studio */}
       <div className="@container/studio-left w-full lg:w-1/2 min-w-0 relative overflow-hidden" style={{ ['--block-h' as any]: `${leftBlockH}px` }}>
 
-        <div className="relative z-10 flex flex-col h-full px-4 sm:px-6 md:px-8 lg:px-10 pt-4 md:pt-6 lg:pt-8 pb-4 md:pb-6 lg:pb-8">
+        <div className="relative z-10 flex flex-col min-h-full px-4 sm:px-6 md:px-8 lg:px-10 pt-4 md:pt-6 lg:pt-8 pb-4 md:pb-6 lg:pb-8">
           <div ref={leftHeaderRef} className="flex flex-col items-center shrink-0 mb-3 md:mb-4 mt-3 md:mt-4 min-h-20 md:min-h-24 lg:min-h-28">
             <div className="bg-[#5B9AB8]/80 px-5 sm:px-6 md:px-8 py-2 md:py-3 rounded-full mb-3 sm:mb-4 md:mb-6">
               <h2 className="text-white font-comfortaa font-normal text-[clamp(1.25rem,2.2vw,1.75rem)]">
@@ -400,12 +402,17 @@ export function StudioGalleryPage() {
                 <div className="relative h-full flex flex-col overflow-hidden">
                   <div className="flex flex-col lg:flex-row h-full min-h-0">
                     {/* Left Side - Hero-like panel */}
-                    <div className="w-full lg:w-1/2 bg-[#5B9AB8] flex flex-col justify-center xl:pl-12 2xl:pl-16 py-6 sm:py-8 md:py-10 lg:py-8 xl:py-10 shrink-0 overflow-y-auto">
-                      <div className="max-w-xl px-6 sm:px-8 md:px-10 lg:px-8 xl:px-10">
-                        <h1 className="mb-4 sm:mb-6 lg:mb-6 xl:mb-8 font-heading" style={{ fontSize: 'clamp(32px, 4vw, 56px)', fontWeight: '900', lineHeight: '0.9', color: '#5a3a2a' }}>
-                          Hell<br />University
-                        </h1>
-                        <h2 className="text-white mb-4 sm:mb-6 lg:mb-6 xl:mb-8 font-comfortaa" style={{ fontSize: 'clamp(20px, 2.5vw, 28px)', fontWeight: '400' }}>
+                    <div className="w-full lg:w-[25%] bg-[#5B9AB8] flex flex-col justify-center py-6 sm:py-8 md:py-10 lg:py-6 xl:py-8 shrink-0 overflow-y-auto">
+                      <div className="px-6 sm:px-8 md:px-10 lg:px-5 xl:px-6">
+                        <div className="mb-4 sm:mb-6 lg:mb-4 xl:mb-6">
+                          <div className="mb-3 sm:mb-4">
+                            <img src={withBasePath('/assets/icons/icon_helluniversity.svg')} alt="Hell University" width={96} height={96} className="w-10 h-10 sm:w-11 sm:h-11 md:w-12 md:h-12 lg:w-16 lg:h-16 3xl:w-[4.5rem] 3xl:h-[4.5rem] 4xl:w-[5rem] 4xl:h-[5rem] 5xl:w-[6rem] 5xl:h-[6rem]" />
+                          </div>
+                          <h1 className="font-heading" style={{ fontSize: 'clamp(32px, 4vw, 56px)', fontWeight: '900', lineHeight: '0.9', color: '#5a3a2a' }}>
+                            Hell<br />University
+                          </h1>
+                        </div>
+                        <h2 className="text-white mb-4 sm:mb-6 lg:mb-4 xl:mb-6 font-comfortaa" style={{ fontSize: 'clamp(20px, 2.5vw, 28px)', fontWeight: '400' }}>
                           Tailor Your Desire
                         </h2>
                         <p className="text-white/90 font-comfortaa text-sm sm:text-base lg:text-sm xl:text-base leading-relaxed">
@@ -415,9 +422,9 @@ export function StudioGalleryPage() {
                     </div>
 
                     {/* Right Side - Generator panel */}
-                    <div className="w-full lg:w-1/2 bg-[#f4f1ed] flex items-start lg:items-center justify-center min-h-0 overflow-y-auto lg:overflow-y-visible" style={{ padding: 'clamp(1rem, 1.2vw, 1.5rem) clamp(0.75rem, 1vw, 1.5rem)' }}>
-                      <div className="w-full max-w-xl lg:max-w-lg xl:max-w-xl bg-white/90 border rounded-lg shadow-lg" style={{ padding: 'clamp(0.75rem, 1vw, 1.5rem)' }}>
-                        <div style={{ marginBottom: 'clamp(0.5rem, 0.8vw, 1rem)' }}>
+                    <div className="w-full lg:w-[75%] bg-[#f4f1ed] flex items-center justify-center min-h-0 overflow-y-auto" style={{ padding: 'clamp(0.5rem, 0.8vw, 1rem) clamp(0.5rem, 0.8vw, 1rem)' }}>
+                      <div className="w-full max-w-xl lg:max-w-5xl xl:max-w-6xl 2xl:max-w-7xl bg-white/90 border rounded-lg shadow-lg h-full lg:h-auto lg:max-h-[95vh] flex flex-col" style={{ padding: 'clamp(0.75rem, 1vw, 1.5rem)' }}>
+                        <div style={{ marginBottom: 'clamp(0.375rem, 0.6vw, 0.75rem)', flexShrink: 0 }}>
                           <h3 className="text-[#5a3a2a] font-comfortaa mb-1" style={{ fontSize: 'clamp(1.125rem, 1.4vw, 1.25rem)', fontWeight: '700' }}>
                             AI Space Generator
                           </h3>
@@ -425,7 +432,9 @@ export function StudioGalleryPage() {
                             Select images and describe your decoration style.
                           </p>
                         </div>
-                        <AISpaceGenerator />
+                        <div className="flex-1 overflow-y-auto">
+                          <AISpaceGenerator />
+                        </div>
                       </div>
                     </div>
                   </div>
@@ -439,7 +448,7 @@ export function StudioGalleryPage() {
       {/* Right Side - Gallery */}
       <div className="@container/studio-right w-full lg:w-1/2 min-w-0 relative overflow-hidden" style={{ ['--block-h' as any]: `${rightBlockH}px` }}>
 
-        <div className="relative z-10 flex flex-col h-full px-4 sm:px-6 md:px-8 lg:px-10 pt-4 md:pt-6 lg:pt-8 pb-4 md:pb-6 lg:pb-8">
+        <div className="relative z-10 flex flex-col min-h-full px-4 sm:px-6 md:px-8 lg:px-10 pt-4 md:pt-6 lg:pt-8 pb-4 md:pb-6 lg:pb-8">
           <div ref={rightHeaderRef} className="flex flex-col items-center shrink-0 mb-3 md:mb-4 mt-3 md:mt-4 min-h-20 md:min-h-24 lg:min-h-28">
             <div className="bg-[#5B9AB8]/80 px-5 sm:px-6 md:px-8 py-2 md:py-3 rounded-full mb-3 sm:mb-4 md:mb-6">
               <h2 className="text-white font-comfortaa font-normal text-[clamp(1.25rem,2.2vw,1.75rem)]">
