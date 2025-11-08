@@ -8,24 +8,24 @@ export function Hero() {
     <section className="relative min-h-vp lg:h-[100dvh] overflow-visible no-horiz-overflow">
       <div className="flex flex-col lg:flex-row lg:items-stretch h-full">
         {/* Left Side - Blue */}
-        <div className="w-full lg:w-1/2 min-w-0 bg-[#3e82bb] flex flex-col justify-start 4xl:justify-center 5xl:justify-center pl-6 sm:pl-6 min-[769px]:pl-8 lg:pl-10 xl:pl-32 3xl:pl-40 4xl:pl-56 5xl:pl-72 pt-[calc(var(--header-h)+1rem)] lg:pt-[calc(var(--header-h)+3rem)] 4xl:pt-0 pb-[clamp(2rem,8vh,5rem)] lg:pb-[clamp(3rem,10vh,6rem)] 4xl:pb-0">
-          <div className="pl-0 pr-3 sm:pr-4 min-[769px]:pr-6 lg:pr-8 xl:pr-0 w-full max-w-[44rem] 3xl:max-w-[50rem] 4xl:max-w-[56rem] 5xl:max-w-[62rem]">
+        <div className="w-full lg:w-1/2 min-w-0 bg-[#3e82bb] flex flex-col justify-start 4xl:justify-center 5xl:justify-center pl-6 sm:pl-6 min-[769px]:pl-8 lg:pl-10 xl:pl-32 3xl:pl-40 4xl:pl-56 5xl:pl-72 pt-[calc(var(--header-h)+1rem)] lg:pt-[calc(var(--header-h)+3rem)] 4xl:pt-0 pb-[clamp(2rem,8vh,5rem)] lg:pb-[clamp(3rem,10vh,6rem)] 4xl:pb-0 relative lg:h-full">
+          <div className="pl-0 pr-3 sm:pr-4 min-[769px]:pr-6 lg:pr-8 xl:pr-0 w-full max-w-[44rem] 3xl:max-w-[50rem] 4xl:max-w-[56rem] 5xl:max-w-[62rem] lg:max-h-[65vh]">
             {/* Main Title */}
-            <h1 className="mb-8 md:mb-10 lg:mb-12 font-acumin text-[clamp(48px,7.5vw,132px)] lg:text-[clamp(44px,6vw,112px)] font-black leading-[0.9] text-[#42210b]">
+            <h1 className="mb-8 md:mb-10 lg:mb-12 font-acumin text-[clamp(48px,max(7.5vw,7.5vh),132px)] lg:text-[clamp(44px,max(5vw,5vh),96px)] font-black leading-[0.9] text-[#42210b]">
               Hell<br />University
             </h1>
 
             {/* Culture House */}
-            <h2 className="text-white mb-10 sm:mb-12 lg:mb-16 font-urbanist text-[clamp(30px,5.5vw,72px)] lg:text-[clamp(28px,4.5vw,56px)] font-extrabold leading-[1.2]">
+            <h2 className="text-white mb-10 sm:mb-12 lg:mb-16 font-urbanist text-[clamp(30px,max(5.5vw,5.5vh),72px)] lg:text-[clamp(28px,max(4vw,4vh),56px)] font-extrabold leading-[1.2]">
               Culture Hub
             </h2>
 
             {/* Studio Section */}
             <div className="mb-8 lg:mb-12">
-              <h3 className="text-white mb-4 font-comfortaa text-[clamp(28px,4.5vw,48px)] lg:text-[clamp(24px,3.5vw,40px)] font-normal">
+              <h3 className="text-white mb-4 font-comfortaa text-[clamp(28px,max(4.5vw,4.5vh),48px)] lg:text-[clamp(24px,max(3vw,3vh),36px)] font-normal">
                 Studio
               </h3>
-              <p className="text-white/90 font-comfortaa text-[clamp(14px,1vw,18px)] font-light leading-[1.6]">
+              <p className="text-white/90 font-comfortaa text-[clamp(14px,max(1vw,1.5vh),18px)] font-light leading-[1.6]">
                 Hongsee Culture House is a creative hub<br />
                 for cultural events and the artistic community.
               </p>
@@ -33,10 +33,10 @@ export function Hero() {
 
             {/* Gallery Section */}
             <div>
-              <h3 className="text-white mb-4 font-comfortaa text-[clamp(28px,4.5vw,48px)] lg:text-[clamp(24px,3.5vw,40px)] font-normal">
+              <h3 className="text-white mb-4 font-comfortaa text-[clamp(28px,max(4.5vw,4.5vh),48px)] lg:text-[clamp(24px,max(3vw,3vh),36px)] font-normal">
                 Gallery
               </h3>
-              <p className="text-white/90 font-comfortaa text-[clamp(14px,1vw,18px)] font-light leading-[1.6]">
+              <p className="text-white/90 font-comfortaa text-[clamp(14px,max(1vw,1.5vh),18px)] font-light leading-[1.6]">
                 Hell University, an archive and gallery<br />
                 dedicated to research and education.
               </p>
@@ -87,12 +87,12 @@ export function Hero() {
           </div>
 
           {/* Social Icons */}
-          <div className="absolute bottom-3 sm:bottom-5 min-[769px]:bottom-10 right-2 sm:right-4 min-[769px]:right-6 lg:right-12 3xl:right-16 4xl:right-24 5xl:right-32 flex flex-row min-[769px]:flex-col gap-3 sm:gap-4 min-[769px]:gap-6">
+          <div className="absolute bottom-3 sm:bottom-5 min-[769px]:bottom-10 right-2 sm:right-4 min-[769px]:right-6 lg:right-12 3xl:right-16 4xl:right-24 5xl:right-32 flex flex-row min-[769px]:flex-col gap-3 sm:gap-4 min-[769px]:gap-6 z-30">
             <a 
               href="https://www.facebook.com/kadejavanalikhikara" 
               target="_blank" 
               rel="noopener noreferrer"
-              className="inline-flex items-center gap-2 text-white hover:text-[#D4AF37] transition-colors"
+              className="inline-flex items-center gap-2 text-white hover:text-[#D4AF37] transition-colors cursor-pointer"
             >
               <Facebook size={18} className="flex-shrink-0" />
               <span className="text-[clamp(12px,1vw,16px)]">Kade Javanalikikorn</span>

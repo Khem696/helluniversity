@@ -49,17 +49,22 @@ process.on('exit', (code) => {
 // Run build process
 console.log('🚀 Starting static export build...\n')
 
-// Step 1: Generate manifest
+// Step 1: Generate thumbnails
+if (!runCommand('npm run generate:thumbnails', 'Generating image thumbnails')) {
+  process.exit(1)
+}
+
+// Step 2: Generate manifest
 if (!runCommand('npm run generate:manifest', 'Generating image manifest')) {
   process.exit(1)
 }
 
-// Step 2: Move API routes
+// Step 3: Move API routes
 if (!runCommand(`node "${API_HANDLER}" move`, 'Moving API routes')) {
   process.exit(1)
 }
 
-// Step 3: Build static export
+// Step 4: Build static export
 let buildSuccess = false
 try {
   // Inherit environment variables (including NODE_ENV and STATIC_EXPORT from GitHub Actions)
@@ -78,7 +83,7 @@ try {
   buildSuccess = false
 }
 
-// Step 4: Always restore API routes (even if build failed)
+// Step 5: Always restore API routes (even if build failed)
 if (!runCommand(`node "${API_HANDLER}" restore`, 'Restoring API routes')) {
   console.error('\n⚠ Warning: Failed to restore API routes automatically')
   console.error('  Please run manually: node scripts/api-routes-handler.js restore')

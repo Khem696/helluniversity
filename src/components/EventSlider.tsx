@@ -49,7 +49,7 @@ export function EventSlider({ events }: EventSliderProps) {
                     <img
                       src={slide.image}
                       alt={slide.title}
-                      className="w-full h-auto lg:max-h-[55vh] object-contain object-center"
+                      className="w-full h-auto max-h-[45vh] sm:max-h-[48vh] lg:max-h-[50vh] object-contain object-center"
                       width={1600}
                       height={1800}
                       loading={index === 0 ? "eager" : "lazy"}
