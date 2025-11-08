@@ -78,7 +78,7 @@ export async function GET(request: Request) {
       .toBuffer()
 
     // Return optimized image with caching headers
-    return new NextResponse(optimizedBuffer, {
+    return new NextResponse(new Uint8Array(optimizedBuffer), {
       headers: {
         "Content-Type": contentType,
         "Cache-Control": `public, max-age=${CACHE_MAX_AGE}, immutable`,
