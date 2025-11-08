@@ -1,7 +1,7 @@
 "use client"
 
 import { useState, useEffect, useRef, useMemo, useCallback, memo } from "react"
-import { withBasePath } from "@/lib/utils"
+import { withBasePath, getThumbnailUrl, loadThumbnailManifest } from "@/lib/utils"
 import { Turnstile } from "./Turnstile"
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogClose } from "./ui/dialog"
 import {
@@ -34,35 +34,113 @@ const IMAGE_STYLE: React.CSSProperties = {
   margin: 0,
   padding: 0,
   imageRendering: 'auto',
+  imageOrientation: 'none', // Prevent browser from applying EXIF orientation (we handle it in thumbnail generation)
   contentVisibility: 'auto',
   backfaceVisibility: 'hidden',
   transform: 'translateZ(0)',
   contain: 'layout style paint'
 }
 
-// Simplified image slide item component
+// Simplified image slide item component with Intersection Observer
 const ImageSlideItem = memo(function ImageSlideItem({
   url,
   isSelected,
   isTurnstileVerified,
   onToggle,
-  index
+  index,
+  shouldPreload
 }: {
   url: string
   isSelected: boolean
   isTurnstileVerified: boolean
   onToggle: (url: string) => void
   index: number
+  shouldPreload: boolean
 }) {
   const fileName = url.split("/").pop() || url
+  const [isInView, setIsInView] = useState(shouldPreload)
+  const [isLoaded, setIsLoaded] = useState(false)
+  const [imageError, setImageError] = useState(false)
+  const imgRef = useRef<HTMLImageElement>(null)
+  const containerRef = useRef<HTMLDivElement>(null)
   
   // Use smaller dimensions for carousel thumbnails (max 280px)
   const displayWidth = 280
   const displayHeight = 280
   
+  // Get optimized thumbnail URL (falls back to original if API unavailable)
+  const thumbnailUrl = useMemo(() => {
+    // Extract the path relative to public directory
+    const pathMatch = url.match(/\/aispaces\/studio\/[^/]+$/)
+    if (pathMatch) {
+      return getThumbnailUrl(pathMatch[0], displayWidth, displayHeight, 80)
+    }
+    // Fallback to original URL for external images or if path doesn't match
+    return url
+  }, [url, displayWidth, displayHeight])
+  
+  // Intersection Observer for lazy loading
+  useEffect(() => {
+    if (shouldPreload || isInView) return // Already visible or should preload
+    
+    const observer = new IntersectionObserver(
+      (entries) => {
+        entries.forEach((entry) => {
+          if (entry.isIntersecting) {
+            setIsInView(true)
+            observer.disconnect()
+          }
+        })
+      },
+      {
+        rootMargin: '50px', // Start loading 50px before entering viewport
+        threshold: 0.01
+      }
+    )
+    
+    if (containerRef.current) {
+      observer.observe(containerRef.current)
+    }
+    
+    return () => {
+      observer.disconnect()
+    }
+  }, [shouldPreload, isInView])
+  
+  // Preload image when in view
+  useEffect(() => {
+    if (isInView && !isLoaded && !imageError) {
+      const img = new Image()
+      img.src = thumbnailUrl
+      img.onload = () => {
+        setIsLoaded(true)
+        setImageError(false)
+      }
+      img.onerror = () => {
+        // If optimized image fails, try original as fallback
+        if (thumbnailUrl !== url) {
+          const fallbackImg = new Image()
+          fallbackImg.src = url
+          fallbackImg.onload = () => {
+            setIsLoaded(true)
+            setImageError(false)
+          }
+          fallbackImg.onerror = () => {
+            setIsLoaded(true) // Mark as loaded to prevent infinite retries
+            setImageError(true)
+          }
+        } else {
+          setIsLoaded(true) // Mark as loaded to prevent infinite retries
+          setImageError(true)
+        }
+      }
+    }
+  }, [isInView, thumbnailUrl, url, isLoaded, imageError])
+  
   return (
     <CarouselItem className="pl-2 md:pl-4 basis-auto">
       <div
+        ref={containerRef}
         onClick={() => isTurnstileVerified && onToggle(url)}
         className={`relative group cursor-pointer rounded-lg border-2 overflow-hidden bg-gray-100 w-[200px] h-[200px] sm:w-[240px] sm:h-[240px] md:w-[280px] md:h-[280px] ${
           isSelected ? 'border-[#5B9AB8] ring-2 ring-[#5B9AB8]/20' : 'border-gray-200 hover:border-gray-300'
@@ -77,22 +155,55 @@ const ImageSlideItem = memo(function ImageSlideItem({
           }
         }}
       >
-        <img
-          src={url}
-          alt={fileName}
-          className="absolute inset-0"
-          style={{
-            ...IMAGE_STYLE,
-            maxWidth: '280px',
-            maxHeight: '280px'
-          }}
-          width={displayWidth}
-          height={displayHeight}
-          loading={index < 3 ? "eager" : "lazy"}
-          decoding="async"
-          fetchPriority={index < 3 ? "high" : "low"}
-          sizes="(max-width: 640px) 200px, (max-width: 768px) 240px, 280px"
-        />
+        {isInView && !imageError && (
+          <img
+            key={`img-${index}-${url}`} // Stable key based on original URL and index
+            ref={imgRef}
+            src={thumbnailUrl}
+            alt={fileName}
+            className={`absolute inset-0 transition-opacity duration-300 ${
+              isLoaded ? 'opacity-100' : 'opacity-0'
+            }`}
+            style={{
+              ...IMAGE_STYLE,
+              maxWidth: '280px',
+              maxHeight: '280px',
+              // Force no rotation - ensure browser doesn't apply any transforms
+              transform: 'translateZ(0) rotate(0deg)',
+            }}
+            width={displayWidth}
+            height={displayHeight}
+            loading={shouldPreload ? "eager" : "lazy"}
+            decoding="async"
+            fetchPriority={shouldPreload ? "high" : "low"}
+            sizes="(max-width: 640px) 200px, (max-width: 768px) 240px, 280px"
+            onLoad={() => {
+              setIsLoaded(true)
+              setImageError(false)
+            }}
+            onError={() => {
+              // Don't fallback to original - it might have wrong orientation
+              // Instead, try to reload the thumbnail with cache busting
+              if (imgRef.current && thumbnailUrl !== url) {
+                const separator = thumbnailUrl.includes('?') ? '&' : '?'
+                imgRef.current.src = `${thumbnailUrl}${separator}t=${Date.now()}`
+              } else {
+                setImageError(true)
+                setIsLoaded(true)
+              }
+            }}
+          />
+        )}
+        {imageError && (
+          <div className="absolute inset-0 flex items-center justify-center bg-gray-200">
+            <p className="text-xs text-gray-500 text-center px-2">Failed to load</p>
+          </div>
+        )}
+        {!isLoaded && (
+          <div className="absolute inset-0 flex items-center justify-center bg-gray-200 animate-pulse">
+            <div className="w-8 h-8 border-2 border-gray-300 border-t-[#5B9AB8] rounded-full animate-spin" />
+          </div>
+        )}
         <div className={`absolute inset-0 z-[1] transition-opacity duration-150 ${
           isSelected ? 'bg-[#5B9AB8]/20 opacity-100' : 'bg-black/0 group-hover:bg-black/10 opacity-0 group-hover:opacity-100'
         }`} />
@@ -380,52 +491,91 @@ export function AISpaceGenerator() {
   }, [isTurnstileVerified])
 
   // Fetch studio images dynamically on component mount
-  // Uses static manifest for GitHub Pages (static export) or API route for development/server
+  // Unified approach: Always try manifest first (works in both static and production), fallback to API
   useEffect(() => {
     async function fetchStudioImages() {
       try {
         setIsLoadingImages(true)
         
-        // Check if we should use static manifest (GitHub Pages / static export)
-        const useStaticImages = process.env.NEXT_PUBLIC_USE_STATIC_IMAGES === '1'
+        // Preload thumbnail manifest in static mode
+        const isStaticMode = process.env.NEXT_PUBLIC_USE_STATIC_IMAGES === '1'
+        if (isStaticMode) {
+          await loadThumbnailManifest()
+        }
         
         let data: { success: boolean; images?: string[]; error?: string }
         
-        if (useStaticImages) {
-          // Load from static manifest file (generated at build time)
-          try {
-            const response = await fetch(withBasePath("/aispaces/studio-images.json"))
-            if (!response.ok) {
-              throw new Error(`Failed to load manifest: ${response.statusText}`)
+        // Always try manifest first (available in both static and production builds)
+        try {
+          const manifestResponse = await fetch(withBasePath("/aispaces/studio-images.json"), {
+            cache: 'force-cache', // Use cached version if available
+            headers: {
+              'Cache-Control': 'max-age=3600' // Cache for 1 hour
             }
-            data = await response.json()
-          } catch (error) {
-            console.error("Error loading static image manifest:", error)
-            // Fallback: try to load from API if available
-            try {
-              const apiResponse = await fetch("/api/ai-space/images")
-              data = await apiResponse.json()
-            } catch (apiError) {
-              throw new Error("Failed to load images from both static manifest and API")
+          })
+          
+          if (manifestResponse.ok) {
+            data = await manifestResponse.json()
+            // If manifest loaded successfully, use it
+            if (data.success && data.images) {
+              const imagesWithBasePath = data.images.map((path: string) => withBasePath(path))
+              setStudioImages(imagesWithBasePath)
+              
+              // Prefetch first 5 optimized thumbnails for instant display
+              const prefetchCount = Math.min(5, imagesWithBasePath.length)
+              for (let i = 0; i < prefetchCount; i++) {
+                const originalPath = data.images[i]
+                const optimizedUrl = getThumbnailUrl(originalPath, 280, 280, 80)
+                const link = document.createElement('link')
+                link.rel = 'preload'
+                link.as = 'image'
+                link.href = optimizedUrl.startsWith('/') ? optimizedUrl : withBasePath(optimizedUrl)
+                document.head.appendChild(link)
+              }
+              
+              setIsLoadingImages(false)
+              return
             }
           }
-        } else {
-          // Use API route (development/server mode)
-          const response = await fetch("/api/ai-space/images")
-          if (!response.ok) {
-            throw new Error(`API request failed: ${response.statusText}`)
-          }
-          data = await response.json()
+        } catch (manifestError) {
+          console.warn("Manifest not available, trying API fallback:", manifestError)
         }
         
-        if (data.success && data.images) {
-          // Apply base path to each image URL
-          const imagesWithBasePath = data.images.map((path: string) => withBasePath(path))
-          setStudioImages(imagesWithBasePath)
-        } else {
-          console.warn("Failed to load studio images:", data.error)
-          setError("Failed to load studio images. Please refresh the page.")
+        // Fallback to API route if manifest fails or is unavailable
+        try {
+          const apiResponse = await fetch("/api/ai-space/images", {
+            cache: 'no-store' // Always fetch fresh from API
+          })
+          
+          if (apiResponse.ok) {
+            data = await apiResponse.json()
+            if (data.success && data.images) {
+              const imagesWithBasePath = data.images.map((path: string) => withBasePath(path))
+              setStudioImages(imagesWithBasePath)
+              
+              // Prefetch first 5 optimized thumbnails for instant display
+              const prefetchCount = Math.min(5, imagesWithBasePath.length)
+              for (let i = 0; i < prefetchCount; i++) {
+                const originalPath = data.images[i]
+                const optimizedUrl = getThumbnailUrl(originalPath, 280, 280, 80)
+                const link = document.createElement('link')
+                link.rel = 'preload'
+                link.as = 'image'
+                link.href = optimizedUrl.startsWith('/') ? optimizedUrl : withBasePath(optimizedUrl)
+                document.head.appendChild(link)
+              }
+              
+              setIsLoadingImages(false)
+              return
+            }
+          }
+        } catch (apiError) {
+          console.error("API fallback also failed:", apiError)
         }
+        
+        // If both failed
+        console.warn("Failed to load studio images from both manifest and API")
+        setError("Failed to load studio images. Please refresh the page.")
       } catch (error) {
         console.error("Error fetching studio images:", error)
         setError("Failed to load studio images. Please refresh the page.")
@@ -524,11 +674,12 @@ export function AISpaceGenerator() {
             No images available. Please add images to public/aispaces/studio/
           </p>
         ) : (
-          <div className="relative w-full">
+          <div className="relative w-full" style={{ willChange: 'scroll-position' }}>
             <Carousel
               opts={{
                 align: "start",
                 loop: false,
+                containScroll: "trimSnaps", // Optimize scrolling performance
               }}
               className="w-full"
             >
@@ -541,6 +692,7 @@ export function AISpaceGenerator() {
                     isTurnstileVerified={isTurnstileVerified}
                     onToggle={handleToggleImage}
                     index={index}
+                    shouldPreload={index < 5} // Preload first 5 images
                   />
                 ))}
               </CarouselContent>
@@ -576,7 +728,7 @@ export function AISpaceGenerator() {
         <button
           type="button"
           onClick={onGenerate}
-          disabled={isLoading || selectedImages.length === 0 || prompt.trim().length === 0 || !isTurnstileVerified}
+          disabled={isLoading || selectedImages.length === 0 || prompt.trim().length === 0 || !isTurnstileVerified || results.length > 0}
           className="rounded bg-black text-white disabled:opacity-50 disabled:cursor-not-allowed"
           style={{ 
             padding: 'clamp(0.5rem, 0.6vw, 0.75rem) clamp(0.75rem, 0.9vw, 1rem)',

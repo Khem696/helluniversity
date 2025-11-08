@@ -22,11 +22,18 @@ function usePreloaded(srcs: string[]) {
 export function PoemBook({ className }: PoemBookProps) {
     const pages = useMemo(
         () => [
-            withBasePath('/assets/poem/poem_1_text_v2.png'),
-            withBasePath('/assets/poem/poem_2_text_v2.png'),
-            withBasePath('/assets/poem/poem_3_text_v2.png'),
-            withBasePath('/assets/poem/poem_4_text_v2.png'),
-            withBasePath('/assets/poem/poem_5_text_v2.png'),
+            withBasePath('/assets/poem/poem_v3/poem_0_text_v3.png'),
+            withBasePath('/assets/poem/poem_v3/poem_1_text_v3.png'),
+            withBasePath('/assets/poem/poem_v3/poem_2_text_v3.png'),
+            withBasePath('/assets/poem/poem_v3/poem_3_text_v3.png'),
+            withBasePath('/assets/poem/poem_v3/poem_4_text_v3.png'),
+            withBasePath('/assets/poem/poem_v3/poem_5_text_v3.png'),
+            withBasePath('/assets/poem/poem_v3/poem_6_text_v3.png'),
+            withBasePath('/assets/poem/poem_v3/poem_7_text_v3.png'),
+            withBasePath('/assets/poem/poem_v3/poem_8_text_v3.png'),
+            withBasePath('/assets/poem/poem_v3/poem_9_text_v3.png'),
+            withBasePath('/assets/poem/poem_v3/poem_10_text_v3.png'),
+            withBasePath('/assets/poem/poem_v3/poem_11_text_v3.png'),
         ],
         []
     )

@@ -53,7 +53,7 @@ export async function POST(request: Request) {
     }
 
     // Validate required booking data
-    if (!bookingData.name || !bookingData.email || !bookingData.date) {
+    if (!bookingData.name || !bookingData.email || !bookingData.startDate) {
       return NextResponse.json(
         { success: false, error: "Missing required booking information" },
         { status: 400 }

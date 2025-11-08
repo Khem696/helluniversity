@@ -1,4 +1,5 @@
 import { Hero } from "@/components/Hero"
+import { EventSliders } from "@/components/EventSliders"
 import { Metadata } from 'next'
 import { withBasePath } from '@/lib/utils'
 
@@ -37,6 +38,7 @@ export default function Home() {
     <div className="min-h-vp bg-[#f4f1ed] no-horiz-overflow">
       <main id="main-content">
         <Hero />
+        <EventSliders />
       </main>
     </div>
   )

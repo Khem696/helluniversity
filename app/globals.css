@@ -100,16 +100,20 @@
 html {
   overflow-x: hidden;
   width: 100%;
+  overflow-y: auto;
+  /* NO scrollbar-gutter - scrollbar will overlay on separate z-axis layer */
 }
 body {
   overflow-x: hidden; /* prevent any horizontal scroll entirely */
   max-width: 100%;
+  position: relative;
 }
 
 /* Use small viewport units to avoid mobile URL bar jumps */
 :root {
   --vh: 1svh;
   --safe-area-bottom: env(safe-area-inset-bottom, 0px);
+  --scrollbar-width: 0px; /* Updated by JavaScript - scrollbar width */
 }
 
 /* Robust viewport height helpers (prefer dvh, fall back to svh, then vh) */
@@ -136,6 +140,19 @@ img, picture, video, canvas {
   overflow-x: clip;
 }
 
+/* Hide native scrollbar - custom overlay scrollbar will replace it */
+html {
+  /* Firefox - hide native scrollbar */
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+
+html::-webkit-scrollbar {
+  width: 0px;
+  background: transparent;
+  display: none;
+}
+
 /* Clamp body width on tiny devices to avoid fractional scrollbar */
 @media (max-width: 360px) {
   html, body {
@@ -149,6 +166,12 @@ img, picture, video, canvas {
 .pb-safe {
   padding-bottom: var(--safe-area-bottom);
 }
+
+/* 
+ * Note: Components have been refactored to use flexible layouts (min-height instead of fixed height)
+ * This ensures content can grow naturally and scroll when needed without requiring CSS overrides.
+ * The previous workaround has been removed as the root cause has been fixed at the component level.
+ */
 
 /* Small-device helpers (≤425px) */
 @media (max-width: 425px) {
@@ -1012,4 +1035,106 @@ html {
   font-size: .8125rem;
   line-height: 1.5;
   font-weight: 400;
+}
+
+/* Phone Input Styling to match other form inputs */
+.phone-input-wrapper .PhoneInput {
+  display: flex;
+  align-items: center;
+  height: clamp(2rem, 2.2vw, 2.25rem);
+  border: 1px solid hsl(var(--input));
+  border-radius: calc(var(--radius) - 2px);
+  background-color: hsl(var(--input-background));
+  transition: border-color 0.2s, box-shadow 0.2s;
+  width: 100%;
+}
+
+.phone-input-wrapper .PhoneInput:focus-within {
+  border-color: hsl(var(--ring));
+  box-shadow: 0 0 0 3px hsl(var(--ring) / 0.5);
+  outline: none;
+}
+
+.phone-input-wrapper .PhoneInputInput {
+  flex: 1;
+  height: 100%;
+  border: none;
+  background: transparent;
+  padding: 0 0.75rem;
+  font-size: clamp(0.75rem, 0.8vw, 0.875rem);
+  font-family: var(--font-comfortaa, inherit);
+  color: hsl(var(--foreground));
+  outline: none;
+}
+
+.phone-input-wrapper .PhoneInputInput::placeholder {
+  color: hsl(var(--muted-foreground));
+}
+
+.phone-input-wrapper .PhoneInputInput:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+  background-color: rgb(243 244 246);
+}
+
+.phone-input-wrapper .PhoneInputCountryIcon {
+  width: 1.5rem;
+  height: 1.25rem;
+  margin-left: 0.75rem;
+  border-radius: 2px;
+}
+
+.phone-input-wrapper .PhoneInputCountrySelect {
+  padding: 0 0.5rem 0 0.75rem;
+  height: 100%;
+  border: none;
+  background: transparent;
+  font-size: clamp(0.75rem, 0.8vw, 0.875rem);
+  font-family: var(--font-comfortaa, inherit);
+  cursor: pointer;
+  outline: none;
+}
+
+.phone-input-wrapper .PhoneInputCountrySelect:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.phone-input-wrapper.opacity-50 .PhoneInput {
+  opacity: 0.5;
+  cursor: not-allowed;
+  background-color: rgb(243 244 246);
+}
+
+/* ===== CAROUSEL PERFORMANCE OPTIMIZATIONS ===== */
+/* Optimize carousel scrolling for smoother performance */
+[data-carousel] {
+  will-change: scroll-position;
+  scroll-behavior: smooth;
+  -webkit-overflow-scrolling: touch;
+}
+
+[data-carousel-content] {
+  will-change: transform;
+  contain: layout style paint;
+}
+
+/* Optimize image carousel items for better scrolling performance */
+[data-carousel-item] {
+  contain: layout style paint;
+  backface-visibility: hidden;
+  transform: translateZ(0);
+}
+
+/* Prevent browser from auto-rotating images based on EXIF orientation */
+/* We handle rotation in thumbnail generation, so browser should not apply it */
+[data-carousel-item] img {
+  image-orientation: none !important;
+  transform: translateZ(0) !important; /* Only GPU acceleration, no rotation */
+}
+
+/* Smooth image loading transitions */
+.carousel-image-loading {
+  will-change: opacity;
+  transition: opacity 0.3s ease-in-out;
 }

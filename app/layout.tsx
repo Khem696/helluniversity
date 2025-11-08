@@ -5,6 +5,7 @@ import { Toaster } from '@/components/ui/sonner'
 import { Header } from '@/components/Header'
 import { DisableServiceWorker } from '@/components/DisableServiceWorker'
 import { GlobalErrorHandler } from '@/components/GlobalErrorHandler'
+import { OverlayScrollbar } from '@/components/OverlayScrollbar'
 import { organizationStructuredData, websiteStructuredData, localBusinessStructuredData, eventStructuredData } from '@/lib/structured-data'
 import './globals.css'
 import { bodyFont, headingFont, uiFont, comfortaaFont, urbanistFont, acuminAlt } from '@/lib/fonts'
@@ -129,6 +130,7 @@ export default function RootLayout({
         </a>
         <GlobalErrorHandler />
         <DisableServiceWorker />
+        <OverlayScrollbar />
         <Header />
         {children}
         <Toaster />
