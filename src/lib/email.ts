@@ -4,12 +4,18 @@ interface ReservationData {
   name: string
   email: string
   phone: string
-  guests: string
+  participants?: string
   eventType: string
-  date: string
+  otherEventType?: string
+  dateRange: boolean
+  startDate: string | null
+  endDate: string | null
+  startTime?: string
+  endTime?: string
+  organizationType?: "Tailor Event" | "Space Only" | ""
   introduction: string
-  biography: string
-  specialRequests: string
+  biography?: string
+  specialRequests?: string
 }
 
 // Create reusable transporter
@@ -76,7 +82,7 @@ export function resetTransporter(): void {
 }
 
 // Format event type for display
-function formatEventType(eventType: string): string {
+function formatEventType(eventType: string, otherEventType?: string): string {
   const eventTypes: Record<string, string> = {
     'reunion': 'Reunion',
     'family-friends': 'Family & Friends',
@@ -88,21 +94,66 @@ function formatEventType(eventType: string): string {
     'brainstorming-session': 'Brainstorming Session',
     'other': 'Other',
   }
-  return eventTypes[eventType] || eventType
+  
+  const baseType = eventTypes[eventType] || eventType
+  
+  // If there's an "other" event type specified, append it
+  if (otherEventType && otherEventType.trim() && otherEventType.trim() !== 'N/A') {
+    return `${baseType} - ${otherEventType.trim()}`
+  }
+  
+  return baseType
 }
 
-// Format date for display
-function formatDate(dateString: string): string {
+// Format date and time for display
+function formatDateTime(dateString: string | null | undefined, timeString?: string): string {
   try {
+    if (!dateString) return "Not specified"
+    
     const date = new Date(dateString)
-    return date.toLocaleDateString('en-US', {
+    if (isNaN(date.getTime())) return dateString || "Not specified"
+    
+    const dateFormatted = date.toLocaleDateString('en-US', {
       weekday: 'long',
       year: 'numeric',
       month: 'long',
       day: 'numeric',
     })
-  } catch {
-    return dateString
+    
+    if (timeString && timeString.trim()) {
+      return `${dateFormatted} at ${timeString.trim()}`
+    }
+    
+    return dateFormatted
+  } catch (error) {
+    console.error('❌ formatDateTime error:', error)
+    return dateString || "Not specified"
+  }
+}
+
+// Format date range for display (handles single day and date range)
+function formatDateRange(data: ReservationData): string {
+  try {
+    if (!data.startDate) {
+      return "Not specified"
+    }
+    
+    const startDateTime = formatDateTime(data.startDate, data.startTime)
+    
+    // Single day booking
+    if (!data.dateRange || !data.endDate) {
+      if (data.endTime && data.endTime.trim()) {
+        return `${startDateTime} to ${data.endTime.trim()}`
+      }
+      return startDateTime
+    }
+    
+    // Date range booking
+    const endDateTime = formatDateTime(data.endDate, data.endTime)
+    return `${startDateTime} to ${endDateTime}`
+  } catch (error) {
+    console.error('❌ formatDateRange error:', error)
+    return "Not specified"
   }
 }
 
@@ -164,8 +215,11 @@ function sanitizeUserInput(input: string | null | undefined): string {
 
 // Generate HTML email template for admin notification
 function generateAdminEmailHTML(data: ReservationData): string {
-  const formattedDate = formatDate(data.date)
-  const formattedEventType = formatEventType(data.eventType)
+  const formattedDateRange = formatDateRange(data)
+  const formattedEventType = formatEventType(data.eventType, data.otherEventType)
+  const organizationRemark = data.organizationType === "Tailor Event" ? "Organized by HU" : "Organized by Client"
+  const safeParticipants = data.participants || "Not specified"
+  const safeOrganizationType = data.organizationType || "Not specified"
 
   return `
 <!DOCTYPE html>
@@ -260,16 +314,20 @@ function generateAdminEmailHTML(data: ReservationData): string {
         <span class="field-value"><a href="tel:${data.phone}">${sanitizeHTML(data.phone)}</a></span>
       </div>
       <div class="field">
-        <span class="field-label">Number of Guests:</span>
-        <span class="field-value">${sanitizeHTML(data.guests)}</span>
+        <span class="field-label">Number of Participants:</span>
+        <span class="field-value">${sanitizeHTML(safeParticipants)}</span>
       </div>
       <div class="field">
         <span class="field-label">Event Type:</span>
         <span class="field-value">${sanitizeHTML(formattedEventType)}</span>
       </div>
       <div class="field">
-        <span class="field-label">Desired Date:</span>
-        <span class="field-value">${sanitizeHTML(formattedDate)}</span>
+        <span class="field-label">Date & Time:</span>
+        <span class="field-value">${sanitizeHTML(formattedDateRange)}</span>
+      </div>
+      <div class="field">
+        <span class="field-label">Organization:</span>
+        <span class="field-value">${sanitizeHTML(safeOrganizationType)} (${sanitizeHTML(organizationRemark)})</span>
       </div>
     </div>
 
@@ -332,8 +390,11 @@ function generateAdminEmailHTML(data: ReservationData): string {
 
 // Generate plain text version for admin notification
 function generateAdminEmailText(data: ReservationData): string {
-  const formattedDate = formatDate(data.date)
-  const formattedEventType = formatEventType(data.eventType)
+  const formattedDateRange = formatDateRange(data)
+  const formattedEventType = formatEventType(data.eventType, data.otherEventType)
+  const organizationRemark = data.organizationType === "Tailor Event" ? "Organized by HU" : "Organized by Client"
+  const safeParticipants = data.participants || "Not specified"
+  const safeOrganizationType = data.organizationType || "Not specified"
 
   return `
 NEW RESERVATION INQUIRY - HELL UNIVERSITY
@@ -343,9 +404,10 @@ BOOKING DETAILS:
 Name: ${data.name}
 Email: ${data.email}
 Phone: ${data.phone}
-Number of Guests: ${data.guests}
+Number of Participants: ${safeParticipants}
 Event Type: ${formattedEventType}
-Desired Date: ${formattedDate}
+Date & Time: ${formattedDateRange}
+Organization: ${safeOrganizationType} (${organizationRemark})
 
 GUEST INFORMATION:
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -364,8 +426,11 @@ Received: ${new Date().toLocaleString('en-US', {
 
 // Generate HTML email template for user auto-reply
 function generateUserEmailHTML(data: ReservationData): string {
-  const formattedDate = formatDate(data.date)
-  const formattedEventType = formatEventType(data.eventType)
+  const formattedDateRange = formatDateRange(data)
+  const formattedEventType = formatEventType(data.eventType, data.otherEventType)
+  const organizationRemark = data.organizationType === "Tailor Event" ? "Organized by HU" : "Organized by Client"
+  const safeParticipants = data.participants || "Not specified"
+  const safeOrganizationType = data.organizationType || "Not specified"
 
   return `
 <!DOCTYPE html>
@@ -382,7 +447,7 @@ function generateUserEmailHTML(data: ReservationData): string {
       padding: 20px;
     }
     .header {
-      background-color: #5B9AB8;
+      background-color: #3e82bb;
       color: white;
       padding: 20px;
       border-radius: 8px 8px 0 0;
@@ -400,7 +465,7 @@ function generateUserEmailHTML(data: ReservationData): string {
       padding: 20px;
       border-radius: 4px;
       margin: 20px 0;
-      border-left: 3px solid #5B9AB8;
+      border-left: 3px solid #3e82bb;
     }
     .summary-item {
       margin-bottom: 10px;
@@ -436,13 +501,16 @@ function generateUserEmailHTML(data: ReservationData): string {
     <div class="summary">
       <h3 style="margin-top: 0; color: #5a3a2a;">Your Inquiry Summary:</h3>
       <div class="summary-item">
-        <span class="summary-label">Event Type:</span> ${formattedEventType}
+        <span class="summary-label">Event Type:</span> ${sanitizeHTML(formattedEventType)}
       </div>
       <div class="summary-item">
-        <span class="summary-label">Desired Date:</span> ${formattedDate}
+        <span class="summary-label">Date & Time:</span> ${sanitizeHTML(formattedDateRange)}
       </div>
       <div class="summary-item">
-        <span class="summary-label">Number of Guests:</span> ${data.guests}
+        <span class="summary-label">Number of Participants:</span> ${sanitizeHTML(safeParticipants)}
+      </div>
+      <div class="summary-item">
+        <span class="summary-label">Organization:</span> ${sanitizeHTML(safeOrganizationType)} (${sanitizeHTML(organizationRemark)})
       </div>
     </div>
     
@@ -468,8 +536,11 @@ function generateUserEmailHTML(data: ReservationData): string {
 
 // Generate plain text version for user auto-reply
 function generateUserEmailText(data: ReservationData): string {
-  const formattedDate = formatDate(data.date)
-  const formattedEventType = formatEventType(data.eventType)
+  const formattedDateRange = formatDateRange(data)
+  const formattedEventType = formatEventType(data.eventType, data.otherEventType)
+  const organizationRemark = data.organizationType === "Tailor Event" ? "Organized by HU" : "Organized by Client"
+  const safeParticipants = data.participants || "Not specified"
+  const safeOrganizationType = data.organizationType || "Not specified"
 
   return `
 RESERVATION INQUIRY RECEIVED - HELL UNIVERSITY
@@ -481,8 +552,9 @@ Thank you for your reservation inquiry with Hell University! We have received yo
 YOUR INQUIRY SUMMARY:
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 Event Type: ${formattedEventType}
-Desired Date: ${formattedDate}
-Number of Guests: ${data.guests}
+Date & Time: ${formattedDateRange}
+Number of Participants: ${safeParticipants}
+Organization: ${safeOrganizationType} (${organizationRemark})
 
 We honor each request with thoughtful consideration and will respond within 48 hours to discuss your vision and craft an extraordinary experience tailored to your unique sensibilities.
 
@@ -508,14 +580,14 @@ export async function sendAdminNotification(data: ReservationData): Promise<void
     throw new Error('RESERVATION_EMAIL or SMTP_USER not configured')
   }
 
-  const formattedEventType = formatEventType(data.eventType)
-  const formattedDate = formatDate(data.date)
+  const formattedEventType = formatEventType(data.eventType, data.otherEventType)
+  const formattedDateRange = formatDateRange(data)
 
   const mailOptions: nodemailer.SendMailOptions = {
     from: `"Hell University Reservation System" <${process.env.SMTP_USER}>`,
     to: recipientEmail,
     replyTo: data.email,
-    subject: `New Reservation Inquiry - ${formattedEventType} - ${formattedDate}`,
+    subject: `New Reservation Inquiry - ${formattedEventType} - ${formattedDateRange.substring(0, 50)}`,
     text: generateAdminEmailText(data),
     html: generateAdminEmailHTML(data),
   }
