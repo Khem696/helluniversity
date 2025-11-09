@@ -2,6 +2,9 @@ import { auth } from "@/lib/auth-config"
 import Link from "next/link"
 import { SignOutButton } from "@/components/SignOutButton"
 
+// Mark as dynamic to prevent static export issues
+export const dynamic = 'force-dynamic'
+
 /**
  * Admin Layout
  * 

@@ -5,6 +5,9 @@ import { SignOutMessage } from "@/components/SignOutMessage"
 import Script from "next/script"
 import Link from "next/link"
 
+// Mark as dynamic to prevent static export issues
+export const dynamic = 'force-dynamic'
+
 /**
  * Admin Login Page
  * Simple login page with redirect if already authenticated
