@@ -65,10 +65,12 @@ function ensureString(value: any): string {
 
 // Escape HTML to prevent XSS and ensure proper display
 function escapeHtml(text: string | null | undefined): string {
-  const safeText = ensureString(text)
-  if (!safeText) return ''
   try {
-    return safeText
+    const safeText = ensureString(text)
+    if (!safeText || typeof safeText !== 'string') return ''
+    // Double-check it's a string before calling replace
+    const str = String(safeText)
+    return str
       .replace(/&/g, '&amp;')
       .replace(/</g, '&lt;')
       .replace(/>/g, '&gt;')
@@ -374,18 +376,39 @@ function generateAdminEmailHTML(data: ReservationData): string {
       <div class="section-title">Guest Information</div>
       <div class="field">
         <span class="field-label">Introduction:</span>
-        <div class="text-content">${ensureString(escapeHtml(safeIntroduction)).replace(/\n/g, '<br>')}</div>
+        <div class="text-content">${(function() {
+          try {
+            const intro = ensureString(escapeHtml(safeIntroduction))
+            return intro ? intro.replace(/\n/g, '<br>') : ''
+          } catch {
+            return ensureString(safeIntroduction) || ''
+          }
+        })()}</div>
       </div>
       ${safeBiography ? `
       <div class="field">
         <span class="field-label">Background & Interests:</span>
-        <div class="text-content">${ensureString(escapeHtml(safeBiography)).replace(/\n/g, '<br>')}</div>
+        <div class="text-content">${(function() {
+          try {
+            const bio = ensureString(escapeHtml(safeBiography))
+            return bio ? bio.replace(/\n/g, '<br>') : ''
+          } catch {
+            return ensureString(safeBiography) || ''
+          }
+        })()}</div>
       </div>
       ` : ''}
       ${safeSpecialRequests ? `
       <div class="field">
         <span class="field-label">Special Requests:</span>
-        <div class="text-content">${ensureString(escapeHtml(safeSpecialRequests)).replace(/\n/g, '<br>')}</div>
+        <div class="text-content">${(function() {
+          try {
+            const req = ensureString(escapeHtml(safeSpecialRequests))
+            return req ? req.replace(/\n/g, '<br>') : ''
+          } catch {
+            return ensureString(safeSpecialRequests) || ''
+          }
+        })()}</div>
       </div>
       ` : ''}
     </div>
@@ -719,16 +742,36 @@ export async function sendAdminNotification(data: ReservationData): Promise<void
   
   // Email format validation is now done above
 
-  const formattedEventType = formatEventType(data.eventType, data.otherEventType)
-  const formattedDateRange = formatDateRange(data)
+  // Generate email content with comprehensive error handling
+  let emailText: string
+  let emailHtml: string
+  
+  try {
+    emailText = generateAdminEmailText(data)
+  } catch (error) {
+    console.error('❌ ERROR generating admin email text:', error)
+    // Use minimal fallback
+    emailText = `NEW RESERVATION INQUIRY\n\nName: ${ensureString(data.name)}\nEmail: ${ensureString(data.email)}\nPhone: ${ensureString(data.phone)}`
+  }
+  
+  try {
+    emailHtml = generateAdminEmailHTML(data)
+  } catch (error) {
+    console.error('❌ ERROR generating admin email HTML:', error)
+    // Use minimal fallback
+    emailHtml = `<html><body><h1>New Reservation Inquiry</h1><p>Name: ${escapeHtml(ensureString(data.name))}</p><p>Email: ${escapeHtml(ensureString(data.email))}</p><p>Phone: ${escapeHtml(ensureString(data.phone))}</p></body></html>`
+  }
+
+  const formattedEventType = ensureString(formatEventType(data.eventType, data.otherEventType) || "Event")
+  const formattedDateRange = ensureString(formatDateRange(data) || "Date TBD")
 
   const mailOptions = {
     from: `"Hell University Reservation System" <${process.env.SMTP_USER}>`,
     to: recipientEmail,
     replyTo: data.email,
-    subject: `New Reservation Inquiry - ${String(formattedEventType || "Event")} - ${String(formattedDateRange || "Date TBD")}`,
-    text: generateAdminEmailText(data),
-    html: generateAdminEmailHTML(data),
+    subject: `New Reservation Inquiry - ${formattedEventType} - ${formattedDateRange}`,
+    text: emailText,
+    html: emailHtml,
   }
 
   console.error('📦 Mail options prepared:')
@@ -942,10 +985,19 @@ export async function sendReservationEmails(
     console.error('='.repeat(60))
     
     // Return early - don't send user email if admin email failed
-    return { adminSent: false, userSent: false, errors }
+    // This MUST return immediately to prevent user email from being sent
+    const result = { adminSent: false, userSent: false, errors }
+    console.error('🚫 RETURNING EARLY - User email will NOT be sent:', result)
+    return result
   }
 
   // Send user confirmation SECOND - only if admin email succeeded
+  // This code should ONLY execute if admin email succeeded (adminSent === true)
+  if (!adminSent) {
+    console.error('❌ CRITICAL ERROR: Admin email failed but code reached user email section!')
+    return { adminSent: false, userSent: false, errors }
+  }
+  
   try {
     console.error('='.repeat(60))
     console.error('STEP 2: Attempting to send user confirmation email...')
