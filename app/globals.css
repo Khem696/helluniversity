@@ -1284,3 +1284,16 @@ body:has([data-login-page]) > header {
   height: 0 !important;
   overflow: hidden !important;
 }
+
+/* Hide header on all admin pages */
+html[data-admin-page="true"] header,
+html[data-admin-page="true"] > body > header,
+body:has([data-admin-page]) > header {
+  display: none !important;
+  visibility: hidden !important;
+  opacity: 0 !important;
+  height: 0 !important;
+  overflow: hidden !important;
+  pointer-events: none !important;
+  z-index: -1 !important;
+}
