@@ -602,7 +602,16 @@ export function Header() {
                           <p className="text-[#5a3a2a]/70 font-comfortaa" style={{ fontSize: 'clamp(0.625rem, 0.7vw, 0.75rem)' }}>
                             Please verify you're human before proceeding:
                           </p>
-                          <div className="lg:scale-75 xl:scale-90 origin-left">
+                          <div 
+                            className="origin-left"
+                            style={{
+                              transform: 'scale(0.9)',
+                              transformOrigin: 'left center',
+                              position: 'relative',
+                              zIndex: 1000,
+                              pointerEvents: 'auto'
+                            }}
+                          >
                             <Recaptcha
                               key={recaptchaKeyRef.current}
                               onVerify={handleRecaptchaVerify}

@@ -23,6 +23,34 @@ export function Recaptcha({
   // Delay loading reCAPTCHA until component is mounted
   useEffect(() => {
     setMounted(true)
+    
+    // Add global styles to ensure reCAPTCHA challenge popup works correctly
+    const styleId = 'recaptcha-fix-styles'
+    if (!document.getElementById(styleId)) {
+      const style = document.createElement('style')
+      style.id = styleId
+      style.textContent = `
+        /* Ensure reCAPTCHA challenge popup is clickable */
+        .grecaptcha-badge,
+        iframe[src*="recaptcha"],
+        iframe[title*="recaptcha"] {
+          z-index: 9999 !important;
+          pointer-events: auto !important;
+        }
+        
+        /* Fix for reCAPTCHA challenge popup container */
+        body > div[style*="position: fixed"][style*="z-index"] {
+          z-index: 9999 !important;
+        }
+        
+        /* Ensure reCAPTCHA widget container allows interactions */
+        .g-recaptcha {
+          position: relative !important;
+          z-index: 1000 !important;
+        }
+      `
+      document.head.appendChild(style)
+    }
   }, [])
 
   if (!siteKey) {
@@ -67,16 +95,33 @@ export function Recaptcha({
   }
 
   return (
-    <div className="flex justify-center">
-      <ReCAPTCHA
-        ref={recaptchaRef}
-        sitekey={siteKey}
-        onChange={handleChange}
-        onErrored={handleError}
-        onExpired={handleExpired}
-        size={size}
-        theme="light"
-      />
+    <div 
+      className="flex justify-center"
+      style={{
+        position: 'relative',
+        zIndex: 1000,
+        pointerEvents: 'auto',
+        isolation: 'isolate' // Creates a new stacking context
+      }}
+    >
+      <div
+        style={{
+          position: 'relative',
+          zIndex: 1000,
+          pointerEvents: 'auto',
+          transform: 'none' // Ensure no transforms interfere
+        }}
+      >
+        <ReCAPTCHA
+          ref={recaptchaRef}
+          sitekey={siteKey}
+          onChange={handleChange}
+          onErrored={handleError}
+          onExpired={handleExpired}
+          size={size}
+          theme="light"
+        />
+      </div>
     </div>
   )
 }
