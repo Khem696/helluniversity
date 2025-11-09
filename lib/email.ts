@@ -64,18 +64,35 @@ function ensureString(value: any): string {
 }
 
 // Escape HTML to prevent XSS and ensure proper display
+// Uses character-by-character replacement to avoid .replace() issues
 function escapeHtml(text: string | null | undefined): string {
   try {
     const safeText = ensureString(text)
     if (!safeText || typeof safeText !== 'string') return ''
-    // Double-check it's a string before calling replace
+    
+    // Double-check it's a string
     const str = String(safeText)
-    return str
-      .replace(/&/g, '&amp;')
-      .replace(/</g, '&lt;')
-      .replace(/>/g, '&gt;')
-      .replace(/"/g, '&quot;')
-      .replace(/'/g, '&#039;')
+    if (!str || typeof str !== 'string') return ''
+    
+    // Use character-by-character replacement instead of .replace()
+    let result = ''
+    for (let i = 0; i < str.length; i++) {
+      const char = str[i]
+      if (char === '&') {
+        result += '&amp;'
+      } else if (char === '<') {
+        result += '&lt;'
+      } else if (char === '>') {
+        result += '&gt;'
+      } else if (char === '"') {
+        result += '&quot;'
+      } else if (char === "'") {
+        result += '&#039;'
+      } else {
+        result += char
+      }
+    }
+    return result
   } catch (error) {
     console.error('❌ escapeHtml error:', error, 'Input:', text)
     return ''
