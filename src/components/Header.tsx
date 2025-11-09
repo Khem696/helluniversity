@@ -17,7 +17,6 @@ import { format } from "date-fns"
 import { withBasePath } from "@/lib/utils"
 import { Turnstile } from "./Turnstile"
 import PhoneInput from "react-phone-number-input"
-import "react-phone-number-input/style.css"
 
 const STORAGE_KEY = "helluniversity_booking_form"
 const DEBOUNCE_DELAY = 500 // milliseconds

@@ -1,5 +1,6 @@
 @import "tailwindcss";
 @plugin "tailwindcss-animate";
+@import "react-phone-number-input/style.css";
 
 /* ===== KEYFRAMES & ANIMATIONS ===== */
 @keyframes accordion-down {
