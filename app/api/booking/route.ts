@@ -27,6 +27,27 @@ export async function POST(request: Request) {
   try {
     const body = await request.json()
     const { token, ...bookingData } = body
+    
+    // Log received booking data for debugging
+    console.log('='.repeat(60))
+    console.log('📥 RECEIVED BOOKING DATA FROM FORM:')
+    console.log('='.repeat(60))
+    console.log('Name:', bookingData.name || 'MISSING')
+    console.log('Email:', bookingData.email || 'MISSING')
+    console.log('Phone:', bookingData.phone || 'MISSING')
+    console.log('Participants:', bookingData.participants || 'MISSING')
+    console.log('Event Type:', bookingData.eventType || 'MISSING')
+    console.log('Other Event Type:', bookingData.otherEventType || 'N/A')
+    console.log('Date Range:', bookingData.dateRange ? 'YES' : 'NO')
+    console.log('Start Date:', bookingData.startDate || 'MISSING')
+    console.log('End Date:', bookingData.endDate || 'MISSING')
+    console.log('Start Time:', bookingData.startTime || 'MISSING')
+    console.log('End Time:', bookingData.endTime || 'MISSING')
+    console.log('Organization Type:', bookingData.organizationType || 'MISSING')
+    console.log('Introduction:', bookingData.introduction ? `${bookingData.introduction.substring(0, 50)}...` : 'MISSING')
+    console.log('Biography:', bookingData.biography ? `${bookingData.biography.substring(0, 50)}...` : 'N/A')
+    console.log('Special Requests:', bookingData.specialRequests ? `${bookingData.specialRequests.substring(0, 50)}...` : 'N/A')
+    console.log('='.repeat(60))
 
     // Validate reCAPTCHA token
     if (!token) {
@@ -148,9 +169,21 @@ export async function POST(request: Request) {
 
     // Send emails - prioritize user confirmation
     try {
-      console.log("Starting email sending process...")
-      console.log("RESERVATION_EMAIL configured:", process.env.RESERVATION_EMAIL ? "YES" : "NO")
-      console.log("SMTP_USER configured:", process.env.SMTP_USER ? "YES" : "NO")
+      console.log("=".repeat(60))
+      console.log("STARTING EMAIL SENDING PROCESS")
+      console.log("=".repeat(60))
+      console.log("Environment Variables Check (API Route):")
+      console.log("  RESERVATION_EMAIL:", process.env.RESERVATION_EMAIL ? `✅ SET (${process.env.RESERVATION_EMAIL})` : "❌ NOT SET")
+      console.log("  SMTP_USER:", process.env.SMTP_USER ? `✅ SET (${process.env.SMTP_USER})` : "❌ NOT SET")
+      console.log("  SMTP_HOST:", process.env.SMTP_HOST || "default (smtp.gmail.com)")
+      console.log("  SMTP_PORT:", process.env.SMTP_PORT || "default (587)")
+      console.log("=".repeat(60))
+      
+      // Validate RESERVATION_EMAIL is set before proceeding
+      if (!process.env.RESERVATION_EMAIL) {
+        console.warn("⚠️ WARNING: RESERVATION_EMAIL is not set!")
+        console.warn("⚠️ Admin notifications will use SMTP_USER as fallback:", process.env.SMTP_USER || "NOT SET")
+      }
       
       const emailStatus = await sendReservationEmails(bookingData)
       

@@ -55,6 +55,17 @@ function getTransporter(): nodemailer.Transporter {
   return transporter
 }
 
+// Escape HTML to prevent XSS and ensure proper display
+function escapeHtml(text: string | null | undefined): string {
+  if (!text) return ''
+  return String(text)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#039;')
+}
+
 // Format event type for display
 function formatEventType(eventType: string, otherEventType?: string): string {
   if (eventType === "Other" && otherEventType) {
@@ -92,19 +103,41 @@ function formatDate(dateString: string): string {
 // Format date and time for display
 function formatDateTime(dateString: string | null | undefined, timeString: string | null | undefined): string {
   try {
-    if (!dateString || !timeString) {
+    if (!dateString) {
+      console.warn('⚠️ formatDateTime: dateString is missing')
       return "Not specified"
+    }
+    
+    if (!timeString) {
+      console.warn('⚠️ formatDateTime: timeString is missing, formatting date only')
+      // Format just the date if time is missing
+      try {
+        const date = new Date(dateString)
+        if (isNaN(date.getTime())) {
+          return dateString
+        }
+        return date.toLocaleDateString('en-US', {
+          weekday: 'long',
+          year: 'numeric',
+          month: 'long',
+          day: 'numeric',
+        })
+      } catch {
+        return dateString
+      }
     }
     
     const date = new Date(dateString)
     
     // Check if date is valid
     if (isNaN(date.getTime())) {
+      console.warn('⚠️ formatDateTime: Invalid date:', dateString)
       return `${dateString} at ${timeString}`
     }
     
     const [hours, minutes] = timeString.split(':')
     if (!hours || !minutes) {
+      console.warn('⚠️ formatDateTime: Invalid time format:', timeString)
       return `${dateString} at ${timeString}`
     }
     
@@ -122,36 +155,71 @@ function formatDateTime(dateString: string | null | undefined, timeString: strin
     })
     
     if (formatted.includes('Invalid')) {
+      console.warn('⚠️ formatDateTime: Formatted date contains "Invalid"')
       return `${dateString} at ${timeString}`
     }
     
     return formatted
-  } catch {
+  } catch (error) {
+    console.error('❌ formatDateTime error:', error)
     return dateString && timeString ? `${dateString} at ${timeString}` : "Not specified"
   }
 }
 
 // Format date range for display
 function formatDateRange(data: ReservationData): string {
-  if (!data.startDate) return "Not specified"
+  if (!data.startDate) {
+    console.warn('⚠️ formatDateRange: startDate is missing')
+    return "Not specified"
+  }
+  
+  console.log('📅 formatDateRange called with:')
+  console.log('   - startDate:', data.startDate)
+  console.log('   - startTime:', data.startTime)
+  console.log('   - endDate:', data.endDate)
+  console.log('   - endTime:', data.endTime)
+  console.log('   - dateRange:', data.dateRange)
   
   const startDateTime = formatDateTime(data.startDate, data.startTime || null)
+  console.log('   - formatted startDateTime:', startDateTime)
   
   if (!data.dateRange || !data.endDate) {
-    // Single day
-    return `${startDateTime} - ${data.endTime || "Not specified"}`
+    // Single day - show start date/time to end time
+    if (data.endTime) {
+      const result = `${startDateTime} - ${data.endTime}`
+      console.log('   - single day result:', result)
+      return result
+    } else {
+      const result = startDateTime
+      console.log('   - single day (no end time) result:', result)
+      return result
+    }
   } else {
-    // Date range
+    // Date range - show start date/time to end date/time
     const endDateTime = formatDateTime(data.endDate, data.endTime || null)
-    return `${startDateTime} to ${endDateTime}`
+    console.log('   - formatted endDateTime:', endDateTime)
+    const result = `${startDateTime} to ${endDateTime}`
+    console.log('   - date range result:', result)
+    return result
   }
 }
 
 // Generate HTML email template for admin notification
 function generateAdminEmailHTML(data: ReservationData): string {
+  // Log data being used for email generation
+  console.log('📧 Generating admin email HTML with data:')
+  console.log('   - startDate:', data.startDate)
+  console.log('   - endDate:', data.endDate)
+  console.log('   - startTime:', data.startTime)
+  console.log('   - endTime:', data.endTime)
+  console.log('   - dateRange:', data.dateRange)
+  
   const formattedDateRange = formatDateRange(data)
   const formattedEventType = formatEventType(data.eventType, data.otherEventType)
   const organizationRemark = (data.organizationType === "Tailor Event" ? "Organized by HU" : "Organized by Client")
+  
+  console.log('   - formattedDateRange:', formattedDateRange)
+  console.log('   - formattedEventType:', formattedEventType)
 
   return `
 <!DOCTYPE html>
@@ -235,19 +303,19 @@ function generateAdminEmailHTML(data: ReservationData): string {
       <div class="section-title">Booking Details</div>
       <div class="field">
         <span class="field-label">Name:</span>
-        <span class="field-value">${data.name}</span>
+        <span class="field-value">${escapeHtml(data.name)}</span>
       </div>
       <div class="field">
         <span class="field-label">Email:</span>
-        <span class="field-value"><a href="mailto:${data.email}">${data.email}</a></span>
+        <span class="field-value"><a href="mailto:${escapeHtml(data.email)}">${escapeHtml(data.email)}</a></span>
       </div>
       <div class="field">
         <span class="field-label">Phone:</span>
-        <span class="field-value"><a href="tel:${data.phone}">${data.phone}</a></span>
+        <span class="field-value"><a href="tel:${escapeHtml(data.phone)}">${escapeHtml(data.phone)}</a></span>
       </div>
       <div class="field">
         <span class="field-label">Number of Participants:</span>
-        <span class="field-value">${data.participants || "Not specified"}</span>
+        <span class="field-value">${data.participants ? escapeHtml(data.participants) : "Not specified"}</span>
       </div>
       <div class="field">
         <span class="field-label">Event Type:</span>
@@ -267,18 +335,18 @@ function generateAdminEmailHTML(data: ReservationData): string {
       <div class="section-title">Guest Information</div>
       <div class="field">
         <span class="field-label">Introduction:</span>
-        <div class="text-content">${(data.introduction || "").replace(/\n/g, '<br>')}</div>
+        <div class="text-content">${escapeHtml(data.introduction || "").replace(/\n/g, '<br>')}</div>
       </div>
       ${data.biography ? `
       <div class="field">
         <span class="field-label">Background & Interests:</span>
-        <div class="text-content">${data.biography.replace(/\n/g, '<br>')}</div>
+        <div class="text-content">${escapeHtml(data.biography).replace(/\n/g, '<br>')}</div>
       </div>
       ` : ''}
       ${data.specialRequests ? `
       <div class="field">
         <span class="field-label">Special Requests:</span>
-        <div class="text-content">${data.specialRequests.replace(/\n/g, '<br>')}</div>
+        <div class="text-content">${escapeHtml(data.specialRequests).replace(/\n/g, '<br>')}</div>
       </div>
       ` : ''}
     </div>
@@ -335,9 +403,20 @@ Received: ${new Date().toLocaleString('en-US', {
 
 // Generate HTML email template for user auto-reply
 function generateUserEmailHTML(data: ReservationData): string {
+  // Log data being used for email generation
+  console.log('📧 Generating user email HTML with data:')
+  console.log('   - startDate:', data.startDate)
+  console.log('   - endDate:', data.endDate)
+  console.log('   - startTime:', data.startTime)
+  console.log('   - endTime:', data.endTime)
+  console.log('   - dateRange:', data.dateRange)
+  
   const formattedDateRange = formatDateRange(data)
   const formattedEventType = formatEventType(data.eventType, data.otherEventType)
   const organizationRemark = (data.organizationType === "Tailor Event" ? "Organized by HU" : "Organized by Client")
+  
+  console.log('   - formattedDateRange:', formattedDateRange)
+  console.log('   - formattedEventType:', formattedEventType)
 
   return `
 <!DOCTYPE html>
@@ -401,7 +480,7 @@ function generateUserEmailHTML(data: ReservationData): string {
     <h1 style="margin: 0;">Reservation Inquiry Received</h1>
   </div>
   <div class="content">
-    <p>Dear ${data.name},</p>
+    <p>Dear ${escapeHtml(data.name)},</p>
     
     <p>Thank you for your reservation inquiry with Hell University! We have received your request and our curation team will carefully review it.</p>
     
@@ -417,7 +496,7 @@ function generateUserEmailHTML(data: ReservationData): string {
         <span class="summary-label">Number of Participants:</span> ${data.participants || "Not specified"}
       </div>
       <div class="summary-item">
-        <span class="summary-label">Organization:</span> ${data.organizationType} (${organizationRemark})
+        <span class="summary-label">Organization:</span> ${data.organizationType || "Not specified"} (${organizationRemark})
       </div>
     </div>
     
@@ -478,21 +557,47 @@ For inquiries: helluniversity.cm@gmail.com
  * Send reservation notification email to admin
  */
 export async function sendAdminNotification(data: ReservationData): Promise<void> {
-  const recipientEmail = process.env.RESERVATION_EMAIL || process.env.SMTP_USER
+  // STRICT: Require RESERVATION_EMAIL to be explicitly set
+  const reservationEmail = process.env.RESERVATION_EMAIL
+  const smtpUser = process.env.SMTP_USER
+  
+  console.log('='.repeat(60))
+  console.log('ADMIN EMAIL CONFIGURATION CHECK:')
+  console.log('='.repeat(60))
+  console.log('RESERVATION_EMAIL:', reservationEmail ? `✅ SET (${reservationEmail})` : '❌ NOT SET')
+  console.log('SMTP_USER (fallback):', smtpUser ? `SET (${smtpUser})` : 'NOT SET')
+  console.log('='.repeat(60))
+  
+  // Use RESERVATION_EMAIL if set, otherwise fall back to SMTP_USER
+  const recipientEmail = reservationEmail || smtpUser
 
   if (!recipientEmail) {
-    throw new Error('RESERVATION_EMAIL or SMTP_USER not configured')
+    const errorMsg = 'RESERVATION_EMAIL or SMTP_USER must be configured. RESERVATION_EMAIL is preferred.'
+    console.error('❌ CONFIGURATION ERROR:', errorMsg)
+    throw new Error(errorMsg)
+  }
+  
+  // Warn if using fallback
+  if (!reservationEmail && smtpUser) {
+    console.warn('⚠️ WARNING: RESERVATION_EMAIL not set, using SMTP_USER as fallback:', smtpUser)
+    console.warn('⚠️ This means admin notifications will go to the SMTP sender email, not a dedicated admin email!')
   }
 
   // Log the recipient email for debugging
-  console.log('Sending admin notification to:', recipientEmail)
-  console.log('RESERVATION_EMAIL env:', process.env.RESERVATION_EMAIL ? `SET (${process.env.RESERVATION_EMAIL})` : 'NOT SET')
-  console.log('SMTP_USER env:', process.env.SMTP_USER ? `SET (${process.env.SMTP_USER})` : 'NOT SET')
-  console.log('User email (from form):', data.email)
+  console.log('📧 Sending admin notification to:', recipientEmail)
+  console.log('📧 User email (from form):', data.email)
   
   // Warn if admin email is the same as user email (might be intentional, but worth noting)
   if (recipientEmail.toLowerCase() === data.email.toLowerCase()) {
     console.warn('⚠️ WARNING: Admin email recipient is the same as user email. This might be intentional.')
+  }
+  
+  // Verify the email address format
+  const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
+  if (!emailRegex.test(recipientEmail)) {
+    const errorMsg = `Invalid email address format for admin notification: ${recipientEmail}`
+    console.error('❌ VALIDATION ERROR:', errorMsg)
+    throw new Error(errorMsg)
   }
 
   const formattedEventType = formatEventType(data.eventType, data.otherEventType)
@@ -507,27 +612,76 @@ export async function sendAdminNotification(data: ReservationData): Promise<void
     html: generateAdminEmailHTML(data),
   }
 
-  console.log('Mail options prepared:', {
-    from: mailOptions.from,
-    to: mailOptions.to,
-    subject: mailOptions.subject.substring(0, 50) + '...',
-    hasText: !!mailOptions.text,
-    hasHtml: !!mailOptions.html
-  })
+  console.log('📦 Mail options prepared:')
+  console.log('   From:', mailOptions.from)
+  console.log('   To:', mailOptions.to)
+  console.log('   Subject:', mailOptions.subject.substring(0, 80))
+  console.log('   Has Text:', !!mailOptions.text)
+  console.log('   Has HTML:', !!mailOptions.html)
+  console.log('   Reply-To:', mailOptions.replyTo)
+  
+  if (!mailOptions.to || mailOptions.to !== recipientEmail) {
+    console.error('❌ CRITICAL: Mail options "to" field does not match recipientEmail!')
+    console.error('   Expected:', recipientEmail)
+    console.error('   Actual:', mailOptions.to)
+    throw new Error(`Email recipient mismatch: expected ${recipientEmail}, got ${mailOptions.to}`)
+  }
   
   const emailTransporter = getTransporter()
-  console.log('Transporter obtained, attempting to send...')
+  console.log('✅ Transporter obtained, attempting to send email...')
+  console.log('   Transporter host:', process.env.SMTP_HOST || 'smtp.gmail.com')
+  console.log('   Transporter port:', process.env.SMTP_PORT || '587')
+  console.log('   Transporter user:', process.env.SMTP_USER ? 'SET' : 'NOT SET')
   
   try {
+    console.log('📤 Calling sendMail()...')
     const result = await emailTransporter.sendMail(mailOptions)
-    console.log('✅ Admin notification email sent successfully!')
-    console.log('Message ID:', result.messageId)
+    
+    console.log('='.repeat(60))
+    console.log('✅ ADMIN NOTIFICATION EMAIL SENT SUCCESSFULLY!')
+    console.log('='.repeat(60))
+    console.log('Message ID:', result.messageId || 'N/A')
     console.log('Response:', result.response || 'N/A')
+    console.log('Accepted recipients:', result.accepted || [])
+    console.log('Rejected recipients:', result.rejected || [])
+    console.log('Pending recipients:', result.pending || [])
     console.log('To:', recipientEmail)
+    console.log('='.repeat(60))
+    
+    // Check if email was actually accepted
+    if (result.rejected && result.rejected.length > 0) {
+      console.error('❌ WARNING: Email was rejected by SMTP server!')
+      console.error('Rejected addresses:', result.rejected)
+      throw new Error(`Email was rejected by SMTP server: ${result.rejected.join(', ')}`)
+    }
+    
+    if (!result.accepted || result.accepted.length === 0) {
+      console.error('❌ WARNING: No recipients were accepted by SMTP server!')
+      throw new Error('No recipients were accepted by SMTP server')
+    }
+    
     return result
   } catch (sendError) {
-    console.error('❌ sendMail() threw an error:')
-    console.error('Error:', sendError)
+    console.error('='.repeat(60))
+    console.error('❌ sendMail() THREW AN ERROR:')
+    console.error('='.repeat(60))
+    console.error('Error type:', sendError?.constructor?.name || 'Unknown')
+    console.error('Error message:', sendError instanceof Error ? sendError.message : String(sendError))
+    
+    // Check for nodemailer-specific error properties
+    if (sendError && typeof sendError === 'object') {
+      const err = sendError as any
+      console.error('Error code:', err.code || 'N/A')
+      console.error('Error command:', err.command || 'N/A')
+      console.error('Error response:', err.response || 'N/A')
+      console.error('Error responseCode:', err.responseCode || 'N/A')
+    }
+    
+    console.error('Full error object:', sendError)
+    if (sendError instanceof Error) {
+      console.error('Error stack:', sendError.stack)
+    }
+    console.error('='.repeat(60))
     throw sendError // Re-throw to be caught by outer try-catch
   }
 }
@@ -577,6 +731,27 @@ export async function sendUserConfirmation(data: ReservationData): Promise<void>
 export async function sendReservationEmails(
   data: ReservationData
 ): Promise<{ adminSent: boolean; userSent: boolean; errors: string[] }> {
+  // Log the received data structure for debugging
+  console.log('='.repeat(60))
+  console.log('📋 RECEIVED DATA FOR EMAIL GENERATION:')
+  console.log('='.repeat(60))
+  console.log('Name:', data.name || 'MISSING')
+  console.log('Email:', data.email || 'MISSING')
+  console.log('Phone:', data.phone || 'MISSING')
+  console.log('Participants:', data.participants || 'MISSING')
+  console.log('Event Type:', data.eventType || 'MISSING')
+  console.log('Other Event Type:', data.otherEventType || 'N/A')
+  console.log('Date Range:', data.dateRange ? 'YES' : 'NO')
+  console.log('Start Date:', data.startDate || 'MISSING')
+  console.log('End Date:', data.endDate || 'MISSING')
+  console.log('Start Time:', data.startTime || 'MISSING')
+  console.log('End Time:', data.endTime || 'MISSING')
+  console.log('Organization Type:', data.organizationType || 'MISSING')
+  console.log('Introduction:', data.introduction ? `${data.introduction.substring(0, 50)}...` : 'MISSING')
+  console.log('Biography:', data.biography ? `${data.biography.substring(0, 50)}...` : 'N/A')
+  console.log('Special Requests:', data.specialRequests ? `${data.specialRequests.substring(0, 50)}...` : 'N/A')
+  console.log('='.repeat(60))
+  
   const errors: string[] = []
   let adminSent = false
   let userSent = false
