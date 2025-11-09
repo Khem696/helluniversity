@@ -32,6 +32,8 @@ export async function POST(request: Request) {
     const file = formData.get("file") as File | null
     const title = formData.get("title") as string | null
     const eventInfo = formData.get("event_info") as string | null
+    const category = formData.get("category") as string | null
+    const displayOrder = formData.get("display_order") as string | null
 
     if (!file) {
       return NextResponse.json(
@@ -66,19 +68,33 @@ export async function POST(request: Request) {
     const imageId = randomUUID()
     const now = Math.floor(Date.now() / 1000)
 
+    // Get max display_order for this category if not provided
+    let finalDisplayOrder = displayOrder ? parseInt(displayOrder) : null
+    if (finalDisplayOrder === null && category) {
+      const maxResult = await db.execute({
+        sql: `SELECT COALESCE(MAX(display_order), -1) + 1 as next_order FROM images WHERE category = ?`,
+        args: [category],
+      })
+      finalDisplayOrder = (maxResult.rows[0] as any).next_order
+    } else if (finalDisplayOrder === null) {
+      finalDisplayOrder = 0
+    }
+
     await db.execute({
       sql: `
         INSERT INTO images (
-          id, blob_url, title, event_info, format, 
+          id, blob_url, title, event_info, category, display_order, format, 
           width, height, file_size, original_filename, 
           created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `,
       args: [
         imageId,
         processed.url,
         title || null,
         eventInfo || null,
+        category || null,
+        finalDisplayOrder,
         processed.format,
         processed.width,
         processed.height,
@@ -97,6 +113,8 @@ export async function POST(request: Request) {
         pathname: processed.pathname,
         title: title || null,
         event_info: eventInfo || null,
+        category: category || null,
+        display_order: finalDisplayOrder,
         width: processed.width,
         height: processed.height,
         file_size: processed.fileSize,
@@ -138,25 +156,34 @@ export async function GET(request: Request) {
     const { searchParams } = new URL(request.url)
     const limit = parseInt(searchParams.get("limit") || "50")
     const offset = parseInt(searchParams.get("offset") || "0")
+    const category = searchParams.get("category") || null
 
     const db = getTursoClient()
 
+    // Build WHERE clause
+    const whereClause = category ? "WHERE category = ?" : ""
+    const countArgs = category ? [category] : []
+
     // Get total count
-    const countResult = await db.execute("SELECT COUNT(*) as count FROM images")
+    const countResult = await db.execute({
+      sql: `SELECT COUNT(*) as count FROM images ${whereClause}`,
+      args: countArgs,
+    })
     const total = (countResult.rows[0] as any).count
 
-    // Get images
+    // Get images - order by category, then display_order, then created_at
     const result = await db.execute({
       sql: `
         SELECT 
-          id, blob_url, title, event_info, format,
+          id, blob_url, title, event_info, category, display_order, format,
           width, height, file_size, original_filename,
           created_at, updated_at
         FROM images
-        ORDER BY created_at DESC
+        ${whereClause}
+        ORDER BY category ASC, display_order ASC, created_at DESC
         LIMIT ? OFFSET ?
       `,
-      args: [limit, offset],
+      args: [...countArgs, limit, offset],
     })
 
     return NextResponse.json({

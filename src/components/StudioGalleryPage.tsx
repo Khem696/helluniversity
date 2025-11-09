@@ -22,11 +22,66 @@ export function StudioGalleryPage() {
   const [artworkImages, setArtworkImages] = useState<string[]>([]);
   const [buildingImages, setBuildingImages] = useState<string[]>([]);
   const [galleryImages, setGalleryImages] = useState<string[]>([]);
+  const [isLoadingImages, setIsLoadingImages] = useState(true);
 
+  // Fetch images from API, fallback to static arrays
   useEffect(() => {
-    setArtworkImages(ARTWORK_STUDIO_IMAGES);
-    setBuildingImages(BUILDING_STUDIO_IMAGES);
-    setGalleryImages(GALLERY_IMAGES_PUBLIC);
+    async function fetchImages() {
+      try {
+        // Fetch all three categories in parallel
+        const [artworkRes, buildingRes, galleryRes] = await Promise.all([
+          fetch("/api/images?category=artwork_studio&limit=100"),
+          fetch("/api/images?category=building_studio&limit=100"),
+          fetch("/api/images?category=gallery&limit=100"),
+        ]);
+
+        // Process artwork images
+        if (artworkRes.ok) {
+          const artworkData = await artworkRes.json();
+          if (artworkData.success && artworkData.images?.length > 0) {
+            setArtworkImages(artworkData.images.map((img: any) => img.blob_url));
+          } else {
+            setArtworkImages(ARTWORK_STUDIO_IMAGES);
+          }
+        } else {
+          setArtworkImages(ARTWORK_STUDIO_IMAGES);
+        }
+
+        // Process building images
+        if (buildingRes.ok) {
+          const buildingData = await buildingRes.json();
+          if (buildingData.success && buildingData.images?.length > 0) {
+            setBuildingImages(buildingData.images.map((img: any) => img.blob_url));
+          } else {
+            setBuildingImages(BUILDING_STUDIO_IMAGES);
+          }
+        } else {
+          setBuildingImages(BUILDING_STUDIO_IMAGES);
+        }
+
+        // Process gallery images
+        if (galleryRes.ok) {
+          const galleryData = await galleryRes.json();
+          if (galleryData.success && galleryData.images?.length > 0) {
+            setGalleryImages(galleryData.images.map((img: any) => img.blob_url));
+          } else {
+            setGalleryImages(GALLERY_IMAGES_PUBLIC);
+          }
+        } else {
+          setGalleryImages(GALLERY_IMAGES_PUBLIC);
+        }
+      } catch (error) {
+        console.error("Failed to fetch images from API, using static images:", error);
+        // Fallback to static images
+        setArtworkImages(ARTWORK_STUDIO_IMAGES);
+        setBuildingImages(BUILDING_STUDIO_IMAGES);
+        setGalleryImages(GALLERY_IMAGES_PUBLIC);
+      } finally {
+        setIsLoadingImages(false);
+      }
+    }
+
+    fetchImages();
   }, []);
 
   const allImages = useMemo(

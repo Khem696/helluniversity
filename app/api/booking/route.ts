@@ -1,5 +1,7 @@
 import { NextResponse } from "next/server"
 import { sendReservationEmails, verifyEmailConfig } from "@/lib/email"
+import { createBooking } from "@/lib/bookings"
+import { checkRateLimit, getRateLimitIdentifier } from "@/lib/rate-limit"
 
 // Helper function to get client IP address
 function getClientIP(request: Request): string | null {
@@ -146,6 +148,29 @@ export async function POST(request: Request) {
       )
     }
 
+    // Check rate limit
+    const identifier = getRateLimitIdentifier(request)
+    const rateLimitResult = await checkRateLimit(identifier, "booking")
+    
+    if (!rateLimitResult.success) {
+      return NextResponse.json(
+        {
+          success: false,
+          error: "Rate limit exceeded. Please try again later.",
+          limit: rateLimitResult.limit,
+          reset: rateLimitResult.reset,
+        },
+        { 
+          status: 429,
+          headers: {
+            "X-RateLimit-Limit": rateLimitResult.limit.toString(),
+            "X-RateLimit-Remaining": rateLimitResult.remaining.toString(),
+            "X-RateLimit-Reset": rateLimitResult.reset.toString(),
+          }
+        }
+      )
+    }
+
     // Validate required booking data
     if (!bookingData.name || !bookingData.email || !bookingData.startDate) {
       return NextResponse.json(
@@ -230,6 +255,17 @@ export async function POST(request: Request) {
         specialRequests: normalizedBookingData.specialRequests ? `${normalizedBookingData.specialRequests.substring(0, 30)}...` : "empty",
       })
       
+      // Save booking to database
+      let savedBooking
+      try {
+        savedBooking = await createBooking(normalizedBookingData)
+        console.error("✅ Booking saved to database:", savedBooking.id)
+      } catch (dbError) {
+        console.error("❌ Failed to save booking to database:", dbError)
+        // Continue with email sending even if DB save fails
+        // This ensures users still get confirmation
+      }
+      
       const emailStatus = await sendReservationEmails(normalizedBookingData)
       
       console.error("Email sending results:", {
@@ -247,6 +283,7 @@ export async function POST(request: Request) {
         return NextResponse.json({
           success: true,
           message: "Booking request received successfully. Confirmation email has been sent.",
+          bookingId: savedBooking?.id,
           emailStatus: {
             adminNotification: emailStatus.adminSent,
             userConfirmation: emailStatus.userSent,

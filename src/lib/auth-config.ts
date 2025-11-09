@@ -15,7 +15,7 @@ import Google from "next-auth/providers/google"
  * - AUTH_URL: Base URL of your application
  * - GOOGLE_CLIENT_ID: Google OAuth Client ID
  * - GOOGLE_CLIENT_SECRET: Google OAuth Client Secret
- * - GOOGLE_WORKSPACE_DOMAIN: Your Google Workspace domain (e.g., helluniversity.com)
+ * - GOOGLE_WORKSPACE_DOMAIN: Your Google Workspace domain (e.g., huculturehub.com)
  */
 
 export const { auth, handlers } = NextAuth({

@@ -4,8 +4,8 @@ export const organizationStructuredData = {
   "name": "Hell University",
   "description": "A Cultural House for Creative Expression. Promoting cultural activities and community engagement through art, music, and creativity.",
   "url": process.env.NODE_ENV === 'production' ? "https://khem696.github.io/helluniversity" : "http://localhost:3000",
-  "logo": "https://helluniversity.com/logo.png",
-  "image": "https://helluniversity.com/og-image.jpg",
+  "logo": "https://huculturehub.com/logo.png",
+  "image": "https://huculturehub.com/og-image.jpg",
   "address": {
     "@type": "PostalAddress",
     "streetAddress": "123 Creative Street",
@@ -18,12 +18,12 @@ export const organizationStructuredData = {
     "@type": "ContactPoint",
     "telephone": "+1-555-123-4567",
     "contactType": "customer service",
-    "email": "hello@helluniversity.com"
+    "email": "hello@huculturehub.com"
   },
   "sameAs": [
-    "https://facebook.com/helluniversity",
-    "https://instagram.com/helluniversity",
-    "https://twitter.com/helluniversity"
+    "https://facebook.com/huculturehub",
+    "https://instagram.com/huculturehub",
+    "https://twitter.com/huculturehub"
   ],
   "foundingDate": "2024",
   "mission": "Promoting cultural activities and community engagement through art, music, and creativity"
@@ -49,7 +49,7 @@ export const localBusinessStructuredData = {
   "description": "A Cultural House for Creative Expression. Promoting cultural activities and community engagement through art, music, and creativity.",
   "url": process.env.NODE_ENV === 'production' ? "https://khem696.github.io/helluniversity" : "http://localhost:3000",
   "telephone": "+1-555-123-4567",
-  "email": "hello@helluniversity.com",
+  "email": "hello@huculturehub.com",
   "address": {
     "@type": "PostalAddress",
     "streetAddress": "123 Creative Street",
@@ -67,8 +67,8 @@ export const localBusinessStructuredData = {
   "priceRange": "$$",
   "paymentAccepted": "Cash, Credit Card",
   "currenciesAccepted": "USD",
-  "image": "https://helluniversity.com/og-image.jpg",
-  "logo": "https://helluniversity.com/logo.png"
+  "image": "https://huculturehub.com/og-image.jpg",
+  "logo": "https://huculturehub.com/logo.png"
 }
 
 export const eventStructuredData = {

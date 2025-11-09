@@ -1,6 +1,7 @@
 "use client"
+import { useState, useEffect } from "react"
 import { EventSlider } from "./EventSlider"
-import { mockEvents, splitEventsByDate } from "@/data/events"
+import { mockEvents, splitEventsByDate, type EventSlide } from "@/data/events"
 
 /**
  * EventSliders Component
@@ -9,13 +10,100 @@ import { mockEvents, splitEventsByDate } from "@/data/events"
  * - Archive Slider (middle): Past/finished events
  * - Current Slider (bottom): Current/upcoming events
  * 
- * Future: Replace mockEvents with API call or database query
- * Example:
- *   const events = await fetch('/api/events').then(res => res.json())
+ * Fetches events from API, falls back to mock data if API fails
  */
 export function EventSliders() {
-  // Split events into past and current/upcoming
-  const { pastEvents, currentEvents } = splitEventsByDate(mockEvents)
+  const [pastEvents, setPastEvents] = useState<EventSlide[]>([])
+  const [currentEvents, setCurrentEvents] = useState<EventSlide[]>([])
+  const [isLoading, setIsLoading] = useState(true)
+
+  useEffect(() => {
+    async function fetchEvents() {
+      try {
+        const response = await fetch("/api/events")
+        if (!response.ok) {
+          throw new Error("Failed to fetch events")
+        }
+
+        const data = await response.json()
+        if (data.success) {
+          // Convert API events to EventSlide format
+          const convertToEventSlide = (event: any): EventSlide => {
+            // Use end_date if available, otherwise start_date or event_date
+            const eventDate = event.end_date 
+              ? new Date(event.end_date * 1000)
+              : event.start_date
+              ? new Date(event.start_date * 1000)
+              : event.event_date
+              ? new Date(event.event_date * 1000)
+              : new Date()
+
+            // Format date as YYYY-MM-DD
+            const dateStr = eventDate.toISOString().split("T")[0]
+            
+            // Extract time from description or use default
+            const timeMatch = event.description?.match(/(\d{1,2}\.\d{2})\s*-\s*(\d{1,2}\.\d{2})/)
+            const time = timeMatch ? `${timeMatch[1]} - ${timeMatch[2]}` : "00.00 - 23.59"
+
+            return {
+              id: event.id,
+              image: event.image_url || "",
+              title: event.title,
+              description: event.description || "",
+              date: dateStr,
+              time: time,
+            }
+          }
+
+          // Use API data if available
+          if (data.pastEvents && data.currentEvents) {
+            setPastEvents(data.pastEvents.map(convertToEventSlide))
+            setCurrentEvents(data.currentEvents.map(convertToEventSlide))
+          } else if (data.events) {
+            // If single array, split by end_date
+            const now = Math.floor(Date.now() / 1000)
+            const past: EventSlide[] = []
+            const current: EventSlide[] = []
+
+            data.events.forEach((event: any) => {
+              const endDate = event.end_date || event.event_date || event.start_date
+              const slide = convertToEventSlide(event)
+              if (endDate && endDate < now) {
+                past.push(slide)
+              } else {
+                current.push(slide)
+              }
+            })
+
+            // Sort past: newest first
+            past.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
+            // Sort current: oldest first
+            current.sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime())
+
+            setPastEvents(past)
+            setCurrentEvents(current)
+          }
+        } else {
+          throw new Error("API returned error")
+        }
+      } catch (error) {
+        console.error("Failed to fetch events from API, using mock data:", error)
+        // Fallback to mock data
+        const { pastEvents: mockPast, currentEvents: mockCurrent } = splitEventsByDate(mockEvents)
+        setPastEvents(mockPast)
+        setCurrentEvents(mockCurrent)
+      } finally {
+        setIsLoading(false)
+      }
+    }
+
+    fetchEvents()
+  }, [])
+
+  // Show loading state (optional - can be removed if not needed)
+  if (isLoading) {
+    return null // Or return a loading spinner
+  }
 
   return (
     <>
