@@ -66,6 +66,23 @@ export default async function AdminDashboard() {
             </div>
           </Link>
 
+          <Link
+            href="/admin/bookings"
+            className="block p-6 bg-white rounded-lg shadow-md hover:shadow-lg transition-shadow"
+          >
+            <div className="flex items-center gap-4">
+              <div className="flex-shrink-0 w-12 h-12 bg-purple-100 rounded-lg flex items-center justify-center">
+                <svg className="w-6 h-6 text-purple-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" />
+                </svg>
+              </div>
+              <div>
+                <h3 className="text-lg font-semibold text-gray-900">Reservations</h3>
+                <p className="text-sm text-gray-600">Manage booking requests</p>
+              </div>
+            </div>
+          </Link>
+
           <InitDatabaseButton />
           <MigrateImagesButton />
       </div>

@@ -60,6 +60,12 @@ export default async function AdminLayout({
               >
                 Events
               </Link>
+              <Link
+                href="/admin/bookings"
+                className="text-sm font-medium text-gray-700 hover:text-gray-900 transition-colors"
+              >
+                Reservations
+              </Link>
             </nav>
 
             {/* User Info & Sign Out */}
