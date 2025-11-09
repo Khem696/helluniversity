@@ -14,14 +14,14 @@ interface ReservationData {
   name: string
   email: string
   phone: string
-  participants: string
+  participants?: string
   eventType: string
   otherEventType?: string
   dateRange: boolean
   startDate: string | null
   endDate: string | null
-  startTime: string
-  endTime: string
+  startTime?: string
+  endTime?: string
   organizationType: "Tailor Event" | "Space Only" | ""
   introduction: string
   biography: string
@@ -90,12 +90,28 @@ function formatDate(dateString: string): string {
 }
 
 // Format date and time for display
-function formatDateTime(dateString: string, timeString: string): string {
+function formatDateTime(dateString: string | null | undefined, timeString: string | null | undefined): string {
   try {
+    if (!dateString || !timeString) {
+      return "Not specified"
+    }
+    
     const date = new Date(dateString)
+    
+    // Check if date is valid
+    if (isNaN(date.getTime())) {
+      return `${dateString} at ${timeString}`
+    }
+    
     const [hours, minutes] = timeString.split(':')
-    date.setHours(parseInt(hours), parseInt(minutes))
-    return date.toLocaleString('en-US', {
+    if (!hours || !minutes) {
+      return `${dateString} at ${timeString}`
+    }
+    
+    date.setHours(parseInt(hours, 10), parseInt(minutes, 10))
+    
+    // Check if the formatted date is valid
+    const formatted = date.toLocaleString('en-US', {
       weekday: 'long',
       year: 'numeric',
       month: 'long',
@@ -104,8 +120,14 @@ function formatDateTime(dateString: string, timeString: string): string {
       minute: '2-digit',
       hour12: true,
     })
+    
+    if (formatted.includes('Invalid')) {
+      return `${dateString} at ${timeString}`
+    }
+    
+    return formatted
   } catch {
-    return `${dateString} at ${timeString}`
+    return dateString && timeString ? `${dateString} at ${timeString}` : "Not specified"
   }
 }
 
@@ -113,14 +135,14 @@ function formatDateTime(dateString: string, timeString: string): string {
 function formatDateRange(data: ReservationData): string {
   if (!data.startDate) return "Not specified"
   
-  const startDateTime = formatDateTime(data.startDate, data.startTime)
+  const startDateTime = formatDateTime(data.startDate, data.startTime || null)
   
   if (!data.dateRange || !data.endDate) {
     // Single day
-    return `${startDateTime} - ${data.endTime}`
+    return `${startDateTime} - ${data.endTime || "Not specified"}`
   } else {
     // Date range
-    const endDateTime = formatDateTime(data.endDate, data.endTime)
+    const endDateTime = formatDateTime(data.endDate, data.endTime || null)
     return `${startDateTime} to ${endDateTime}`
   }
 }
@@ -129,7 +151,7 @@ function formatDateRange(data: ReservationData): string {
 function generateAdminEmailHTML(data: ReservationData): string {
   const formattedDateRange = formatDateRange(data)
   const formattedEventType = formatEventType(data.eventType, data.otherEventType)
-  const organizationRemark = data.organizationType === "Tailor Event" ? "Organized by HU" : "Organized by Client"
+  const organizationRemark = (data.organizationType === "Tailor Event" ? "Organized by HU" : "Organized by Client")
 
   return `
 <!DOCTYPE html>
@@ -225,7 +247,7 @@ function generateAdminEmailHTML(data: ReservationData): string {
       </div>
       <div class="field">
         <span class="field-label">Number of Participants:</span>
-        <span class="field-value">${data.participants}</span>
+        <span class="field-value">${data.participants || "Not specified"}</span>
       </div>
       <div class="field">
         <span class="field-label">Event Type:</span>
@@ -237,7 +259,7 @@ function generateAdminEmailHTML(data: ReservationData): string {
       </div>
       <div class="field">
         <span class="field-label">Organization:</span>
-        <span class="field-value">${data.organizationType} (${organizationRemark})</span>
+        <span class="field-value">${data.organizationType || "Not specified"} (${organizationRemark})</span>
       </div>
     </div>
 
@@ -245,7 +267,7 @@ function generateAdminEmailHTML(data: ReservationData): string {
       <div class="section-title">Guest Information</div>
       <div class="field">
         <span class="field-label">Introduction:</span>
-        <div class="text-content">${data.introduction.replace(/\n/g, '<br>')}</div>
+        <div class="text-content">${(data.introduction || "").replace(/\n/g, '<br>')}</div>
       </div>
       ${data.biography ? `
       <div class="field">
@@ -281,7 +303,7 @@ function generateAdminEmailHTML(data: ReservationData): string {
 function generateAdminEmailText(data: ReservationData): string {
   const formattedDateRange = formatDateRange(data)
   const formattedEventType = formatEventType(data.eventType, data.otherEventType)
-  const organizationRemark = data.organizationType === "Tailor Event" ? "Organized by HU" : "Organized by Client"
+  const organizationRemark = (data.organizationType === "Tailor Event" ? "Organized by HU" : "Organized by Client")
 
   return `
 NEW RESERVATION INQUIRY - HELL UNIVERSITY
@@ -291,15 +313,15 @@ BOOKING DETAILS:
 Name: ${data.name}
 Email: ${data.email}
 Phone: ${data.phone}
-Number of Participants: ${data.participants}
+Number of Participants: ${data.participants || "Not specified"}
 Event Type: ${formattedEventType}
 Date & Time: ${formattedDateRange}
-Organization: ${data.organizationType} (${organizationRemark})
+Organization: ${data.organizationType || "Not specified"} (${organizationRemark})
 
 GUEST INFORMATION:
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 Introduction:
-${data.introduction}
+${data.introduction || "Not provided"}
 
 ${data.biography ? `Background & Interests:\n${data.biography}\n\n` : ''}${data.specialRequests ? `Special Requests:\n${data.specialRequests}\n\n` : ''}
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -315,7 +337,7 @@ Received: ${new Date().toLocaleString('en-US', {
 function generateUserEmailHTML(data: ReservationData): string {
   const formattedDateRange = formatDateRange(data)
   const formattedEventType = formatEventType(data.eventType, data.otherEventType)
-  const organizationRemark = data.organizationType === "Tailor Event" ? "Organized by HU" : "Organized by Client"
+  const organizationRemark = (data.organizationType === "Tailor Event" ? "Organized by HU" : "Organized by Client")
 
   return `
 <!DOCTYPE html>
@@ -392,7 +414,7 @@ function generateUserEmailHTML(data: ReservationData): string {
         <span class="summary-label">Date & Time:</span> ${formattedDateRange}
       </div>
       <div class="summary-item">
-        <span class="summary-label">Number of Participants:</span> ${data.participants}
+        <span class="summary-label">Number of Participants:</span> ${data.participants || "Not specified"}
       </div>
       <div class="summary-item">
         <span class="summary-label">Organization:</span> ${data.organizationType} (${organizationRemark})
@@ -423,7 +445,7 @@ function generateUserEmailHTML(data: ReservationData): string {
 function generateUserEmailText(data: ReservationData): string {
   const formattedDateRange = formatDateRange(data)
   const formattedEventType = formatEventType(data.eventType, data.otherEventType)
-  const organizationRemark = data.organizationType === "Tailor Event" ? "Organized by HU" : "Organized by Client"
+  const organizationRemark = (data.organizationType === "Tailor Event" ? "Organized by HU" : "Organized by Client")
 
   return `
 RESERVATION INQUIRY RECEIVED - HELL UNIVERSITY
@@ -436,8 +458,8 @@ YOUR INQUIRY SUMMARY:
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 Event Type: ${formattedEventType}
 Date & Time: ${formattedDateRange}
-Number of Participants: ${data.participants}
-Organization: ${data.organizationType} (${organizationRemark})
+Number of Participants: ${data.participants || "Not specified"}
+Organization: ${data.organizationType || "Not specified"} (${organizationRemark})
 
 We honor each request with thoughtful consideration and will respond within 48 hours to discuss your vision and craft an extraordinary experience tailored to your unique sensibilities.
 
@@ -462,6 +484,17 @@ export async function sendAdminNotification(data: ReservationData): Promise<void
     throw new Error('RESERVATION_EMAIL or SMTP_USER not configured')
   }
 
+  // Log the recipient email for debugging
+  console.log('Sending admin notification to:', recipientEmail)
+  console.log('RESERVATION_EMAIL env:', process.env.RESERVATION_EMAIL ? `SET (${process.env.RESERVATION_EMAIL})` : 'NOT SET')
+  console.log('SMTP_USER env:', process.env.SMTP_USER ? `SET (${process.env.SMTP_USER})` : 'NOT SET')
+  console.log('User email (from form):', data.email)
+  
+  // Warn if admin email is the same as user email (might be intentional, but worth noting)
+  if (recipientEmail.toLowerCase() === data.email.toLowerCase()) {
+    console.warn('⚠️ WARNING: Admin email recipient is the same as user email. This might be intentional.')
+  }
+
   const formattedEventType = formatEventType(data.eventType, data.otherEventType)
   const formattedDateRange = formatDateRange(data)
 
@@ -475,7 +508,10 @@ export async function sendAdminNotification(data: ReservationData): Promise<void
   }
 
   const emailTransporter = getTransporter()
-  await emailTransporter.sendMail(mailOptions)
+  const result = await emailTransporter.sendMail(mailOptions)
+  
+  // Log successful send
+  console.log('Admin notification email sent successfully:', result.messageId, 'to:', recipientEmail)
 }
 
 /**
@@ -490,8 +526,10 @@ export async function sendUserConfirmation(data: ReservationData): Promise<void>
     html: generateUserEmailHTML(data),
   }
 
+  console.log('Sending user confirmation to:', data.email)
   const emailTransporter = getTransporter()
-  await emailTransporter.sendMail(mailOptions)
+  const result = await emailTransporter.sendMail(mailOptions)
+  console.log('User confirmation email sent successfully:', result.messageId, 'to:', data.email)
 }
 
 /**
@@ -507,22 +545,36 @@ export async function sendReservationEmails(
 
   // Send admin notification
   try {
+    console.log('Attempting to send admin notification email...')
     await sendAdminNotification(data)
     adminSent = true
+    console.log('Admin notification sent successfully')
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : 'Unknown error'
     errors.push(`Admin notification failed: ${errorMessage}`)
     console.error('Failed to send admin notification:', error)
+    console.error('Error details:', {
+      message: errorMessage,
+      stack: error instanceof Error ? error.stack : undefined,
+      recipientEmail: process.env.RESERVATION_EMAIL || process.env.SMTP_USER
+    })
   }
 
   // Send user confirmation
   try {
+    console.log('Attempting to send user confirmation email...')
     await sendUserConfirmation(data)
     userSent = true
+    console.log('User confirmation sent successfully')
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : 'Unknown error'
     errors.push(`User confirmation failed: ${errorMessage}`)
     console.error('Failed to send user confirmation:', error)
+    console.error('Error details:', {
+      message: errorMessage,
+      stack: error instanceof Error ? error.stack : undefined,
+      userEmail: data.email
+    })
   }
 
   return { adminSent, userSent, errors }

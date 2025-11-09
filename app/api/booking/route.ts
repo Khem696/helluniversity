@@ -146,37 +146,62 @@ export async function POST(request: Request) {
       )
     }
 
-    // Send emails - booking fails if email fails (blocking)
+    // Send emails - prioritize user confirmation
     try {
+      console.log("Starting email sending process...")
+      console.log("RESERVATION_EMAIL configured:", process.env.RESERVATION_EMAIL ? "YES" : "NO")
+      console.log("SMTP_USER configured:", process.env.SMTP_USER ? "YES" : "NO")
+      
       const emailStatus = await sendReservationEmails(bookingData)
       
-      // Check if both emails were sent successfully
-      if (!emailStatus.adminSent || !emailStatus.userSent) {
-        const errorMessages = emailStatus.errors.join("; ")
-        console.error("Email sending failed:", errorMessages)
-        
-        return NextResponse.json(
-          { 
-            success: false, 
-            error: "Failed to send confirmation emails. Please try again.",
-            details: errorMessages,
-            emailStatus: {
-              adminNotification: emailStatus.adminSent,
-              userConfirmation: emailStatus.userSent,
-            }
-          },
-          { status: 500 }
-        )
-      }
-
-      // Log successful booking
-      console.log("Booking received and emails sent successfully:", bookingData)
-
-      // Return success only if emails were sent successfully
-      return NextResponse.json({
-        success: true,
-        message: "Booking request received successfully. Confirmation emails have been sent.",
+      console.log("Email sending results:", {
+        adminSent: emailStatus.adminSent,
+        userSent: emailStatus.userSent,
+        errors: emailStatus.errors
       })
+      
+      // If user confirmation was sent, consider it a success (user got their email)
+      // Admin notification failure is logged but doesn't block the booking
+      if (emailStatus.userSent) {
+        // Log admin notification status
+        if (!emailStatus.adminSent) {
+          console.error("⚠️ WARNING: Admin notification FAILED, but user confirmation sent")
+          console.error("Admin email errors:", emailStatus.errors.filter(e => e.includes("Admin")))
+          console.error("This means the reservation was received but admin was NOT notified!")
+        } else {
+          console.log("✅ Both admin notification and user confirmation sent successfully")
+        }
+        
+        // Log successful booking
+        console.log("Booking received and user confirmation sent:", bookingData)
+
+        // Return success if user email was sent
+        return NextResponse.json({
+          success: true,
+          message: "Booking request received successfully. Confirmation email has been sent.",
+          emailStatus: {
+            adminNotification: emailStatus.adminSent,
+            userConfirmation: emailStatus.userSent,
+          }
+        })
+      }
+      
+      // If user email failed, return error
+      const errorMessages = emailStatus.errors.join("; ")
+      console.error("User confirmation email failed:", errorMessages)
+      
+      return NextResponse.json(
+        { 
+          success: false, 
+          error: "Failed to send confirmation email. Please try again.",
+          details: errorMessages,
+          emailStatus: {
+            adminNotification: emailStatus.adminSent,
+            userConfirmation: emailStatus.userSent,
+          }
+        },
+        { status: 500 }
+      )
     } catch (emailError) {
       // Email sending failed - booking fails
       const errorMessage = emailError instanceof Error ? emailError.message : "Unknown email error"
