@@ -36,14 +36,52 @@ export async function POST(request: Request) {
       }
     )
 
-    const data = await response.json()
+    // Check if HTTP response is OK
+    if (!response.ok) {
+      console.error("Turnstile API HTTP error:", response.status, response.statusText)
+      return NextResponse.json(
+        {
+          success: false,
+          error: "Turnstile verification service error",
+        },
+        { status: 500 }
+      )
+    }
 
+    // Parse JSON response
+    let data: any
+    try {
+      data = await response.json()
+    } catch (jsonError) {
+      console.error("Failed to parse Turnstile response:", jsonError)
+      return NextResponse.json(
+        {
+          success: false,
+          error: "Invalid response from verification service",
+        },
+        { status: 500 }
+      )
+    }
+
+    // Validate response structure and success field
+    if (!data || typeof data.success !== "boolean") {
+      console.error("Invalid Turnstile response structure:", data)
+      return NextResponse.json(
+        {
+          success: false,
+          error: "Invalid verification response",
+        },
+        { status: 500 }
+      )
+    }
+
+    // Check if verification was successful
     if (!data.success) {
       return NextResponse.json(
         {
           success: false,
           error: "Turnstile verification failed",
-          "error-codes": data["error-codes"],
+          "error-codes": data["error-codes"] || [],
         },
         { status: 400 }
       )
