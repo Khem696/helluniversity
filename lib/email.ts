@@ -266,7 +266,7 @@ function generateAdminEmailHTML(data: ReservationData): string {
     console.error('   - endTime:', data.endTime)
     console.error('   - dateRange:', data.dateRange)
     
-    // Safely get all values with defaults using ensureString - do this BEFORE template string
+    // Safely get all values with defaults using ensureString - do this BEFORE any string operations
     const safeName = ensureString(data.name) || "Not provided"
     const safeEmail = ensureString(data.email) || "Not provided"
     const safePhone = ensureString(data.phone) || "Not provided"
@@ -276,11 +276,28 @@ function generateAdminEmailHTML(data: ReservationData): string {
     const safeSpecialRequests = (data.specialRequests && ensureString(data.specialRequests).trim()) ? ensureString(data.specialRequests) : null
     const safeOrganizationType = ensureString(data.organizationType) || "Not specified"
     
-    const formattedDateRange = ensureString(formatDateRange(data) || "Not specified")
-    const formattedEventType = ensureString(formatEventType(data.eventType || "", data.otherEventType) || "Not specified")
+    // Format date range and event type with error handling
+    let formattedDateRange = "Not specified"
+    let formattedEventType = "Not specified"
+    try {
+      const dateRangeResult = formatDateRange(data)
+      formattedDateRange = ensureString(dateRangeResult) || "Not specified"
+    } catch (e) {
+      console.error('❌ Error formatting date range:', e)
+      formattedDateRange = "Not specified"
+    }
+    
+    try {
+      const eventTypeResult = formatEventType(data.eventType || "", data.otherEventType)
+      formattedEventType = ensureString(eventTypeResult) || "Not specified"
+    } catch (e) {
+      console.error('❌ Error formatting event type:', e)
+      formattedEventType = "Not specified"
+    }
+    
     const organizationRemark = (data.organizationType === "Tailor Event" ? "Organized by HU" : "Organized by Client")
     
-    // Ensure all formatted values are strings - do this BEFORE template string
+    // Ensure all formatted values are strings
     const safeFormattedDateRange = ensureString(formattedDateRange)
     const safeFormattedEventType = ensureString(formattedEventType)
     const safeOrganizationRemark = ensureString(organizationRemark)
@@ -295,281 +312,226 @@ function generateAdminEmailHTML(data: ReservationData): string {
     const escapedOrgType = escapeHtml(safeOrganizationType)
     const escapedOrgRemark = escapeHtml(safeOrganizationRemark)
     
-    // Pre-process introduction with newlines
-    const processedIntroduction = (function() {
-      try {
-        const introEscaped = escapeHtml(safeIntroduction)
-        const intro = ensureString(introEscaped)
-        if (!intro || typeof intro !== 'string') return ensureString(safeIntroduction) || ''
-        return intro.replace(/\n/g, '<br>')
-      } catch (e) {
-        console.error('❌ Error processing introduction:', e)
-        return ensureString(safeIntroduction) || ''
+    // Pre-process introduction with newlines - use string concatenation instead of replace
+    let processedIntroduction = ''
+    try {
+      const introEscaped = escapeHtml(safeIntroduction)
+      const intro = ensureString(introEscaped)
+      if (intro && typeof intro === 'string') {
+        // Use split/join instead of replace to avoid any replace issues
+        processedIntroduction = intro.split('\n').join('<br>')
+      } else {
+        processedIntroduction = ensureString(safeIntroduction) || ''
       }
-    })()
+    } catch (e) {
+      console.error('❌ Error processing introduction:', e)
+      processedIntroduction = ensureString(safeIntroduction) || ''
+    }
     
     // Pre-process biography with newlines
-    const processedBiography = safeBiography ? (function() {
+    let processedBiography = null
+    if (safeBiography) {
       try {
-        if (!safeBiography) return ''
         const bioEscaped = escapeHtml(safeBiography)
         const bio = ensureString(bioEscaped)
-        if (!bio || typeof bio !== 'string') return ensureString(safeBiography) || ''
-        return bio.replace(/\n/g, '<br>')
+        if (bio && typeof bio === 'string') {
+          processedBiography = bio.split('\n').join('<br>')
+        } else {
+          processedBiography = ensureString(safeBiography) || ''
+        }
       } catch (e) {
         console.error('❌ Error processing biography:', e)
-        return ensureString(safeBiography) || ''
+        processedBiography = ensureString(safeBiography) || ''
       }
-    })() : null
+    }
     
     // Pre-process special requests with newlines
-    const processedSpecialRequests = safeSpecialRequests ? (function() {
+    let processedSpecialRequests = null
+    if (safeSpecialRequests) {
       try {
-        if (!safeSpecialRequests) return ''
         const reqEscaped = escapeHtml(safeSpecialRequests)
         const req = ensureString(reqEscaped)
-        if (!req || typeof req !== 'string') return ensureString(safeSpecialRequests) || ''
-        return req.replace(/\n/g, '<br>')
+        if (req && typeof req === 'string') {
+          processedSpecialRequests = req.split('\n').join('<br>')
+        } else {
+          processedSpecialRequests = ensureString(safeSpecialRequests) || ''
+        }
       } catch (e) {
         console.error('❌ Error processing special requests:', e)
-        return ensureString(safeSpecialRequests) || ''
+        processedSpecialRequests = ensureString(safeSpecialRequests) || ''
       }
-    })() : null
+    }
     
     // Pre-process timestamp
-    const timestamp = (function() {
-      try {
-        return new Date().toLocaleString('en-US', {
-          timeZone: 'UTC',
-          dateStyle: 'long',
-          timeStyle: 'long',
-        })
-      } catch {
-        return new Date().toISOString()
-      }
-    })()
+    let timestamp = ''
+    try {
+      const ts = new Date().toLocaleString('en-US', {
+        timeZone: 'UTC',
+        dateStyle: 'long',
+        timeStyle: 'long',
+      })
+      timestamp = ensureString(ts) || new Date().toISOString()
+    } catch {
+      timestamp = new Date().toISOString()
+    }
     
     console.error('   - formattedDateRange:', safeFormattedDateRange)
     console.error('   - formattedEventType:', safeFormattedEventType)
 
-    return `
-<!DOCTYPE html>
-<html>
-<head>
-  <meta charset="UTF-8">
-  <style>
-    body {
-      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
-      line-height: 1.6;
-      color: #333;
-      max-width: 600px;
-      margin: 0 auto;
-      padding: 20px;
+    // Build HTML using string concatenation instead of template literals to avoid any evaluation issues
+    const htmlParts: string[] = []
+    htmlParts.push('<!DOCTYPE html>')
+    htmlParts.push('<html>')
+    htmlParts.push('<head>')
+    htmlParts.push('  <meta charset="UTF-8">')
+    htmlParts.push('  <style>')
+    htmlParts.push('    body { font-family: -apple-system, BlinkMacSystemFont, \'Segoe UI\', Roboto, \'Helvetica Neue\', Arial, sans-serif; line-height: 1.6; color: #333; max-width: 600px; margin: 0 auto; padding: 20px; }')
+    htmlParts.push('    .header { background-color: #5B9AB8; color: white; padding: 20px; border-radius: 8px 8px 0 0; }')
+    htmlParts.push('    .content { background-color: #f9f9f9; padding: 30px; border: 1px solid #e0e0e0; border-top: none; border-radius: 0 0 8px 8px; }')
+    htmlParts.push('    .section { margin-bottom: 25px; }')
+    htmlParts.push('    .section-title { font-size: 18px; font-weight: 600; color: #5a3a2a; margin-bottom: 12px; border-bottom: 2px solid #5B9AB8; padding-bottom: 5px; }')
+    htmlParts.push('    .field { margin-bottom: 10px; }')
+    htmlParts.push('    .field-label { font-weight: 600; color: #5a3a2a; display: inline-block; min-width: 140px; }')
+    htmlParts.push('    .field-value { color: #333; }')
+    htmlParts.push('    .text-content { background-color: white; padding: 15px; border-radius: 4px; margin-top: 8px; border-left: 3px solid #5B9AB8; }')
+    htmlParts.push('    .footer { margin-top: 30px; padding-top: 20px; border-top: 1px solid #e0e0e0; font-size: 12px; color: #666; text-align: center; }')
+    htmlParts.push('    .timestamp { font-size: 12px; color: #666; margin-top: 20px; font-style: italic; }')
+    htmlParts.push('  </style>')
+    htmlParts.push('</head>')
+    htmlParts.push('<body>')
+    htmlParts.push('  <div class="header">')
+    htmlParts.push('    <h1 style="margin: 0;">New Reservation Inquiry</h1>')
+    htmlParts.push('  </div>')
+    htmlParts.push('  <div class="content">')
+    htmlParts.push('    <div class="section">')
+    htmlParts.push('      <div class="section-title">Booking Details</div>')
+    htmlParts.push('      <div class="field"><span class="field-label">Name:</span><span class="field-value">' + escapedName + '</span></div>')
+    htmlParts.push('      <div class="field"><span class="field-label">Email:</span><span class="field-value"><a href="mailto:' + escapedEmail + '">' + escapedEmail + '</a></span></div>')
+    htmlParts.push('      <div class="field"><span class="field-label">Phone:</span><span class="field-value"><a href="tel:' + escapedPhone + '">' + escapedPhone + '</a></span></div>')
+    htmlParts.push('      <div class="field"><span class="field-label">Number of Participants:</span><span class="field-value">' + escapedParticipants + '</span></div>')
+    htmlParts.push('      <div class="field"><span class="field-label">Event Type:</span><span class="field-value">' + escapedEventType + '</span></div>')
+    htmlParts.push('      <div class="field"><span class="field-label">Date & Time:</span><span class="field-value">' + escapedDateRange + '</span></div>')
+    htmlParts.push('      <div class="field"><span class="field-label">Organization:</span><span class="field-value">' + escapedOrgType + ' (' + escapedOrgRemark + ')</span></div>')
+    htmlParts.push('    </div>')
+    htmlParts.push('    <div class="section">')
+    htmlParts.push('      <div class="section-title">Guest Information</div>')
+    htmlParts.push('      <div class="field"><span class="field-label">Introduction:</span><div class="text-content">' + processedIntroduction + '</div></div>')
+    if (processedBiography) {
+      htmlParts.push('      <div class="field"><span class="field-label">Background & Interests:</span><div class="text-content">' + processedBiography + '</div></div>')
     }
-    .header {
-      background-color: #5B9AB8;
-      color: white;
-      padding: 20px;
-      border-radius: 8px 8px 0 0;
+    if (processedSpecialRequests) {
+      htmlParts.push('      <div class="field"><span class="field-label">Special Requests:</span><div class="text-content">' + processedSpecialRequests + '</div></div>')
     }
-    .content {
-      background-color: #f9f9f9;
-      padding: 30px;
-      border: 1px solid #e0e0e0;
-      border-top: none;
-      border-radius: 0 0 8px 8px;
-    }
-    .section {
-      margin-bottom: 25px;
-    }
-    .section-title {
-      font-size: 18px;
-      font-weight: 600;
-      color: #5a3a2a;
-      margin-bottom: 12px;
-      border-bottom: 2px solid #5B9AB8;
-      padding-bottom: 5px;
-    }
-    .field {
-      margin-bottom: 10px;
-    }
-    .field-label {
-      font-weight: 600;
-      color: #5a3a2a;
-      display: inline-block;
-      min-width: 140px;
-    }
-    .field-value {
-      color: #333;
-    }
-    .text-content {
-      background-color: white;
-      padding: 15px;
-      border-radius: 4px;
-      margin-top: 8px;
-      border-left: 3px solid #5B9AB8;
-    }
-    .footer {
-      margin-top: 30px;
-      padding-top: 20px;
-      border-top: 1px solid #e0e0e0;
-      font-size: 12px;
-      color: #666;
-      text-align: center;
-    }
-    .timestamp {
-      font-size: 12px;
-      color: #666;
-      margin-top: 20px;
-      font-style: italic;
-    }
-  </style>
-</head>
-<body>
-  <div class="header">
-    <h1 style="margin: 0;">New Reservation Inquiry</h1>
-  </div>
-  <div class="content">
-    <div class="section">
-      <div class="section-title">Booking Details</div>
-      <div class="field">
-        <span class="field-label">Name:</span>
-        <span class="field-value">${escapedName}</span>
-      </div>
-      <div class="field">
-        <span class="field-label">Email:</span>
-        <span class="field-value"><a href="mailto:${escapedEmail}">${escapedEmail}</a></span>
-      </div>
-      <div class="field">
-        <span class="field-label">Phone:</span>
-        <span class="field-value"><a href="tel:${escapedPhone}">${escapedPhone}</a></span>
-      </div>
-      <div class="field">
-        <span class="field-label">Number of Participants:</span>
-        <span class="field-value">${escapedParticipants}</span>
-      </div>
-      <div class="field">
-        <span class="field-label">Event Type:</span>
-        <span class="field-value">${escapedEventType}</span>
-      </div>
-      <div class="field">
-        <span class="field-label">Date & Time:</span>
-        <span class="field-value">${escapedDateRange}</span>
-      </div>
-      <div class="field">
-        <span class="field-label">Organization:</span>
-        <span class="field-value">${escapedOrgType} (${escapedOrgRemark})</span>
-      </div>
-    </div>
-
-    <div class="section">
-      <div class="section-title">Guest Information</div>
-      <div class="field">
-        <span class="field-label">Introduction:</span>
-        <div class="text-content">${processedIntroduction}</div>
-      </div>
-      ${processedBiography ? `
-      <div class="field">
-        <span class="field-label">Background & Interests:</span>
-        <div class="text-content">${processedBiography}</div>
-      </div>
-      ` : ''}
-      ${processedSpecialRequests ? `
-      <div class="field">
-        <span class="field-label">Special Requests:</span>
-        <div class="text-content">${processedSpecialRequests}</div>
-      </div>
-      ` : ''}
-    </div>
-
-    <div class="timestamp">
-      Received: ${timestamp}
-    </div>
-  </div>
-  <div class="footer">
-    <p>This email was automatically generated from the Hell University reservation form.</p>
-  </div>
-</body>
-</html>
-  `.trim()
+    htmlParts.push('    </div>')
+    htmlParts.push('    <div class="timestamp">Received: ' + timestamp + '</div>')
+    htmlParts.push('  </div>')
+    htmlParts.push('  <div class="footer">')
+    htmlParts.push('    <p>This email was automatically generated from the Hell University reservation form.</p>')
+    htmlParts.push('  </div>')
+    htmlParts.push('</body>')
+    htmlParts.push('</html>')
+    
+    return htmlParts.join('\n')
   } catch (error) {
     console.error('❌ ERROR in generateAdminEmailHTML:', error)
     console.error('Data received:', JSON.stringify(data, null, 2))
-    // Return a simple fallback email
-    return `
-<!DOCTYPE html>
-<html>
-<body>
-  <h1>New Reservation Inquiry</h1>
-  <p><strong>Name:</strong> ${String(data.name || 'Not provided')}</p>
-  <p><strong>Email:</strong> ${String(data.email || 'Not provided')}</p>
-  <p><strong>Phone:</strong> ${String(data.phone || 'Not provided')}</p>
-  <p><strong>Error generating full email template:</strong> ${error instanceof Error ? error.message : 'Unknown error'}</p>
-</body>
-</html>
-    `.trim()
+    // Return a simple fallback email using string concatenation
+    const fallbackParts: string[] = []
+    fallbackParts.push('<!DOCTYPE html>')
+    fallbackParts.push('<html>')
+    fallbackParts.push('<body>')
+    fallbackParts.push('  <h1>New Reservation Inquiry</h1>')
+    fallbackParts.push('  <p><strong>Name:</strong> ' + ensureString(data.name || 'Not provided') + '</p>')
+    fallbackParts.push('  <p><strong>Email:</strong> ' + ensureString(data.email || 'Not provided') + '</p>')
+    fallbackParts.push('  <p><strong>Phone:</strong> ' + ensureString(data.phone || 'Not provided') + '</p>')
+    fallbackParts.push('  <p><strong>Error generating full email template:</strong> ' + (error instanceof Error ? escapeHtml(error.message) : 'Unknown error') + '</p>')
+    fallbackParts.push('</body>')
+    fallbackParts.push('</html>')
+    return fallbackParts.join('\n')
   }
 }
 
 // Generate plain text version for admin notification
 function generateAdminEmailText(data: ReservationData): string {
   try {
-    const formattedDateRange = formatDateRange(data) || "Not specified"
-    const formattedEventType = formatEventType(data.eventType || "", data.otherEventType) || "Not specified"
-    const organizationRemark = (data.organizationType === "Tailor Event" ? "Organized by HU" : "Organized by Client")
+    // Format date range and event type with error handling
+    let formattedDateRange = "Not specified"
+    let formattedEventType = "Not specified"
+    try {
+      const dateRangeResult = formatDateRange(data)
+      formattedDateRange = ensureString(dateRangeResult) || "Not specified"
+    } catch (e) {
+      console.error('❌ Error formatting date range:', e)
+      formattedDateRange = "Not specified"
+    }
+    
+    try {
+      const eventTypeResult = formatEventType(data.eventType || "", data.otherEventType)
+      formattedEventType = ensureString(eventTypeResult) || "Not specified"
+    } catch (e) {
+      console.error('❌ Error formatting event type:', e)
+      formattedEventType = "Not specified"
+    }
+    
+    // Safely get all values
+    const safeName = ensureString(data.name) || "Not provided"
+    const safeEmail = ensureString(data.email) || "Not provided"
+    const safePhone = ensureString(data.phone) || "Not provided"
+    const safeParticipants = ensureString(data.participants) || "Not specified"
+    const safeFormattedEventType = ensureString(formattedEventType)
+    const safeFormattedDateRange = ensureString(formattedDateRange)
+    const safeOrganizationType = ensureString(data.organizationType) || "Not specified"
+    const safeOrganizationRemark = ensureString(data.organizationType === "Tailor Event" ? "Organized by HU" : "Organized by Client")
+    const safeIntroduction = ensureString(data.introduction) || "Not provided"
+    const safeBiography = (data.biography && ensureString(data.biography).trim()) ? ensureString(data.biography) : null
+    const safeSpecialRequests = (data.specialRequests && ensureString(data.specialRequests).trim()) ? ensureString(data.specialRequests) : null
 
-    // Ensure all values are strings
-    const safeName = String(data.name || "Not provided")
-    const safeEmail = String(data.email || "Not provided")
-    const safePhone = String(data.phone || "Not provided")
-    const safeParticipants = String(data.participants || "Not specified")
-    const safeFormattedEventType = String(formattedEventType || "Not specified")
-    const safeFormattedDateRange = String(formattedDateRange || "Not specified")
-    const safeOrganizationType = String(data.organizationType || "Not specified")
-    const safeOrganizationRemark = String(organizationRemark || "Organized by Client")
-    const safeIntroduction = String(data.introduction || "Not provided")
-    const safeBiography = (data.biography && String(data.biography).trim()) ? String(data.biography) : null
-    const safeSpecialRequests = (data.specialRequests && String(data.specialRequests).trim()) ? String(data.specialRequests) : null
-
-    return `
-NEW RESERVATION INQUIRY - HELL UNIVERSITY
-
-BOOKING DETAILS:
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-Name: ${safeName}
-Email: ${safeEmail}
-Phone: ${safePhone}
-Number of Participants: ${safeParticipants}
-Event Type: ${safeFormattedEventType}
-Date & Time: ${safeFormattedDateRange}
-Organization: ${safeOrganizationType} (${safeOrganizationRemark})
-
-GUEST INFORMATION:
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-Introduction:
-${safeIntroduction}
-
-${safeBiography ? `Background & Interests:\n${safeBiography}\n\n` : ''}${safeSpecialRequests ? `Special Requests:\n${safeSpecialRequests}\n\n` : ''}
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-Received: ${new Date().toLocaleString('en-US', {
-    timeZone: 'UTC',
-    dateStyle: 'long',
-    timeStyle: 'long',
-  })}
-  `.trim()
+    // Build text using string concatenation
+    const textParts: string[] = []
+    textParts.push('NEW RESERVATION INQUIRY - HELL UNIVERSITY')
+    textParts.push('')
+    textParts.push('BOOKING DETAILS:')
+    textParts.push('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━')
+    textParts.push('Name: ' + safeName)
+    textParts.push('Email: ' + safeEmail)
+    textParts.push('Phone: ' + safePhone)
+    textParts.push('Number of Participants: ' + safeParticipants)
+    textParts.push('Event Type: ' + safeFormattedEventType)
+    textParts.push('Date & Time: ' + safeFormattedDateRange)
+    textParts.push('Organization: ' + safeOrganizationType + ' (' + safeOrganizationRemark + ')')
+    textParts.push('')
+    textParts.push('GUEST INFORMATION:')
+    textParts.push('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━')
+    textParts.push('Introduction:')
+    textParts.push(safeIntroduction)
+    if (safeBiography) {
+      textParts.push('')
+      textParts.push('Background & Interests:')
+      textParts.push(safeBiography)
+    }
+    if (safeSpecialRequests) {
+      textParts.push('')
+      textParts.push('Special Requests:')
+      textParts.push(safeSpecialRequests)
+    }
+    textParts.push('')
+    textParts.push('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━')
+    textParts.push('This email was automatically generated from the Hell University reservation form.')
+    
+    return textParts.join('\n')
   } catch (error) {
     console.error('❌ ERROR in generateAdminEmailText:', error)
     console.error('Data received:', JSON.stringify(data, null, 2))
-    // Return a simple fallback text email
-    return `
-NEW RESERVATION INQUIRY - HELL UNIVERSITY
-
-Name: ${String(data.name || 'Not provided')}
-Email: ${String(data.email || 'Not provided')}
-Phone: ${String(data.phone || 'Not provided')}
-
-Error generating full email template: ${error instanceof Error ? error.message : 'Unknown error'}
-    `.trim()
+    // Return a simple fallback text email using string concatenation
+    const fallbackParts: string[] = []
+    fallbackParts.push('NEW RESERVATION INQUIRY - HELL UNIVERSITY')
+    fallbackParts.push('')
+    fallbackParts.push('Name: ' + ensureString(data.name || 'Not provided'))
+    fallbackParts.push('Email: ' + ensureString(data.email || 'Not provided'))
+    fallbackParts.push('Phone: ' + ensureString(data.phone || 'Not provided'))
+    fallbackParts.push('')
+    fallbackParts.push('Error generating full email template: ' + (error instanceof Error ? error.message : 'Unknown error'))
+    return fallbackParts.join('\n')
   }
 }
 
