@@ -21,6 +21,24 @@ import PhoneInput from "react-phone-number-input"
 const STORAGE_KEY = "helluniversity_booking_form"
 const DEBOUNCE_DELAY = 500 // milliseconds
 
+// Helper function to add AM/PM to 24-hour time format (keeps 24-hour format)
+function formatTimeWithAMPM(time24: string): string {
+  if (!time24 || !time24.includes(':')) return ''
+  
+  const [hours, minutes] = time24.split(':')
+  const hour24 = parseInt(hours, 10)
+  const mins = minutes || '00'
+  
+  if (isNaN(hour24)) return time24
+  
+  // Keep 24-hour format but add AM/PM
+  if (hour24 < 12) {
+    return `${hours.padStart(2, '0')}:${mins} AM`
+  } else {
+    return `${hours.padStart(2, '0')}:${mins} PM`
+  }
+}
+
 interface FormData {
   name: string
   email: string
@@ -170,9 +188,23 @@ export function Header() {
   }
 
   const handleEndDateChange = (date: Date | undefined) => {
+    // Validate that end date is not the same as start date when dateRange is true
+    if (formData.dateRange && date && startDate) {
+      const startDateStr = startDate.toISOString().split('T')[0]
+      const endDateStr = date.toISOString().split('T')[0]
+      if (startDateStr === endDateStr) {
+        setError({
+          type: "validation",
+          message: "End date cannot be the same as start date. Please select a different end date.",
+          retryable: false
+        })
+        return
+      }
+    }
+    
     setEndDate(date)
     setFormData(prev => ({ ...prev, endDate: date?.toISOString() || null }))
-    // Clear error when user selects a date
+    // Clear error when user selects a valid date
     if (error) {
       setError(null)
     }
@@ -277,6 +309,19 @@ export function Header() {
         retryable: false
       })
       return
+    }
+    // Validate that start and end dates are not the same when dateRange is true
+    if (formData.dateRange && startDate && endDate) {
+      const startDateStr = startDate.toISOString().split('T')[0]
+      const endDateStr = endDate.toISOString().split('T')[0]
+      if (startDateStr === endDateStr) {
+        setError({
+          type: "validation",
+          message: "End date cannot be the same as start date. Please select a different end date.",
+          retryable: false
+        })
+        return
+      }
     }
     if (!formData.startTime) {
       setError({
@@ -845,7 +890,17 @@ export function Header() {
                                   <SimpleCalendar
                                     selected={endDate}
                                     onSelect={handleEndDateChange}
-                                    disabled={(date) => (startDate && date < startDate) || date < new Date() || !isRecaptchaVerified || process.env.NEXT_PUBLIC_USE_STATIC_IMAGES === '1'}
+                                    disabled={(date) => {
+                                      if (!isRecaptchaVerified || process.env.NEXT_PUBLIC_USE_STATIC_IMAGES === '1') return true
+                                      if (date < new Date()) return true
+                                      if (startDate) {
+                                        const startDateStr = startDate.toISOString().split('T')[0]
+                                        const dateStr = date.toISOString().split('T')[0]
+                                        // Disable if date is before start date OR same as start date
+                                        return date < startDate || startDateStr === dateStr
+                                      }
+                                      return false
+                                    }}
                                   />
                                 </PopoverContent>
                               </Popover>
@@ -869,6 +924,11 @@ export function Header() {
                               />
                               <Clock className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400 pointer-events-none" />
                             </div>
+                            {formData.startTime && (
+                              <span className="text-xs text-gray-600 font-comfortaa" style={{ fontSize: 'clamp(0.625rem, 0.65vw, 0.6875rem)' }}>
+                                {formatTimeWithAMPM(formData.startTime)}
+                              </span>
+                            )}
                           </div>
 
                           {/* End Time */}
@@ -888,6 +948,11 @@ export function Header() {
                               />
                               <Clock className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400 pointer-events-none" />
                             </div>
+                            {formData.endTime && (
+                              <span className="text-xs text-gray-600 font-comfortaa" style={{ fontSize: 'clamp(0.625rem, 0.65vw, 0.6875rem)' }}>
+                                {formatTimeWithAMPM(formData.endTime)}
+                              </span>
+                            )}
                           </div>
 
                           {/* Event Type */}
