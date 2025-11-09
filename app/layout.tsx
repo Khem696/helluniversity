@@ -10,6 +10,8 @@ import { organizationStructuredData, websiteStructuredData, localBusinessStructu
 import './globals.css'
 import { bodyFont, headingFont, uiFont, comfortaaFont, urbanistFont, acuminAlt } from '@/lib/fonts'
 import { withBasePath } from '@/lib/utils'
+import { ConditionalHeader } from '@/components/ConditionalHeader'
+import { Providers } from '@/components/Providers'
 
 
 export const metadata: Metadata = {
@@ -128,12 +130,14 @@ export default function RootLayout({
         >
           Skip to content
         </a>
-        <GlobalErrorHandler />
-        <DisableServiceWorker />
-        <OverlayScrollbar />
-        <Header />
-        {children}
-        <Toaster />
+        <Providers>
+          <GlobalErrorHandler />
+          <DisableServiceWorker />
+          <OverlayScrollbar />
+          <ConditionalHeader />
+          {children}
+          <Toaster />
+        </Providers>
         {process.env.NEXT_PUBLIC_ENABLE_VERCEL_ANALYTICS === '1' && <Analytics />}
         <GoogleAnalytics gaId={process.env.NEXT_PUBLIC_GA_ID || ''} />
       </body>

@@ -1138,3 +1138,14 @@ html {
   will-change: opacity;
   transition: opacity 0.3s ease-in-out;
 }
+
+/* Hide header on admin login page */
+html[data-login-page="true"] header,
+html[data-login-page="true"] > body > header,
+body:has([data-login-page]) > header {
+  display: none !important;
+  visibility: hidden !important;
+  opacity: 0 !important;
+  height: 0 !important;
+  overflow: hidden !important;
+}
