@@ -54,6 +54,7 @@ async function scanDirectory(
   const images: ImageFile[] = []
 
   if (!existsSync(dirPath)) {
+    console.log(`Directory does not exist: ${dirPath}`)
     return images
   }
 
@@ -70,12 +71,26 @@ async function scanDirectory(
           continue
         }
 
-        // Determine category from directory name
+        // Determine category from directory name or path
         let dirCategory = category
         if (!dirCategory) {
-          // Check if this directory maps to a category
-          const relativePath = fullPath.replace(process.cwd() + "/public/", "")
-          dirCategory = CATEGORY_MAP[relativePath] || null
+          // Get relative path from public directory (cross-platform)
+          const publicDirPath = join(process.cwd(), "public")
+          const relativePath = relative(publicDirPath, fullPath).replace(/\\/g, "/")
+          
+          // Check if this directory name matches a category
+          // e.g., "artwork_studio" -> "artwork_studio"
+          if (CATEGORY_MAP[entry.name]) {
+            dirCategory = CATEGORY_MAP[entry.name]
+          } else {
+            // Check if the relative path matches a pattern
+            for (const [dirPattern, cat] of Object.entries(CATEGORY_MAP)) {
+              if (relativePath.includes(dirPattern)) {
+                dirCategory = cat
+                break
+              }
+            }
+          }
         }
 
         // Recursively scan subdirectories
@@ -87,16 +102,24 @@ async function scanDirectory(
         if (IMAGE_EXTENSIONS.includes(ext)) {
           // Determine category
           let fileCategory = category
+          
           // Get relative path from public directory (cross-platform)
           const publicDirPath = join(process.cwd(), "public")
           const relativePath = relative(publicDirPath, fullPath).replace(/\\/g, "/")
           
           if (!fileCategory) {
-            // Check parent directory
-            for (const [dirPattern, cat] of Object.entries(CATEGORY_MAP)) {
-              if (relativePath.includes(dirPattern.replace(/\\/g, "/"))) {
-                fileCategory = cat
-                break
+            // Check parent directory name first
+            const pathParts = dirPath.split(/[/\\]/)
+            const parentDir = pathParts[pathParts.length - 1]
+            if (CATEGORY_MAP[parentDir]) {
+              fileCategory = CATEGORY_MAP[parentDir]
+            } else {
+              // Check if the relative path matches a pattern
+              for (const [dirPattern, cat] of Object.entries(CATEGORY_MAP)) {
+                if (relativePath.includes(dirPattern)) {
+                  fileCategory = cat
+                  break
+                }
               }
             }
           }
@@ -161,13 +184,19 @@ export async function POST(request: Request) {
 
     // Scan assets directory
     const assetsDir = join(publicDir, "assets")
+    console.log(`Scanning assets directory: ${assetsDir}`)
     const assetsImages = await scanDirectory(assetsDir, "/assets")
+    console.log(`Found ${assetsImages.length} images in assets directory`)
     imagesToMigrate.push(...assetsImages)
 
     // Scan aispaces/studio directory
     const studioDir = join(publicDir, "aispaces", "studio")
-    const studioImages = await scanDirectory(studioDir, "/aispaces/studio")
+    console.log(`Scanning studio directory: ${studioDir}`)
+    const studioImages = await scanDirectory(studioDir, "/aispaces/studio", "aispace_studio")
+    console.log(`Found ${studioImages.length} images in studio directory`)
     imagesToMigrate.push(...studioImages)
+    
+    console.log(`Total images found: ${imagesToMigrate.length}`)
 
     // Filter by category if specified
     const filteredImages = categoryFilter

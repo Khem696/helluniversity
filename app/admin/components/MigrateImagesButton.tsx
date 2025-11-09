@@ -160,7 +160,7 @@ export function MigrateImagesButton() {
           <div className="flex items-start gap-2">
             {status.type === "success" && <CheckCircle2 className="w-5 h-5 text-green-600 mt-0.5" />}
             {status.type === "error" && <XCircle className="w-5 h-5 text-red-600 mt-0.5" />}
-            {(status.type === "checking" || status.type === "dryrun") && (
+            {(status.type === "checking" || (status.type === "dryrun" && isDryRunning)) && (
               <Loader2 className="w-5 h-5 text-blue-600 mt-0.5 animate-spin" />
             )}
             <div className="flex-1">
