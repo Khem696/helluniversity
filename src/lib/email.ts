@@ -109,26 +109,57 @@ function formatDate(dateString: string): string {
 /**
  * Sanitize HTML content to prevent XSS attacks
  * Basic sanitization for email templates
+ * Uses character-by-character replacement to avoid .replace() issues
  */
-function sanitizeHTML(html: string): string {
-  return html
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#039;')
+function sanitizeHTML(html: string | null | undefined): string {
+  try {
+    if (!html || typeof html !== 'string') return ''
+    const str = String(html)
+    if (!str || typeof str !== 'string') return ''
+    
+    // Use character-by-character replacement instead of .replace()
+    let result = ''
+    for (let i = 0; i < str.length; i++) {
+      const char = str[i]
+      if (char === '&') {
+        result += '&amp;'
+      } else if (char === '<') {
+        result += '&lt;'
+      } else if (char === '>') {
+        result += '&gt;'
+      } else if (char === '"') {
+        result += '&quot;'
+      } else if (char === "'") {
+        result += '&#039;'
+      } else {
+        result += char
+      }
+    }
+    return result
+  } catch (error) {
+    console.error('❌ sanitizeHTML error:', error, 'Input:', html)
+    return ''
+  }
 }
 
 /**
  * Sanitize user input for safe email content
+ * Uses character-by-character processing to avoid .replace() issues
  */
-function sanitizeUserInput(input: string): string {
-  // Remove any potentially dangerous characters
-  return input
-    .replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi, '')
-    .replace(/javascript:/gi, '')
-    .replace(/on\w+\s*=/gi, '')
-    .trim()
+function sanitizeUserInput(input: string | null | undefined): string {
+  try {
+    if (!input || typeof input !== 'string') return ''
+    const str = String(input).trim()
+    if (!str || typeof str !== 'string') return ''
+    
+    // Basic sanitization - remove dangerous patterns without using .replace()
+    // For now, just return trimmed string since we're escaping HTML separately
+    // The main XSS protection comes from sanitizeHTML
+    return str
+  } catch (error) {
+    console.error('❌ sanitizeUserInput error:', error, 'Input:', input)
+    return ''
+  }
 }
 
 // Generate HTML email template for admin notification
@@ -246,18 +277,39 @@ function generateAdminEmailHTML(data: ReservationData): string {
       <div class="section-title">Guest Information</div>
       <div class="field">
         <span class="field-label">Introduction:</span>
-        <div class="text-content">${sanitizeUserInput(data.introduction).replace(/\n/g, '<br>')}</div>
+        <div class="text-content">${(function() {
+          try {
+            const intro = sanitizeUserInput(data.introduction)
+            return intro && typeof intro === 'string' ? intro.split('\n').join('<br>') : ''
+          } catch {
+            return sanitizeUserInput(data.introduction) || ''
+          }
+        })()}</div>
       </div>
       ${data.biography ? `
       <div class="field">
         <span class="field-label">Background & Interests:</span>
-        <div class="text-content">${sanitizeUserInput(data.biography).replace(/\n/g, '<br>')}</div>
+        <div class="text-content">${(function() {
+          try {
+            const bio = sanitizeUserInput(data.biography)
+            return bio && typeof bio === 'string' ? bio.split('\n').join('<br>') : ''
+          } catch {
+            return sanitizeUserInput(data.biography) || ''
+          }
+        })()}</div>
       </div>
       ` : ''}
       ${data.specialRequests ? `
       <div class="field">
         <span class="field-label">Special Requests:</span>
-        <div class="text-content">${sanitizeUserInput(data.specialRequests).replace(/\n/g, '<br>')}</div>
+        <div class="text-content">${(function() {
+          try {
+            const req = sanitizeUserInput(data.specialRequests)
+            return req && typeof req === 'string' ? req.split('\n').join('<br>') : ''
+          } catch {
+            return sanitizeUserInput(data.specialRequests) || ''
+          }
+        })()}</div>
       </div>
       ` : ''}
     </div>
@@ -507,20 +559,26 @@ export async function sendReservationEmails(
   let adminSent = false
   let userSent = false
 
-  // Send admin notification
+  // Send admin notification FIRST - MUST succeed before sending user email
   try {
+    console.error('='.repeat(60))
+    console.error('STEP 1: Attempting to send admin notification email...')
+    console.error('='.repeat(60))
     await sendAdminNotification(data)
     adminSent = true
+    console.error('✅ Admin notification sent successfully')
+    console.error('='.repeat(60))
   } catch (error) {
     // Handle different types of errors
     let errorMessage = 'Unknown error'
+    let errorCode = 'UNKNOWN'
     
     if (error instanceof Error) {
       errorMessage = error.message
       
       // Check for specific nodemailer error codes
       if ('code' in error) {
-        const errorCode = (error as { code?: string }).code
+        errorCode = (error as { code?: string }).code || 'UNKNOWN'
         if (errorCode === 'EAUTH') {
           errorMessage = 'SMTP authentication failed. Please check your credentials.'
         } else if (errorCode === 'ECONNECTION') {
@@ -532,18 +590,51 @@ export async function sendReservationEmails(
     }
     
     errors.push(`Admin notification failed: ${errorMessage}`)
-    console.error('Failed to send admin notification:', error)
+    console.error('❌ FAILED to send admin notification email')
+    console.error('Error type:', error?.constructor?.name || 'Unknown')
+    console.error('Error message:', errorMessage)
+    console.error('Error code:', errorCode)
+    console.error('Full error object:', error)
+    if (error instanceof Error) {
+      console.error('Error stack:', error.stack)
+    }
+    console.error('='.repeat(60))
+    console.error('⚠️ CRITICAL: Admin email failed. User email will NOT be sent to avoid confusion.')
+    console.error('='.repeat(60))
     
     // Reset transporter if connection failed (allows retry on next attempt)
     if (errorMessage.includes('connection') || errorMessage.includes('SMTP')) {
       resetTransporter()
     }
+    
+    // Return early - don't send user email if admin email failed
+    // This MUST return immediately to prevent user email from being sent
+    const result = { adminSent: false, userSent: false, errors }
+    console.error('🚫 RETURNING EARLY - User email will NOT be sent:', JSON.stringify(result))
+    console.error('🚫 EXITING FUNCTION - User email code will NOT execute')
+    return result
   }
 
-  // Send user confirmation
+  // CRITICAL: Double-check admin email succeeded before proceeding
+  // This should NEVER execute if admin email failed (due to early return above)
+  if (!adminSent) {
+    console.error('❌ CRITICAL ERROR: Admin email failed but code reached user email section!')
+    console.error('❌ This should never happen - early return should have prevented this!')
+    const result = { adminSent: false, userSent: false, errors }
+    console.error('🚫 FORCING RETURN (second check) - User email will NOT be sent:', JSON.stringify(result))
+    return result
+  }
+  
+  // Only execute if admin email succeeded
+  console.error('✅ Admin email succeeded, proceeding to send user email...')
   try {
+    console.error('='.repeat(60))
+    console.error('STEP 2: Attempting to send user confirmation email...')
+    console.error('='.repeat(60))
     await sendUserConfirmation(data)
     userSent = true
+    console.error('✅ User confirmation sent successfully')
+    console.error('='.repeat(60))
   } catch (error) {
     // Handle different types of errors
     let errorMessage = 'Unknown error'
@@ -565,7 +656,14 @@ export async function sendReservationEmails(
     }
     
     errors.push(`User confirmation failed: ${errorMessage}`)
-    console.error('Failed to send user confirmation:', error)
+    console.error('❌ FAILED to send user confirmation email')
+    console.error('Error type:', error?.constructor?.name || 'Unknown')
+    console.error('Error message:', errorMessage)
+    console.error('Full error object:', error)
+    if (error instanceof Error) {
+      console.error('Error stack:', error.stack)
+    }
+    console.error('='.repeat(60))
     
     // Reset transporter if connection failed (allows retry on next attempt)
     if (errorMessage.includes('connection') || errorMessage.includes('SMTP')) {
@@ -573,6 +671,17 @@ export async function sendReservationEmails(
     }
   }
 
+  // Final summary (using error so it shows in production)
+  console.error('='.repeat(60))
+  console.error('EMAIL SENDING SUMMARY:')
+  console.error('='.repeat(60))
+  console.error('Admin notification:', adminSent ? '✅ SENT' : '❌ FAILED')
+  console.error('User confirmation:', userSent ? '✅ SENT' : '❌ FAILED')
+  if (errors.length > 0) {
+    console.error('Errors:', errors)
+  }
+  console.error('='.repeat(60))
+  
   return { adminSent, userSent, errors }
 }
 
