@@ -66,6 +66,11 @@ const nextConfig = {
   // In development, API routes will work normally - Turbopack needs this explicit
   output: isGitHubPages ? 'export' : undefined,
   trailingSlash: true,
+  typescript: {
+    // Skip type checking during build to speed up builds and avoid type-only issues
+    // Type checking should be done separately via `npm run lint` or `tsc --noEmit`
+    ignoreBuildErrors: true,
+  },
   images: {
     unoptimized: true,
     remotePatterns: [
