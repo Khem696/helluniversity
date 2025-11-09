@@ -71,8 +71,8 @@ export function MigrateImagesButton() {
           type: "dryrun",
           message: data.message,
           dryRunResults: {
-            images: data.images,
-            stats: data.stats,
+            images: Array.isArray(data.images) ? data.images : [],
+            stats: data.stats || { total: 0, byCategory: {} },
           },
         })
       } else {
@@ -205,7 +205,7 @@ export function MigrateImagesButton() {
               )}
 
               {/* Dry Run Results */}
-              {status.dryRunResults && (
+              {status.dryRunResults && status.dryRunResults.images && Array.isArray(status.dryRunResults.images) && (
                 <div className="mt-2 text-xs text-gray-600">
                   <p className="font-semibold mb-1">Images to migrate:</p>
                   <div className="max-h-40 overflow-y-auto space-y-1">
@@ -224,7 +224,7 @@ export function MigrateImagesButton() {
               )}
 
               {/* Errors */}
-              {status.errors && status.errors.length > 0 && (
+              {status.errors && Array.isArray(status.errors) && status.errors.length > 0 && (
                 <div className="mt-2 text-xs text-red-600">
                   <p className="font-semibold">Errors:</p>
                   <div className="max-h-32 overflow-y-auto space-y-1">
@@ -301,16 +301,20 @@ export function MigrateImagesButton() {
                   </>
                 )}
               </Button>
-              {status.dryRunResults && (
+              {status.dryRunResults && status.dryRunResults.stats && (
                 <div className="space-y-2">
                   <p className="text-sm font-semibold">
-                    Found {status.dryRunResults.stats.total} images to migrate
+                    Found {status.dryRunResults.stats.total || 0} images to migrate
                   </p>
-                  {Object.entries(status.dryRunResults.stats.byCategory).map(([cat, count]) => (
-                    <p key={cat} className="text-sm">
-                      {cat}: {count}
-                    </p>
-                  ))}
+                  {status.dryRunResults.stats.byCategory && Object.entries(status.dryRunResults.stats.byCategory).length > 0 ? (
+                    Object.entries(status.dryRunResults.stats.byCategory).map(([cat, count]) => (
+                      <p key={cat} className="text-sm">
+                        {cat}: {count}
+                      </p>
+                    ))
+                  ) : (
+                    <p className="text-sm text-gray-500">No images found in categories</p>
+                  )}
                 </div>
               )}
             </div>
