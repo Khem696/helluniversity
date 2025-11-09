@@ -1,6 +1,6 @@
 {
   "buildCommand": "npm run generate:manifest && npm run generate:thumbnails && next build",
-  "installCommand": "npm install",
+  "installCommand": "npm ci",
   "framework": "nextjs",
   "env": {
     "STATIC_EXPORT": "false",
