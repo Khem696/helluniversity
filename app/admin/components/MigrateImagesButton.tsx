@@ -63,7 +63,9 @@ export function MigrateImagesButton() {
     setIsDryRunning(true)
     setStatus({ type: "dryrun" })
     try {
-      const response = await fetch("/api/admin/migrate-images?dryRun=true")
+      const response = await fetch("/api/admin/migrate-images?dryRun=true", {
+        method: "POST",
+      })
       const data = await response.json()
 
       if (data.success) {
