@@ -57,8 +57,10 @@ function getTransporter(): nodemailer.Transporter {
 
 // Escape HTML to prevent XSS and ensure proper display
 function escapeHtml(text: string | null | undefined): string {
-  if (!text) return ''
-  return String(text)
+  if (text === null || text === undefined) return ''
+  const str = String(text)
+  if (str === 'undefined' || str === 'null') return ''
+  return str
     .replace(/&/g, '&amp;')
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;')
@@ -68,8 +70,10 @@ function escapeHtml(text: string | null | undefined): string {
 
 // Format event type for display
 function formatEventType(eventType: string, otherEventType?: string): string {
+  if (!eventType) return 'Not specified'
+  
   if (eventType === "Other" && otherEventType) {
-    return `Other: ${otherEventType}`
+    return `Other: ${otherEventType || 'Not specified'}`
   }
   const eventTypes: Record<string, string> = {
     'reunion': 'Reunion',
@@ -82,7 +86,7 @@ function formatEventType(eventType: string, otherEventType?: string): string {
     'brainstorming-session': 'Brainstorming Session',
     'other': 'Other',
   }
-  return eventTypes[eventType] || eventType
+  return eventTypes[eventType] || eventType || 'Not specified'
 }
 
 // Format date for display
@@ -214,12 +218,20 @@ function generateAdminEmailHTML(data: ReservationData): string {
   console.log('   - endTime:', data.endTime)
   console.log('   - dateRange:', data.dateRange)
   
-  const formattedDateRange = formatDateRange(data)
-  const formattedEventType = formatEventType(data.eventType, data.otherEventType)
+  const formattedDateRange = formatDateRange(data) || "Not specified"
+  const formattedEventType = formatEventType(data.eventType || "", data.otherEventType) || "Not specified"
   const organizationRemark = (data.organizationType === "Tailor Event" ? "Organized by HU" : "Organized by Client")
   
-  console.log('   - formattedDateRange:', formattedDateRange)
-  console.log('   - formattedEventType:', formattedEventType)
+  // Ensure all values are strings
+  if (typeof formattedDateRange !== 'string') {
+    console.error('❌ ERROR: formattedDateRange is not a string:', formattedDateRange)
+  }
+  if (typeof formattedEventType !== 'string') {
+    console.error('❌ ERROR: formattedEventType is not a string:', formattedEventType)
+  }
+  
+  console.error('   - formattedDateRange:', formattedDateRange)
+  console.error('   - formattedEventType:', formattedEventType)
 
   return `
 <!DOCTYPE html>
@@ -303,31 +315,31 @@ function generateAdminEmailHTML(data: ReservationData): string {
       <div class="section-title">Booking Details</div>
       <div class="field">
         <span class="field-label">Name:</span>
-        <span class="field-value">${escapeHtml(data.name)}</span>
+        <span class="field-value">${escapeHtml(String(data.name || "Not provided"))}</span>
       </div>
       <div class="field">
         <span class="field-label">Email:</span>
-        <span class="field-value"><a href="mailto:${escapeHtml(data.email)}">${escapeHtml(data.email)}</a></span>
+        <span class="field-value"><a href="mailto:${escapeHtml(String(data.email || "Not provided"))}">${escapeHtml(String(data.email || "Not provided"))}</a></span>
       </div>
       <div class="field">
         <span class="field-label">Phone:</span>
-        <span class="field-value"><a href="tel:${escapeHtml(data.phone)}">${escapeHtml(data.phone)}</a></span>
+        <span class="field-value"><a href="tel:${escapeHtml(String(data.phone || "Not provided"))}">${escapeHtml(String(data.phone || "Not provided"))}</a></span>
       </div>
       <div class="field">
         <span class="field-label">Number of Participants:</span>
-        <span class="field-value">${data.participants ? escapeHtml(data.participants) : "Not specified"}</span>
+        <span class="field-value">${escapeHtml(String(data.participants || "Not specified"))}</span>
       </div>
       <div class="field">
         <span class="field-label">Event Type:</span>
-        <span class="field-value">${formattedEventType}</span>
+        <span class="field-value">${escapeHtml(String(formattedEventType || "Not specified"))}</span>
       </div>
       <div class="field">
         <span class="field-label">Date & Time:</span>
-        <span class="field-value">${formattedDateRange}</span>
+        <span class="field-value">${escapeHtml(String(formattedDateRange || "Not specified"))}</span>
       </div>
       <div class="field">
         <span class="field-label">Organization:</span>
-        <span class="field-value">${data.organizationType || "Not specified"} (${organizationRemark})</span>
+        <span class="field-value">${escapeHtml(String(data.organizationType || "Not specified"))} (${escapeHtml(String(organizationRemark))})</span>
       </div>
     </div>
 
@@ -335,18 +347,18 @@ function generateAdminEmailHTML(data: ReservationData): string {
       <div class="section-title">Guest Information</div>
       <div class="field">
         <span class="field-label">Introduction:</span>
-        <div class="text-content">${escapeHtml(data.introduction || "").replace(/\n/g, '<br>')}</div>
+        <div class="text-content">${escapeHtml(String(data.introduction || "Not provided")).replace(/\n/g, '<br>')}</div>
       </div>
       ${data.biography ? `
       <div class="field">
         <span class="field-label">Background & Interests:</span>
-        <div class="text-content">${escapeHtml(data.biography).replace(/\n/g, '<br>')}</div>
+        <div class="text-content">${escapeHtml(String(data.biography || "")).replace(/\n/g, '<br>')}</div>
       </div>
       ` : ''}
       ${data.specialRequests ? `
       <div class="field">
         <span class="field-label">Special Requests:</span>
-        <div class="text-content">${escapeHtml(data.specialRequests).replace(/\n/g, '<br>')}</div>
+        <div class="text-content">${escapeHtml(String(data.specialRequests || "")).replace(/\n/g, '<br>')}</div>
       </div>
       ` : ''}
     </div>
@@ -369,8 +381,8 @@ function generateAdminEmailHTML(data: ReservationData): string {
 
 // Generate plain text version for admin notification
 function generateAdminEmailText(data: ReservationData): string {
-  const formattedDateRange = formatDateRange(data)
-  const formattedEventType = formatEventType(data.eventType, data.otherEventType)
+  const formattedDateRange = formatDateRange(data) || "Not specified"
+  const formattedEventType = formatEventType(data.eventType || "", data.otherEventType) || "Not specified"
   const organizationRemark = (data.organizationType === "Tailor Event" ? "Organized by HU" : "Organized by Client")
 
   return `
@@ -378,20 +390,20 @@ NEW RESERVATION INQUIRY - HELL UNIVERSITY
 
 BOOKING DETAILS:
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-Name: ${data.name}
-Email: ${data.email}
-Phone: ${data.phone}
-Number of Participants: ${data.participants || "Not specified"}
-Event Type: ${formattedEventType}
-Date & Time: ${formattedDateRange}
-Organization: ${data.organizationType || "Not specified"} (${organizationRemark})
+Name: ${String(data.name || "Not provided")}
+Email: ${String(data.email || "Not provided")}
+Phone: ${String(data.phone || "Not provided")}
+Number of Participants: ${String(data.participants || "Not specified")}
+Event Type: ${String(formattedEventType)}
+Date & Time: ${String(formattedDateRange)}
+Organization: ${String(data.organizationType || "Not specified")} (${String(organizationRemark)})
 
 GUEST INFORMATION:
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 Introduction:
-${data.introduction || "Not provided"}
+${String(data.introduction || "Not provided")}
 
-${data.biography ? `Background & Interests:\n${data.biography}\n\n` : ''}${data.specialRequests ? `Special Requests:\n${data.specialRequests}\n\n` : ''}
+${data.biography ? `Background & Interests:\n${String(data.biography || "")}\n\n` : ''}${data.specialRequests ? `Special Requests:\n${String(data.specialRequests || "")}\n\n` : ''}
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 Received: ${new Date().toLocaleString('en-US', {
     timeZone: 'UTC',
@@ -411,12 +423,20 @@ function generateUserEmailHTML(data: ReservationData): string {
   console.log('   - endTime:', data.endTime)
   console.log('   - dateRange:', data.dateRange)
   
-  const formattedDateRange = formatDateRange(data)
-  const formattedEventType = formatEventType(data.eventType, data.otherEventType)
+  const formattedDateRange = formatDateRange(data) || "Not specified"
+  const formattedEventType = formatEventType(data.eventType || "", data.otherEventType) || "Not specified"
   const organizationRemark = (data.organizationType === "Tailor Event" ? "Organized by HU" : "Organized by Client")
   
-  console.log('   - formattedDateRange:', formattedDateRange)
-  console.log('   - formattedEventType:', formattedEventType)
+  // Ensure all values are strings
+  if (typeof formattedDateRange !== 'string') {
+    console.error('❌ ERROR: formattedDateRange is not a string:', formattedDateRange)
+  }
+  if (typeof formattedEventType !== 'string') {
+    console.error('❌ ERROR: formattedEventType is not a string:', formattedEventType)
+  }
+  
+  console.error('   - formattedDateRange:', formattedDateRange)
+  console.error('   - formattedEventType:', formattedEventType)
 
   return `
 <!DOCTYPE html>
@@ -480,23 +500,23 @@ function generateUserEmailHTML(data: ReservationData): string {
     <h1 style="margin: 0;">Reservation Inquiry Received</h1>
   </div>
   <div class="content">
-    <p>Dear ${escapeHtml(data.name)},</p>
+    <p>Dear ${escapeHtml(String(data.name || "Guest"))},</p>
     
     <p>Thank you for your reservation inquiry with Hell University! We have received your request and our curation team will carefully review it.</p>
     
     <div class="summary">
       <h3 style="margin-top: 0; color: #5a3a2a;">Your Inquiry Summary:</h3>
       <div class="summary-item">
-        <span class="summary-label">Event Type:</span> ${formattedEventType}
+        <span class="summary-label">Event Type:</span> ${String(formattedEventType || "Not specified")}
       </div>
       <div class="summary-item">
-        <span class="summary-label">Date & Time:</span> ${formattedDateRange}
+        <span class="summary-label">Date & Time:</span> ${String(formattedDateRange || "Not specified")}
       </div>
       <div class="summary-item">
-        <span class="summary-label">Number of Participants:</span> ${data.participants || "Not specified"}
+        <span class="summary-label">Number of Participants:</span> ${String(data.participants || "Not specified")}
       </div>
       <div class="summary-item">
-        <span class="summary-label">Organization:</span> ${data.organizationType || "Not specified"} (${organizationRemark})
+        <span class="summary-label">Organization:</span> ${String(data.organizationType || "Not specified")} (${String(organizationRemark)})
       </div>
     </div>
     
@@ -522,23 +542,23 @@ function generateUserEmailHTML(data: ReservationData): string {
 
 // Generate plain text version for user auto-reply
 function generateUserEmailText(data: ReservationData): string {
-  const formattedDateRange = formatDateRange(data)
-  const formattedEventType = formatEventType(data.eventType, data.otherEventType)
+  const formattedDateRange = formatDateRange(data) || "Not specified"
+  const formattedEventType = formatEventType(data.eventType || "", data.otherEventType) || "Not specified"
   const organizationRemark = (data.organizationType === "Tailor Event" ? "Organized by HU" : "Organized by Client")
 
   return `
 RESERVATION INQUIRY RECEIVED - HELL UNIVERSITY
 
-Dear ${data.name},
+Dear ${String(data.name || "Guest")},
 
 Thank you for your reservation inquiry with Hell University! We have received your request and our curation team will carefully review it.
 
 YOUR INQUIRY SUMMARY:
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-Event Type: ${formattedEventType}
-Date & Time: ${formattedDateRange}
-Number of Participants: ${data.participants || "Not specified"}
-Organization: ${data.organizationType || "Not specified"} (${organizationRemark})
+Event Type: ${String(formattedEventType)}
+Date & Time: ${String(formattedDateRange)}
+Number of Participants: ${String(data.participants || "Not specified")}
+Organization: ${String(data.organizationType || "Not specified")} (${String(organizationRemark)})
 
 We honor each request with thoughtful consideration and will respond within 48 hours to discuss your vision and craft an extraordinary experience tailored to your unique sensibilities.
 
@@ -620,7 +640,7 @@ export async function sendAdminNotification(data: ReservationData): Promise<void
     from: `"Hell University Reservation System" <${process.env.SMTP_USER}>`,
     to: recipientEmail,
     replyTo: data.email,
-    subject: `New Reservation Inquiry - ${formattedEventType} - ${formattedDateRange}`,
+    subject: `New Reservation Inquiry - ${String(formattedEventType || "Event")} - ${String(formattedDateRange || "Date TBD")}`,
     text: generateAdminEmailText(data),
     html: generateAdminEmailHTML(data),
   }
