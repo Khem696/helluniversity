@@ -2,6 +2,7 @@ import { redirect } from "next/navigation"
 import { auth } from "@/lib/auth-config"
 import Link from "next/link"
 import { SignOutButton } from "@/components/SignOutButton"
+import { InitDatabaseButton } from "./components/InitDatabaseButton"
 
 // Mark as dynamic to prevent static export issues
 export const dynamic = 'force-dynamic'
@@ -64,22 +65,7 @@ export default async function AdminDashboard() {
             </div>
           </Link>
 
-          <Link
-            href="/api/admin/init-db"
-            className="block p-6 bg-white rounded-lg shadow-md hover:shadow-lg transition-shadow"
-          >
-            <div className="flex items-center gap-4">
-              <div className="flex-shrink-0 w-12 h-12 bg-purple-100 rounded-lg flex items-center justify-center">
-                <svg className="w-6 h-6 text-purple-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 7v10c0 2.21 3.582 4 8 4s8-1.79 8-4V7M4 7c0 2.21 3.582 4 8 4s8-1.79 8-4M4 7c0-2.21 3.582-4 8-4s8 1.79 8 4m0 5c0 2.21-3.582 4-8 4s-8-1.79-8-4" />
-                </svg>
-              </div>
-              <div>
-                <h3 className="text-lg font-semibold text-gray-900">Database</h3>
-                <p className="text-sm text-gray-600">Initialize database schema</p>
-              </div>
-            </div>
-      </Link>
+          <InitDatabaseButton />
       </div>
 
       <div className="mt-8 p-6 bg-white rounded-lg shadow-md">
