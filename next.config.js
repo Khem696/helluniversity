@@ -158,13 +158,15 @@ const nextConfig = {
   turbopack: {},
 }
 
-// Conditionally apply PWA wrapper - skip in development to avoid Turbopack conflicts
-if (process.env.NODE_ENV === 'development') {
-  // In development, export config directly without PWA wrapper
+// Conditionally apply PWA wrapper
+// Skip PWA on Vercel (not needed) and in development (Turbopack conflicts)
+if (process.env.NODE_ENV === 'development' || isVercel) {
+  // In development or on Vercel, export config directly without PWA wrapper
   // This prevents next-pwa from interfering with Turbopack's entrypoint detection
+  // and avoids PWA issues on Vercel
   module.exports = nextConfig
 } else {
-  // In production, apply PWA wrapper
+  // In production (GitHub Pages), apply PWA wrapper
   const withPWA = require('next-pwa')(pwaConfig)
   module.exports = withPWA(nextConfig)
 }
