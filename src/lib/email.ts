@@ -105,6 +105,31 @@ function formatEventType(eventType: string, otherEventType?: string): string {
   return baseType
 }
 
+// Helper function to add AM/PM to 24-hour time format (keeps 24-hour format)
+function formatTime24WithAMPM(time24: string | null | undefined): string {
+  try {
+    if (!time24 || !time24.trim() || !time24.includes(':')) return ''
+    
+    const trimmed = time24.trim()
+    const [hours, minutes] = trimmed.split(':')
+    const hour24 = parseInt(hours, 10)
+    const mins = minutes || '00'
+    
+    if (isNaN(hour24)) return trimmed
+    
+    // Keep 24-hour format but add AM/PM
+    const paddedHours = hours.padStart(2, '0')
+    if (hour24 < 12) {
+      return `${paddedHours}:${mins} AM`
+    } else {
+      return `${paddedHours}:${mins} PM`
+    }
+  } catch (error) {
+    console.error('❌ formatTime24WithAMPM error:', error)
+    return time24 || ''
+  }
+}
+
 // Format date and time for display
 function formatDateTime(dateString: string | null | undefined, timeString?: string): string {
   try {
@@ -121,7 +146,8 @@ function formatDateTime(dateString: string | null | undefined, timeString?: stri
     })
     
     if (timeString && timeString.trim()) {
-      return `${dateFormatted} at ${timeString.trim()}`
+      const formattedTime = formatTime24WithAMPM(timeString)
+      return `${dateFormatted} at ${formattedTime}`
     }
     
     return dateFormatted
@@ -143,7 +169,8 @@ function formatDateRange(data: ReservationData): string {
     // Single day booking
     if (!data.dateRange || !data.endDate) {
       if (data.endTime && data.endTime.trim()) {
-        return `${startDateTime} to ${data.endTime.trim()}`
+        const formattedEndTime = formatTime24WithAMPM(data.endTime)
+        return `${startDateTime} to ${formattedEndTime}`
       }
       return startDateTime
     }
