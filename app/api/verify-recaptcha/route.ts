@@ -33,10 +33,10 @@ export async function POST(request: Request) {
       )
     }
 
-    const secretKey = process.env.TURNSTILE_SECRET_KEY
+    const secretKey = process.env.RECAPTCHA_SECRET_KEY
 
     if (!secretKey) {
-      console.error("TURNSTILE_SECRET_KEY is not set")
+      console.error("RECAPTCHA_SECRET_KEY is not set")
       return NextResponse.json(
         { success: false, error: "Server configuration error" },
         { status: 500 }
@@ -46,29 +46,47 @@ export async function POST(request: Request) {
     // Get client IP address for verification
     const remoteip = getClientIP(request)
 
-    // Verify token with Cloudflare using FormData (as per Cloudflare documentation)
-    const formData = new FormData()
-    formData.append("secret", secretKey)
-    formData.append("response", token)
+    // Log verification attempt (without exposing sensitive data)
+    console.log("reCAPTCHA verification attempt:", {
+      hasToken: !!token,
+      tokenLength: token?.length,
+      hasSecretKey: !!secretKey,
+      hasRemoteIP: !!remoteip,
+      remoteip: remoteip || "not available"
+    })
+
+    // Verify token with Google reCAPTCHA API
+    const params = new URLSearchParams()
+    params.append("secret", secretKey)
+    params.append("response", token)
     if (remoteip) {
-      formData.append("remoteip", remoteip)
+      params.append("remoteip", remoteip)
     }
 
     const response = await fetch(
-      "https://challenges.cloudflare.com/turnstile/v0/siteverify",
+      "https://www.google.com/recaptcha/api/siteverify",
       {
         method: "POST",
-        body: formData,
+        headers: {
+          "Content-Type": "application/x-www-form-urlencoded",
+        },
+        body: params.toString(),
       }
     )
 
     // Check if HTTP response is OK
     if (!response.ok) {
-      console.error("Turnstile API HTTP error:", response.status, response.statusText)
+      const errorText = await response.text()
+      console.error("reCAPTCHA API HTTP error:", {
+        status: response.status,
+        statusText: response.statusText,
+        errorBody: errorText
+      })
       return NextResponse.json(
         {
           success: false,
-          error: "Turnstile verification service error",
+          error: "reCAPTCHA verification service error",
+          details: `HTTP ${response.status}: ${response.statusText}`
         },
         { status: 500 }
       )
@@ -79,7 +97,7 @@ export async function POST(request: Request) {
     try {
       data = await response.json()
     } catch (jsonError) {
-      console.error("Failed to parse Turnstile response:", jsonError)
+      console.error("Failed to parse reCAPTCHA response:", jsonError)
       return NextResponse.json(
         {
           success: false,
@@ -91,7 +109,7 @@ export async function POST(request: Request) {
 
     // Validate response structure and success field
     if (!data || typeof data.success !== "boolean") {
-      console.error("Invalid Turnstile response structure:", data)
+      console.error("Invalid reCAPTCHA response structure:", data)
       return NextResponse.json(
         {
           success: false,
@@ -103,19 +121,30 @@ export async function POST(request: Request) {
 
     // Check if verification was successful
     if (!data.success) {
+      console.error("reCAPTCHA verification failed:", {
+        success: data.success,
+        errorCodes: data["error-codes"] || [],
+        challengeTs: data["challenge_ts"],
+        hostname: data.hostname
+      })
       return NextResponse.json(
         {
           success: false,
-          error: "Turnstile verification failed",
+          error: "reCAPTCHA verification failed",
           "error-codes": data["error-codes"] || [],
         },
         { status: 400 }
       )
     }
 
+    console.log("reCAPTCHA verification successful:", {
+      challengeTs: data["challenge_ts"],
+      hostname: data.hostname
+    })
+
     return NextResponse.json({ success: true })
   } catch (error) {
-    console.error("Turnstile verification error:", error)
+    console.error("reCAPTCHA verification error:", error)
     return NextResponse.json(
       { success: false, error: "Internal server error" },
       { status: 500 }
