@@ -558,47 +558,60 @@ For inquiries: helluniversity.cm@gmail.com
  */
 export async function sendAdminNotification(data: ReservationData): Promise<void> {
   // STRICT: Require RESERVATION_EMAIL to be explicitly set
-  const reservationEmail = process.env.RESERVATION_EMAIL
-  const smtpUser = process.env.SMTP_USER
+  // Access environment variables directly - in Next.js API routes, these are available at runtime
+  const reservationEmail = process.env.RESERVATION_EMAIL?.trim()
+  const smtpUser = process.env.SMTP_USER?.trim()
   
-  console.log('='.repeat(60))
-  console.log('ADMIN EMAIL CONFIGURATION CHECK:')
-  console.log('='.repeat(60))
-  console.log('RESERVATION_EMAIL:', reservationEmail ? `✅ SET (${reservationEmail})` : '❌ NOT SET')
-  console.log('SMTP_USER (fallback):', smtpUser ? `SET (${smtpUser})` : 'NOT SET')
-  console.log('='.repeat(60))
+  // Use console.error/warn so logs appear in production (console.log is removed)
+  console.error('='.repeat(60))
+  console.error('ADMIN EMAIL CONFIGURATION CHECK:')
+  console.error('='.repeat(60))
+  console.error('RESERVATION_EMAIL (raw):', process.env.RESERVATION_EMAIL || 'undefined')
+  console.error('RESERVATION_EMAIL (trimmed):', reservationEmail || 'undefined')
+  console.error('RESERVATION_EMAIL (length):', reservationEmail?.length || 0)
+  console.error('SMTP_USER (raw):', process.env.SMTP_USER || 'undefined')
+  console.error('SMTP_USER (trimmed):', smtpUser || 'undefined')
+  console.error('All env vars with RESERVATION:', Object.keys(process.env).filter(k => k.includes('RESERVATION')))
+  console.error('All env vars with SMTP:', Object.keys(process.env).filter(k => k.includes('SMTP')))
+  console.error('Environment:', process.env.NODE_ENV || 'unknown')
+  console.error('Vercel:', process.env.VERCEL ? 'YES' : 'NO')
+  console.error('='.repeat(60))
   
-  // Use RESERVATION_EMAIL if set, otherwise fall back to SMTP_USER
-  const recipientEmail = reservationEmail || smtpUser
-
-  if (!recipientEmail) {
+  // STRICT: Prefer RESERVATION_EMAIL, but allow SMTP_USER as fallback
+  let recipientEmail: string
+  
+  if (reservationEmail) {
+    recipientEmail = reservationEmail
+    console.error('✅ Using RESERVATION_EMAIL:', recipientEmail)
+  } else if (smtpUser) {
+    recipientEmail = smtpUser
+    console.error('⚠️ WARNING: RESERVATION_EMAIL not set, using SMTP_USER as fallback:', smtpUser)
+    console.error('⚠️ This means admin notifications will go to the SMTP sender email, not a dedicated admin email!')
+    console.error('⚠️ RECOMMENDATION: Set RESERVATION_EMAIL environment variable in your production environment')
+  } else {
     const errorMsg = 'RESERVATION_EMAIL or SMTP_USER must be configured. RESERVATION_EMAIL is preferred.'
     console.error('❌ CONFIGURATION ERROR:', errorMsg)
     throw new Error(errorMsg)
   }
   
-  // Warn if using fallback
-  if (!reservationEmail && smtpUser) {
-    console.warn('⚠️ WARNING: RESERVATION_EMAIL not set, using SMTP_USER as fallback:', smtpUser)
-    console.warn('⚠️ This means admin notifications will go to the SMTP sender email, not a dedicated admin email!')
+  // Validate email format
+  const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
+  if (!emailRegex.test(recipientEmail)) {
+    const errorMsg = `Invalid email address format: ${recipientEmail}`
+    console.error('❌ VALIDATION ERROR:', errorMsg)
+    throw new Error(errorMsg)
   }
 
-  // Log the recipient email for debugging
-  console.log('📧 Sending admin notification to:', recipientEmail)
-  console.log('📧 User email (from form):', data.email)
+  // Log the recipient email for debugging (using error so it shows in production)
+  console.error('📧 Sending admin notification to:', recipientEmail)
+  console.error('📧 User email (from form):', data.email)
   
   // Warn if admin email is the same as user email (might be intentional, but worth noting)
   if (recipientEmail.toLowerCase() === data.email.toLowerCase()) {
     console.warn('⚠️ WARNING: Admin email recipient is the same as user email. This might be intentional.')
   }
   
-  // Verify the email address format
-  const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
-  if (!emailRegex.test(recipientEmail)) {
-    const errorMsg = `Invalid email address format for admin notification: ${recipientEmail}`
-    console.error('❌ VALIDATION ERROR:', errorMsg)
-    throw new Error(errorMsg)
-  }
+  // Email format validation is now done above
 
   const formattedEventType = formatEventType(data.eventType, data.otherEventType)
   const formattedDateRange = formatDateRange(data)
@@ -612,13 +625,13 @@ export async function sendAdminNotification(data: ReservationData): Promise<void
     html: generateAdminEmailHTML(data),
   }
 
-  console.log('📦 Mail options prepared:')
-  console.log('   From:', mailOptions.from)
-  console.log('   To:', mailOptions.to)
-  console.log('   Subject:', mailOptions.subject.substring(0, 80))
-  console.log('   Has Text:', !!mailOptions.text)
-  console.log('   Has HTML:', !!mailOptions.html)
-  console.log('   Reply-To:', mailOptions.replyTo)
+  console.error('📦 Mail options prepared:')
+  console.error('   From:', mailOptions.from)
+  console.error('   To:', mailOptions.to)
+  console.error('   Subject:', mailOptions.subject.substring(0, 80))
+  console.error('   Has Text:', !!mailOptions.text)
+  console.error('   Has HTML:', !!mailOptions.html)
+  console.error('   Reply-To:', mailOptions.replyTo)
   
   if (!mailOptions.to || mailOptions.to !== recipientEmail) {
     console.error('❌ CRITICAL: Mail options "to" field does not match recipientEmail!')
@@ -628,36 +641,48 @@ export async function sendAdminNotification(data: ReservationData): Promise<void
   }
   
   const emailTransporter = getTransporter()
-  console.log('✅ Transporter obtained, attempting to send email...')
-  console.log('   Transporter host:', process.env.SMTP_HOST || 'smtp.gmail.com')
-  console.log('   Transporter port:', process.env.SMTP_PORT || '587')
-  console.log('   Transporter user:', process.env.SMTP_USER ? 'SET' : 'NOT SET')
+  console.error('✅ Transporter obtained, attempting to send email...')
+  console.error('   Transporter host:', process.env.SMTP_HOST || 'smtp.gmail.com')
+  console.error('   Transporter port:', process.env.SMTP_PORT || '587')
+  console.error('   Transporter user:', process.env.SMTP_USER ? 'SET' : 'NOT SET')
   
   try {
-    console.log('📤 Calling sendMail()...')
+    console.error('📤 Calling sendMail()...')
     const result = await emailTransporter.sendMail(mailOptions)
     
-    console.log('='.repeat(60))
-    console.log('✅ ADMIN NOTIFICATION EMAIL SENT SUCCESSFULLY!')
-    console.log('='.repeat(60))
-    console.log('Message ID:', result.messageId || 'N/A')
-    console.log('Response:', result.response || 'N/A')
-    console.log('Accepted recipients:', result.accepted || [])
-    console.log('Rejected recipients:', result.rejected || [])
-    console.log('Pending recipients:', result.pending || [])
-    console.log('To:', recipientEmail)
-    console.log('='.repeat(60))
+    console.error('='.repeat(60))
+    console.error('✅ ADMIN NOTIFICATION EMAIL SENT SUCCESSFULLY!')
+    console.error('='.repeat(60))
+    console.error('Message ID:', result.messageId || 'N/A')
+    console.error('Response:', result.response || 'N/A')
+    console.error('Accepted recipients:', JSON.stringify(result.accepted || []))
+    console.error('Rejected recipients:', JSON.stringify(result.rejected || []))
+    console.error('Pending recipients:', JSON.stringify(result.pending || []))
+    console.error('To:', recipientEmail)
+    console.error('='.repeat(60))
     
     // Check if email was actually accepted
     if (result.rejected && result.rejected.length > 0) {
-      console.error('❌ WARNING: Email was rejected by SMTP server!')
+      console.error('❌ CRITICAL: Email was REJECTED by SMTP server!')
       console.error('Rejected addresses:', result.rejected)
+      console.error('This means the email address may be invalid or blocked by the SMTP server')
       throw new Error(`Email was rejected by SMTP server: ${result.rejected.join(', ')}`)
     }
     
     if (!result.accepted || result.accepted.length === 0) {
-      console.error('❌ WARNING: No recipients were accepted by SMTP server!')
+      console.error('❌ CRITICAL: No recipients were accepted by SMTP server!')
+      console.error('This means the email was not accepted for delivery')
       throw new Error('No recipients were accepted by SMTP server')
+    }
+    
+    // Verify the accepted email matches what we intended to send
+    if (!result.accepted.includes(recipientEmail)) {
+      console.warn('⚠️ WARNING: Accepted email address does not match intended recipient!')
+      console.warn('   Intended:', recipientEmail)
+      console.warn('   Accepted:', result.accepted)
+      console.warn('   This might indicate an email forwarding or alias issue')
+    } else {
+      console.error('✅ VERIFIED: Email was accepted for:', recipientEmail)
     }
     
     return result
@@ -698,8 +723,8 @@ export async function sendUserConfirmation(data: ReservationData): Promise<void>
     html: generateUserEmailHTML(data),
   }
 
-  console.log('Sending user confirmation to:', data.email)
-  console.log('Mail options prepared:', {
+  console.error('Sending user confirmation to:', data.email)
+  console.error('Mail options prepared:', {
     from: mailOptions.from,
     to: mailOptions.to,
     subject: mailOptions.subject,
@@ -708,14 +733,16 @@ export async function sendUserConfirmation(data: ReservationData): Promise<void>
   })
   
   const emailTransporter = getTransporter()
-  console.log('Transporter obtained, attempting to send...')
+  console.error('Transporter obtained, attempting to send...')
   
   try {
     const result = await emailTransporter.sendMail(mailOptions)
-    console.log('✅ User confirmation email sent successfully!')
-    console.log('Message ID:', result.messageId)
-    console.log('Response:', result.response || 'N/A')
-    console.log('To:', data.email)
+    console.error('✅ User confirmation email sent successfully!')
+    console.error('Message ID:', result.messageId)
+    console.error('Response:', result.response || 'N/A')
+    console.error('Accepted recipients:', JSON.stringify(result.accepted || []))
+    console.error('Rejected recipients:', JSON.stringify(result.rejected || []))
+    console.error('To:', data.email)
     return result
   } catch (sendError) {
     console.error('❌ sendMail() threw an error:')
@@ -731,26 +758,26 @@ export async function sendUserConfirmation(data: ReservationData): Promise<void>
 export async function sendReservationEmails(
   data: ReservationData
 ): Promise<{ adminSent: boolean; userSent: boolean; errors: string[] }> {
-  // Log the received data structure for debugging
-  console.log('='.repeat(60))
-  console.log('📋 RECEIVED DATA FOR EMAIL GENERATION:')
-  console.log('='.repeat(60))
-  console.log('Name:', data.name || 'MISSING')
-  console.log('Email:', data.email || 'MISSING')
-  console.log('Phone:', data.phone || 'MISSING')
-  console.log('Participants:', data.participants || 'MISSING')
-  console.log('Event Type:', data.eventType || 'MISSING')
-  console.log('Other Event Type:', data.otherEventType || 'N/A')
-  console.log('Date Range:', data.dateRange ? 'YES' : 'NO')
-  console.log('Start Date:', data.startDate || 'MISSING')
-  console.log('End Date:', data.endDate || 'MISSING')
-  console.log('Start Time:', data.startTime || 'MISSING')
-  console.log('End Time:', data.endTime || 'MISSING')
-  console.log('Organization Type:', data.organizationType || 'MISSING')
-  console.log('Introduction:', data.introduction ? `${data.introduction.substring(0, 50)}...` : 'MISSING')
-  console.log('Biography:', data.biography ? `${data.biography.substring(0, 50)}...` : 'N/A')
-  console.log('Special Requests:', data.specialRequests ? `${data.specialRequests.substring(0, 50)}...` : 'N/A')
-  console.log('='.repeat(60))
+  // Log the received data structure for debugging (using error so it shows in production)
+  console.error('='.repeat(60))
+  console.error('📋 RECEIVED DATA FOR EMAIL GENERATION:')
+  console.error('='.repeat(60))
+  console.error('Name:', data.name || 'MISSING')
+  console.error('Email:', data.email || 'MISSING')
+  console.error('Phone:', data.phone || 'MISSING')
+  console.error('Participants:', data.participants || 'MISSING')
+  console.error('Event Type:', data.eventType || 'MISSING')
+  console.error('Other Event Type:', data.otherEventType || 'N/A')
+  console.error('Date Range:', data.dateRange ? 'YES' : 'NO')
+  console.error('Start Date:', data.startDate || 'MISSING')
+  console.error('End Date:', data.endDate || 'MISSING')
+  console.error('Start Time:', data.startTime || 'MISSING')
+  console.error('End Time:', data.endTime || 'MISSING')
+  console.error('Organization Type:', data.organizationType || 'MISSING')
+  console.error('Introduction:', data.introduction ? `${data.introduction.substring(0, 50)}...` : 'MISSING')
+  console.error('Biography:', data.biography ? `${data.biography.substring(0, 50)}...` : 'N/A')
+  console.error('Special Requests:', data.specialRequests ? `${data.specialRequests.substring(0, 50)}...` : 'N/A')
+  console.error('='.repeat(60))
   
   const errors: string[] = []
   let adminSent = false
@@ -758,13 +785,13 @@ export async function sendReservationEmails(
 
   // Send admin notification FIRST
   try {
-    console.log('='.repeat(60))
-    console.log('STEP 1: Attempting to send admin notification email...')
-    console.log('='.repeat(60))
+    console.error('='.repeat(60))
+    console.error('STEP 1: Attempting to send admin notification email...')
+    console.error('='.repeat(60))
     await sendAdminNotification(data)
     adminSent = true
-    console.log('✅ Admin notification sent successfully')
-    console.log('='.repeat(60))
+    console.error('✅ Admin notification sent successfully')
+    console.error('='.repeat(60))
   } catch (error) {
     // Enhanced error handling
     let errorMessage = 'Unknown error'
@@ -809,13 +836,13 @@ export async function sendReservationEmails(
 
   // Send user confirmation SECOND
   try {
-    console.log('='.repeat(60))
-    console.log('STEP 2: Attempting to send user confirmation email...')
-    console.log('='.repeat(60))
+    console.error('='.repeat(60))
+    console.error('STEP 2: Attempting to send user confirmation email...')
+    console.error('='.repeat(60))
     await sendUserConfirmation(data)
     userSent = true
-    console.log('✅ User confirmation sent successfully')
-    console.log('='.repeat(60))
+    console.error('✅ User confirmation sent successfully')
+    console.error('='.repeat(60))
   } catch (error) {
     // Enhanced error handling
     let errorMessage = 'Unknown error'
@@ -858,16 +885,16 @@ export async function sendReservationEmails(
     console.error('='.repeat(60))
   }
 
-  // Final summary
-  console.log('='.repeat(60))
-  console.log('EMAIL SENDING SUMMARY:')
-  console.log('='.repeat(60))
-  console.log('Admin notification:', adminSent ? '✅ SENT' : '❌ FAILED')
-  console.log('User confirmation:', userSent ? '✅ SENT' : '❌ FAILED')
+  // Final summary (using error so it shows in production)
+  console.error('='.repeat(60))
+  console.error('EMAIL SENDING SUMMARY:')
+  console.error('='.repeat(60))
+  console.error('Admin notification:', adminSent ? '✅ SENT' : '❌ FAILED')
+  console.error('User confirmation:', userSent ? '✅ SENT' : '❌ FAILED')
   if (errors.length > 0) {
-    console.log('Errors:', errors)
+    console.error('Errors:', errors)
   }
-  console.log('='.repeat(60))
+  console.error('='.repeat(60))
   
   return { adminSent, userSent, errors }
 }

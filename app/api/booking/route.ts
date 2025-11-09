@@ -169,25 +169,28 @@ export async function POST(request: Request) {
 
     // Send emails - prioritize user confirmation
     try {
-      console.log("=".repeat(60))
-      console.log("STARTING EMAIL SENDING PROCESS")
-      console.log("=".repeat(60))
-      console.log("Environment Variables Check (API Route):")
-      console.log("  RESERVATION_EMAIL:", process.env.RESERVATION_EMAIL ? `✅ SET (${process.env.RESERVATION_EMAIL})` : "❌ NOT SET")
-      console.log("  SMTP_USER:", process.env.SMTP_USER ? `✅ SET (${process.env.SMTP_USER})` : "❌ NOT SET")
-      console.log("  SMTP_HOST:", process.env.SMTP_HOST || "default (smtp.gmail.com)")
-      console.log("  SMTP_PORT:", process.env.SMTP_PORT || "default (587)")
-      console.log("=".repeat(60))
+      // Use console.error so logs appear in production (console.log is removed)
+      console.error("=".repeat(60))
+      console.error("STARTING EMAIL SENDING PROCESS")
+      console.error("=".repeat(60))
+      console.error("Environment Variables Check (API Route):")
+      console.error("  RESERVATION_EMAIL:", process.env.RESERVATION_EMAIL ? `✅ SET (${process.env.RESERVATION_EMAIL})` : "❌ NOT SET")
+      console.error("  SMTP_USER:", process.env.SMTP_USER ? `✅ SET (${process.env.SMTP_USER})` : "❌ NOT SET")
+      console.error("  SMTP_HOST:", process.env.SMTP_HOST || "default (smtp.gmail.com)")
+      console.error("  SMTP_PORT:", process.env.SMTP_PORT || "default (587)")
+      console.error("  NODE_ENV:", process.env.NODE_ENV || "unknown")
+      console.error("  VERCEL:", process.env.VERCEL ? "YES" : "NO")
+      console.error("=".repeat(60))
       
       // Validate RESERVATION_EMAIL is set before proceeding
       if (!process.env.RESERVATION_EMAIL) {
-        console.warn("⚠️ WARNING: RESERVATION_EMAIL is not set!")
-        console.warn("⚠️ Admin notifications will use SMTP_USER as fallback:", process.env.SMTP_USER || "NOT SET")
+        console.error("⚠️ WARNING: RESERVATION_EMAIL is not set!")
+        console.error("⚠️ Admin notifications will use SMTP_USER as fallback:", process.env.SMTP_USER || "NOT SET")
       }
       
       const emailStatus = await sendReservationEmails(bookingData)
       
-      console.log("Email sending results:", {
+      console.error("Email sending results:", {
         adminSent: emailStatus.adminSent,
         userSent: emailStatus.userSent,
         errors: emailStatus.errors
