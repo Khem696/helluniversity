@@ -1,5 +1,27 @@
 import { NextResponse } from "next/server"
 
+// Helper function to get client IP address
+function getClientIP(request: Request): string | null {
+  const forwarded = request.headers.get("x-forwarded-for")
+  const realIP = request.headers.get("x-real-ip")
+  const cfConnectingIP = request.headers.get("cf-connecting-ip") // Cloudflare
+
+  if (forwarded) {
+    // x-forwarded-for can contain multiple IPs, take the first one
+    return forwarded.split(",")[0].trim()
+  }
+
+  if (realIP) {
+    return realIP
+  }
+
+  if (cfConnectingIP) {
+    return cfConnectingIP
+  }
+
+  return null
+}
+
 export async function POST(request: Request) {
   try {
     const { token } = await request.json()
@@ -21,18 +43,22 @@ export async function POST(request: Request) {
       )
     }
 
-    // Verify token with Cloudflare
+    // Get client IP address for verification
+    const remoteip = getClientIP(request)
+
+    // Verify token with Cloudflare using FormData (as per Cloudflare documentation)
+    const formData = new FormData()
+    formData.append("secret", secretKey)
+    formData.append("response", token)
+    if (remoteip) {
+      formData.append("remoteip", remoteip)
+    }
+
     const response = await fetch(
       "https://challenges.cloudflare.com/turnstile/v0/siteverify",
       {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          secret: secretKey,
-          response: token,
-        }),
+        body: formData,
       }
     )
 

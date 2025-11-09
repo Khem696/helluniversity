@@ -263,18 +263,33 @@ export async function POST(request: Request) {
       )
     }
 
-    // Verify token with Cloudflare
+    // Get client IP address for verification
+    const forwarded = request.headers.get("x-forwarded-for")
+    const realIP = request.headers.get("x-real-ip")
+    const cfConnectingIP = request.headers.get("cf-connecting-ip") // Cloudflare
+    let remoteip: string | null = null
+
+    if (forwarded) {
+      remoteip = forwarded.split(",")[0].trim()
+    } else if (realIP) {
+      remoteip = realIP
+    } else if (cfConnectingIP) {
+      remoteip = cfConnectingIP
+    }
+
+    // Verify token with Cloudflare using FormData (as per Cloudflare documentation)
+    const formData = new FormData()
+    formData.append("secret", secretKey)
+    formData.append("response", token)
+    if (remoteip) {
+      formData.append("remoteip", remoteip)
+    }
+
     const turnstileResponse = await fetch(
       "https://challenges.cloudflare.com/turnstile/v0/siteverify",
       {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          secret: secretKey,
-          response: token,
-        }),
+        body: formData,
       }
     )
 

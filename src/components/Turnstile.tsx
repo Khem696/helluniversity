@@ -47,6 +47,7 @@ export function Turnstile({ onVerify, onError, onExpire, size = "normal" }: Turn
         options={{
           size,
           theme: "light",
+          mode: "interactive", // Force interactive mode - always requires user interaction
         }}
       />
     </div>
