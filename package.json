@@ -98,6 +98,10 @@
     "eslint": "^9.39.1",
     "eslint-config-next": "^16.0.1"
   },
+  "optionalDependencies": {
+    "@tailwindcss/oxide-linux-x64-gnu": "^4.1.17",
+    "lightningcss-linux-x64-gnu": "^1.30.2"
+  },
   "overrides": {
     "sourcemap-codec": "npm:@jridgewell/sourcemap-codec@^1.5.5",
     "rollup-plugin-terser": "npm:@rollup/plugin-terser@^0.4.4",
@@ -105,7 +109,6 @@
     "rimraf": "^6.1.0",
     "source-map": "^0.7.6",
     "fetch-blob": "^4.0.0",
-    "node-domexception": "^2.0.2",
     "@auth/core": {
       "nodemailer": "^7.0.10"
     }

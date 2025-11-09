@@ -1,6 +1,6 @@
 {
   "buildCommand": "npm run generate:manifest && node scripts/generate-thumbnails-safe.js && next build",
-  "installCommand": "npm install",
+  "installCommand": "npm install --include=optional",
   "framework": "nextjs",
   "env": {
     "STATIC_EXPORT": "false",
