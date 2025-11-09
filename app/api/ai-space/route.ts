@@ -291,6 +291,36 @@ export async function POST(request: Request) {
       )
     }
 
+    // Rate limiting check (uses IP + User-Agent fingerprint for better device tracking)
+    // Device fingerprint combines IP + User-Agent + Accept-Language + Accept-Encoding
+    // This provides similar functionality to MAC address tracking but using available HTTP headers
+    const { checkRateLimit, getRateLimitIdentifier } = await import("@/lib/rate-limit")
+    const identifier = getRateLimitIdentifier(request) // Uses env var or defaults to fingerprint
+    const rateLimitResult = await checkRateLimit(identifier, "ai-space")
+
+    if (!rateLimitResult.success) {
+      return NextResponse.json(
+        {
+          success: false,
+          error: "Rate limit exceeded. Please try again later.",
+          rateLimit: {
+            limit: rateLimitResult.limit,
+            remaining: rateLimitResult.remaining,
+            reset: rateLimitResult.reset,
+          },
+        },
+        {
+          status: 429,
+          headers: {
+            "X-RateLimit-Limit": rateLimitResult.limit.toString(),
+            "X-RateLimit-Remaining": rateLimitResult.remaining.toString(),
+            "X-RateLimit-Reset": rateLimitResult.reset.toString(),
+            "Retry-After": (rateLimitResult.reset - Math.floor(Date.now() / 1000)).toString(),
+          },
+        }
+      )
+    }
+
     // Check for BlackForest Lab API key
     const apiKey = process.env.PROVIDER_API_KEY
 
