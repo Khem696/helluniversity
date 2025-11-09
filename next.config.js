@@ -163,18 +163,7 @@ const nextConfig = {
   turbopack: {},
 }
 
-// Conditionally apply PWA wrapper
-// Skip PWA on Vercel, in development, and for GitHub Pages (to avoid compatibility issues)
-// PWA is only useful for static exports, but next-pwa has compatibility issues with Next.js 16
-if (process.env.NODE_ENV === 'development' || isVercel || isGitHubPages) {
-  // In development, on Vercel, or GitHub Pages, export config directly without PWA wrapper
-  // This prevents next-pwa from interfering with Turbopack's entrypoint detection
-  // and avoids PWA compatibility issues
-  module.exports = nextConfig
-} else {
-  // Only apply PWA in other production scenarios (if any)
-  // Note: Currently disabled due to next-pwa compatibility issues with Next.js 16
-  module.exports = nextConfig
-  // const withPWA = require('next-pwa')(pwaConfig)
-  // module.exports = withPWA(nextConfig)
-}
+// Export config directly
+// PWA functionality is handled by client-side components (PWAInstallPrompt, DisableServiceWorker)
+// next-pwa has been removed to eliminate deprecated dependency warnings
+module.exports = nextConfig
