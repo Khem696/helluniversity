@@ -57,15 +57,23 @@ function getTransporter(): nodemailer.Transporter {
 
 // Escape HTML to prevent XSS and ensure proper display
 function escapeHtml(text: string | null | undefined): string {
+  // Always return a string, never undefined
   if (text === null || text === undefined) return ''
-  const str = String(text || '')
-  if (str === 'undefined' || str === 'null') return ''
-  return (str || '')
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#039;')
+  try {
+    const str = String(text || '')
+    if (!str || str === 'undefined' || str === 'null' || str === 'NaN') return ''
+    // Ensure we have a valid string before calling replace
+    if (typeof str !== 'string') return ''
+    return str
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#039;')
+  } catch (error) {
+    console.error('❌ escapeHtml error:', error, 'Input:', text)
+    return '' // Always return empty string on error
+  }
 }
 
 // Format event type for display
@@ -219,10 +227,16 @@ function generateAdminEmailHTML(data: ReservationData): string {
     console.error('   - endTime:', data.endTime)
     console.error('   - dateRange:', data.dateRange)
     
-    // Safely get all values with defaults
+    // Safely get all values with defaults - ensure they're never undefined
     const safeIntroduction = String(data.introduction || "Not provided")
-    const safeBiography = data.biography ? String(data.biography) : null
-    const safeSpecialRequests = data.specialRequests ? String(data.specialRequests) : null
+    const safeBiography = (data.biography && String(data.biography).trim()) ? String(data.biography) : null
+    const safeSpecialRequests = (data.specialRequests && String(data.specialRequests).trim()) ? String(data.specialRequests) : null
+    
+    // Validate all safe values are strings
+    if (typeof safeIntroduction !== 'string') {
+      console.error('❌ ERROR: safeIntroduction is not a string:', safeIntroduction)
+      throw new Error('Invalid introduction data')
+    }
     
     const formattedDateRange = formatDateRange(data) || "Not specified"
     const formattedEventType = formatEventType(data.eventType || "", data.otherEventType) || "Not specified"
@@ -345,18 +359,18 @@ function generateAdminEmailHTML(data: ReservationData): string {
       <div class="section-title">Guest Information</div>
       <div class="field">
         <span class="field-label">Introduction:</span>
-        <div class="text-content">${(escapeHtml(safeIntroduction) || '').replace(/\n/g, '<br>')}</div>
+        <div class="text-content">${String(escapeHtml(safeIntroduction) || '').replace(/\n/g, '<br>')}</div>
       </div>
       ${safeBiography ? `
       <div class="field">
         <span class="field-label">Background & Interests:</span>
-        <div class="text-content">${(escapeHtml(safeBiography) || '').replace(/\n/g, '<br>')}</div>
+        <div class="text-content">${String(escapeHtml(safeBiography) || '').replace(/\n/g, '<br>')}</div>
       </div>
       ` : ''}
       ${safeSpecialRequests ? `
       <div class="field">
         <span class="field-label">Special Requests:</span>
-        <div class="text-content">${(escapeHtml(safeSpecialRequests) || '').replace(/\n/g, '<br>')}</div>
+        <div class="text-content">${String(escapeHtml(safeSpecialRequests) || '').replace(/\n/g, '<br>')}</div>
       </div>
       ` : ''}
     </div>
@@ -396,29 +410,43 @@ function generateAdminEmailHTML(data: ReservationData): string {
 
 // Generate plain text version for admin notification
 function generateAdminEmailText(data: ReservationData): string {
-  const formattedDateRange = formatDateRange(data) || "Not specified"
-  const formattedEventType = formatEventType(data.eventType || "", data.otherEventType) || "Not specified"
-  const organizationRemark = (data.organizationType === "Tailor Event" ? "Organized by HU" : "Organized by Client")
+  try {
+    const formattedDateRange = formatDateRange(data) || "Not specified"
+    const formattedEventType = formatEventType(data.eventType || "", data.otherEventType) || "Not specified"
+    const organizationRemark = (data.organizationType === "Tailor Event" ? "Organized by HU" : "Organized by Client")
 
-  return `
+    // Ensure all values are strings
+    const safeName = String(data.name || "Not provided")
+    const safeEmail = String(data.email || "Not provided")
+    const safePhone = String(data.phone || "Not provided")
+    const safeParticipants = String(data.participants || "Not specified")
+    const safeFormattedEventType = String(formattedEventType || "Not specified")
+    const safeFormattedDateRange = String(formattedDateRange || "Not specified")
+    const safeOrganizationType = String(data.organizationType || "Not specified")
+    const safeOrganizationRemark = String(organizationRemark || "Organized by Client")
+    const safeIntroduction = String(data.introduction || "Not provided")
+    const safeBiography = (data.biography && String(data.biography).trim()) ? String(data.biography) : null
+    const safeSpecialRequests = (data.specialRequests && String(data.specialRequests).trim()) ? String(data.specialRequests) : null
+
+    return `
 NEW RESERVATION INQUIRY - HELL UNIVERSITY
 
 BOOKING DETAILS:
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-Name: ${String(data.name || "Not provided")}
-Email: ${String(data.email || "Not provided")}
-Phone: ${String(data.phone || "Not provided")}
-Number of Participants: ${String(data.participants || "Not specified")}
-Event Type: ${String(formattedEventType)}
-Date & Time: ${String(formattedDateRange)}
-Organization: ${String(data.organizationType || "Not specified")} (${String(organizationRemark)})
+Name: ${safeName}
+Email: ${safeEmail}
+Phone: ${safePhone}
+Number of Participants: ${safeParticipants}
+Event Type: ${safeFormattedEventType}
+Date & Time: ${safeFormattedDateRange}
+Organization: ${safeOrganizationType} (${safeOrganizationRemark})
 
 GUEST INFORMATION:
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 Introduction:
-${String(data.introduction || "Not provided")}
+${safeIntroduction}
 
-${data.biography ? `Background & Interests:\n${String(data.biography || "")}\n\n` : ''}${data.specialRequests ? `Special Requests:\n${String(data.specialRequests || "")}\n\n` : ''}
+${safeBiography ? `Background & Interests:\n${safeBiography}\n\n` : ''}${safeSpecialRequests ? `Special Requests:\n${safeSpecialRequests}\n\n` : ''}
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 Received: ${new Date().toLocaleString('en-US', {
     timeZone: 'UTC',
@@ -426,6 +454,20 @@ Received: ${new Date().toLocaleString('en-US', {
     timeStyle: 'long',
   })}
   `.trim()
+  } catch (error) {
+    console.error('❌ ERROR in generateAdminEmailText:', error)
+    console.error('Data received:', JSON.stringify(data, null, 2))
+    // Return a simple fallback text email
+    return `
+NEW RESERVATION INQUIRY - HELL UNIVERSITY
+
+Name: ${String(data.name || 'Not provided')}
+Email: ${String(data.email || 'Not provided')}
+Phone: ${String(data.phone || 'Not provided')}
+
+Error generating full email template: ${error instanceof Error ? error.message : 'Unknown error'}
+    `.trim()
+  }
 }
 
 // Generate HTML email template for user auto-reply
