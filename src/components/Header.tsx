@@ -333,17 +333,32 @@ export function Header() {
       const controller = new AbortController()
       const timeoutId = setTimeout(() => controller.abort(), 30000) // 30 second timeout
 
+      // Prepare booking data - ensure all fields are properly formatted
+      const bookingPayload = {
+        token: recaptchaToken,
+        name: formData.name.trim(),
+        email: formData.email.trim(),
+        phone: formData.phone.trim(),
+        participants: formData.participants.trim(),
+        eventType: formData.eventType.trim(),
+        otherEventType: formData.otherEventType.trim(),
+        dateRange: formData.dateRange,
+        startDate: startDate?.toISOString() || null,
+        endDate: endDate?.toISOString() || null,
+        startTime: formData.startTime.trim(),
+        endTime: formData.endTime.trim(),
+        organizationType: formData.organizationType,
+        introduction: formData.introduction.trim(),
+        biography: formData.biography.trim(),
+        specialRequests: formData.specialRequests.trim(),
+      }
+      
       const response = await fetch("/api/booking", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
         },
-        body: JSON.stringify({
-          token: recaptchaToken,
-          ...formData,
-          startDate: startDate?.toISOString(),
-          endDate: endDate?.toISOString(),
-        }),
+        body: JSON.stringify(bookingPayload),
         signal: controller.signal
       })
 
