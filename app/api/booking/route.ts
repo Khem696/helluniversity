@@ -28,18 +28,18 @@ export async function POST(request: Request) {
     const body = await request.json()
     const { token, ...bookingData } = body
 
-    // Validate Turnstile token
+    // Validate reCAPTCHA token
     if (!token) {
       return NextResponse.json(
-        { success: false, error: "Turnstile token is required" },
+        { success: false, error: "reCAPTCHA token is required" },
         { status: 400 }
       )
     }
 
-    const secretKey = process.env.TURNSTILE_SECRET_KEY
+    const secretKey = process.env.RECAPTCHA_SECRET_KEY
 
     if (!secretKey) {
-      console.error("TURNSTILE_SECRET_KEY is not set")
+      console.error("RECAPTCHA_SECRET_KEY is not set")
       return NextResponse.json(
         { success: false, error: "Server configuration error" },
         { status: 500 }
@@ -49,40 +49,49 @@ export async function POST(request: Request) {
     // Get client IP address for verification
     const remoteip = getClientIP(request)
 
-    // Verify token with Cloudflare using FormData (as per Cloudflare documentation)
-    const formData = new FormData()
-    formData.append("secret", secretKey)
-    formData.append("response", token)
+    // Verify token with Google reCAPTCHA API
+    const params = new URLSearchParams()
+    params.append("secret", secretKey)
+    params.append("response", token)
     if (remoteip) {
-      formData.append("remoteip", remoteip)
+      params.append("remoteip", remoteip)
     }
 
-    const turnstileResponse = await fetch(
-      "https://challenges.cloudflare.com/turnstile/v0/siteverify",
+    const recaptchaResponse = await fetch(
+      "https://www.google.com/recaptcha/api/siteverify",
       {
         method: "POST",
-        body: formData,
+        headers: {
+          "Content-Type": "application/x-www-form-urlencoded",
+        },
+        body: params.toString(),
       }
     )
 
     // Check if HTTP response is OK
-    if (!turnstileResponse.ok) {
-      console.error("Turnstile API HTTP error:", turnstileResponse.status, turnstileResponse.statusText)
+    if (!recaptchaResponse.ok) {
+      const errorText = await recaptchaResponse.text()
+      console.error("reCAPTCHA API HTTP error:", {
+        status: recaptchaResponse.status,
+        statusText: recaptchaResponse.statusText,
+        errorBody: errorText
+      })
       return NextResponse.json(
         {
           success: false,
-          error: "Turnstile verification service error",
+          error: "reCAPTCHA verification service error",
+          details: `HTTP ${recaptchaResponse.status}: ${recaptchaResponse.statusText}`
         },
         { status: 500 }
       )
     }
 
     // Parse JSON response
-    let turnstileData: any
+    let recaptchaData: any
     try {
-      turnstileData = await turnstileResponse.json()
+      recaptchaData = await recaptchaResponse.json()
     } catch (jsonError) {
-      console.error("Failed to parse Turnstile response:", jsonError)
+      console.error("Failed to parse reCAPTCHA response:", jsonError)
       return NextResponse.json(
         {
           success: false,
@@ -93,8 +102,8 @@ export async function POST(request: Request) {
     }
 
     // Validate response structure and success field
-    if (!turnstileData || typeof turnstileData.success !== "boolean") {
-      console.error("Invalid Turnstile response structure:", turnstileData)
+    if (!recaptchaData || typeof recaptchaData.success !== "boolean") {
+      console.error("Invalid reCAPTCHA response structure:", recaptchaData)
       return NextResponse.json(
         {
           success: false,
@@ -105,12 +114,12 @@ export async function POST(request: Request) {
     }
 
     // Check if verification was successful
-    if (!turnstileData.success) {
+    if (!recaptchaData.success) {
       return NextResponse.json(
         {
           success: false,
-          error: "Turnstile verification failed",
-          "error-codes": turnstileData["error-codes"] || [],
+          error: "reCAPTCHA verification failed",
+          "error-codes": recaptchaData["error-codes"] || [],
         },
         { status: 400 }
       )

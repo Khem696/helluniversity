@@ -15,7 +15,7 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group"
 import { format } from "date-fns"
 import { withBasePath } from "@/lib/utils"
-import { Turnstile } from "./Turnstile"
+import { Recaptcha } from "./Recaptcha"
 import PhoneInput from "react-phone-number-input"
 
 const STORAGE_KEY = "helluniversity_booking_form"
@@ -45,7 +45,7 @@ interface StoredFormData {
 }
 
 interface FormError {
-  type: "network" | "validation" | "server" | "turnstile" | "static"
+  type: "network" | "validation" | "server" | "recaptcha" | "static"
   message: string
   retryable?: boolean
 }
@@ -56,8 +56,8 @@ export function Header() {
   const [bookingOpen, setBookingOpen] = useState(false)
   const [startDate, setStartDate] = useState<Date>()
   const [endDate, setEndDate] = useState<Date>()
-  const [turnstileToken, setTurnstileToken] = useState<string | null>(null)
-  const [isTurnstileVerified, setIsTurnstileVerified] = useState(false)
+  const [recaptchaToken, setRecaptchaToken] = useState<string | null>(null)
+  const [isRecaptchaVerified, setIsRecaptchaVerified] = useState(false)
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [formData, setFormData] = useState<FormData>({
     name: "",
@@ -79,7 +79,7 @@ export function Header() {
   const [error, setError] = useState<FormError | null>(null)
   const [retryCount, setRetryCount] = useState(0)
   const saveTimeoutRef = useRef<NodeJS.Timeout | null>(null)
-  const turnstileKeyRef = useRef(0) // Force Turnstile re-render
+  const recaptchaKeyRef = useRef(0) // Force reCAPTCHA re-render
 
   // Load form data from localStorage on component mount
   useEffect(() => {
@@ -187,33 +187,33 @@ export function Header() {
     }
   }
 
-  function handleTurnstileVerify(token: string) {
-    setTurnstileToken(token)
-    setIsTurnstileVerified(true)
+  function handleRecaptchaVerify(token: string) {
+    setRecaptchaToken(token)
+    setIsRecaptchaVerified(true)
     setError(null) // Clear any previous errors
   }
 
-  function handleTurnstileError() {
-    setTurnstileToken(null)
-    setIsTurnstileVerified(false)
+  function handleRecaptchaError() {
+    setRecaptchaToken(null)
+    setIsRecaptchaVerified(false)
     setError({
-      type: "turnstile",
+      type: "recaptcha",
       message: "CAPTCHA verification failed. Please try again.",
       retryable: true
     })
   }
 
-  function handleTurnstileExpire() {
-    setTurnstileToken(null)
-    setIsTurnstileVerified(false)
+  function handleRecaptchaExpire() {
+    setRecaptchaToken(null)
+    setIsRecaptchaVerified(false)
     setError({
-      type: "turnstile",
+      type: "recaptcha",
       message: "CAPTCHA verification expired. Please verify again to continue.",
       retryable: true
     })
   }
 
-  // Reset Turnstile when modal opens (but preserve form data)
+  // Reset reCAPTCHA when modal opens (but preserve form data)
   const handleBookingOpenChange = (open: boolean) => {
     // Prevent closing the modal when submitting
     if (!open && isSubmitting) {
@@ -222,12 +222,12 @@ export function Header() {
     setBookingOpen(open)
     if (open) {
       // Modal opened - reset captcha verification but keep form data
-      setTurnstileToken(null)
-      setIsTurnstileVerified(false)
+      setRecaptchaToken(null)
+      setIsRecaptchaVerified(false)
       setError(null)
       setRetryCount(0)
-      // Force Turnstile to re-render by incrementing key
-      turnstileKeyRef.current += 1
+      // Force reCAPTCHA to re-render by incrementing key
+      recaptchaKeyRef.current += 1
     } else {
       // Modal closed - only clear on successful submission
       // Form data persists in localStorage
@@ -251,10 +251,10 @@ export function Header() {
       return
     }
     
-    // Validate Turnstile
-    if (!isTurnstileVerified || !turnstileToken) {
+    // Validate reCAPTCHA
+    if (!isRecaptchaVerified || !recaptchaToken) {
       setError({
-        type: "turnstile",
+        type: "recaptcha",
         message: "Please complete the CAPTCHA verification first.",
         retryable: false
       })
@@ -339,7 +339,7 @@ export function Header() {
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
-          token: turnstileToken,
+          token: recaptchaToken,
           ...formData,
           startDate: startDate?.toISOString(),
           endDate: endDate?.toISOString(),
@@ -416,8 +416,8 @@ export function Header() {
       })
       setStartDate(undefined)
       setEndDate(undefined)
-      setTurnstileToken(null)
-      setIsTurnstileVerified(false)
+      setRecaptchaToken(null)
+      setIsRecaptchaVerified(false)
       
       // Clear localStorage on successful submission
       if (typeof window !== "undefined") {
@@ -460,9 +460,9 @@ export function Header() {
 
       // On error, reset CAPTCHA but keep form data in localStorage
       // User must verify CAPTCHA again to retry
-      setTurnstileToken(null)
-      setIsTurnstileVerified(false)
-      turnstileKeyRef.current += 1
+      setRecaptchaToken(null)
+      setIsRecaptchaVerified(false)
+      recaptchaKeyRef.current += 1
 
       // Form data stays in localStorage and form fields - user can retry
       setError({
@@ -496,9 +496,9 @@ export function Header() {
       setRetryCount(prev => prev + 1)
       setError(null)
       // Reset captcha to force re-verification
-      setTurnstileToken(null)
-      setIsTurnstileVerified(false)
-      turnstileKeyRef.current += 1
+      setRecaptchaToken(null)
+      setIsRecaptchaVerified(false)
+      recaptchaKeyRef.current += 1
     }
   }
 
@@ -596,22 +596,22 @@ export function Header() {
                         </div>
                       )}
                       
-                      {/* Turnstile CAPTCHA - Must be verified before using the form */}
+                      {/* reCAPTCHA v2 - Must be verified before using the form */}
                       {process.env.NEXT_PUBLIC_USE_STATIC_IMAGES !== '1' && (
                         <div style={{ display: 'flex', flexDirection: 'column', gap: 'clamp(0.375rem, 0.5vw, 0.5rem)', paddingBottom: 'clamp(0.375rem, 0.5vw, 0.5rem)', borderBottom: '1px solid rgb(229 231 235)' }}>
                           <p className="text-[#5a3a2a]/70 font-comfortaa" style={{ fontSize: 'clamp(0.625rem, 0.7vw, 0.75rem)' }}>
                             Please verify you're human before proceeding:
                           </p>
                           <div className="lg:scale-75 xl:scale-90 origin-left">
-                            <Turnstile
-                              key={turnstileKeyRef.current}
-                              onVerify={handleTurnstileVerify}
-                              onError={handleTurnstileError}
-                              onExpire={handleTurnstileExpire}
+                            <Recaptcha
+                              key={recaptchaKeyRef.current}
+                              onVerify={handleRecaptchaVerify}
+                              onError={handleRecaptchaError}
+                              onExpire={handleRecaptchaExpire}
                               size="compact"
                             />
                           </div>
-                          {!isTurnstileVerified && (
+                          {!isRecaptchaVerified && (
                             <p className={`font-comfortaa italic ${error ? "text-orange-600 font-medium" : "text-[#5a3a2a]/60"}`} style={{ fontSize: 'clamp(0.625rem, 0.7vw, 0.75rem)' }}>
                               {error 
                                 ? "⚠️ Please verify CAPTCHA again to retry submission"
@@ -637,8 +637,8 @@ export function Header() {
                               value={formData.name}
                               onChange={(e) => handleInputChange("name", e.target.value)}
                               placeholder="Your full name"
-                              disabled={!isTurnstileVerified || process.env.NEXT_PUBLIC_USE_STATIC_IMAGES === '1'}
-                              className={`font-comfortaa ${!isTurnstileVerified ? "opacity-50 cursor-not-allowed bg-gray-100" : ""}`}
+                              disabled={!isRecaptchaVerified || process.env.NEXT_PUBLIC_USE_STATIC_IMAGES === '1'}
+                              className={`font-comfortaa ${!isRecaptchaVerified ? "opacity-50 cursor-not-allowed bg-gray-100" : ""}`}
                               style={{ fontSize: 'clamp(0.75rem, 0.8vw, 0.875rem)', height: 'clamp(2rem, 2.2vw, 2.25rem)' }}
                             />
                           </div>
@@ -653,20 +653,20 @@ export function Header() {
                               value={formData.email}
                               onChange={(e) => handleInputChange("email", e.target.value)}
                               placeholder="your@email.com"
-                              disabled={!isTurnstileVerified || process.env.NEXT_PUBLIC_USE_STATIC_IMAGES === '1'}
-                              className={`font-comfortaa ${!isTurnstileVerified ? "opacity-50 cursor-not-allowed bg-gray-100" : ""}`}
+                              disabled={!isRecaptchaVerified || process.env.NEXT_PUBLIC_USE_STATIC_IMAGES === '1'}
+                              className={`font-comfortaa ${!isRecaptchaVerified ? "opacity-50 cursor-not-allowed bg-gray-100" : ""}`}
                               style={{ fontSize: 'clamp(0.75rem, 0.8vw, 0.875rem)', height: 'clamp(2rem, 2.2vw, 2.25rem)' }}
                             />
                           </div>
                           <div style={{ display: 'flex', flexDirection: 'column', gap: 'clamp(0.25rem, 0.3vw, 0.375rem)' }}>
                             <Label htmlFor="phone" className="text-[#5a3a2a] font-comfortaa" style={{ fontSize: 'clamp(0.6875rem, 0.7vw, 0.75rem)' }}>Phone Number *</Label>
-                            <div className={`phone-input-wrapper ${!isTurnstileVerified ? "opacity-50 pointer-events-none" : ""}`}>
+                            <div className={`phone-input-wrapper ${!isRecaptchaVerified ? "opacity-50 pointer-events-none" : ""}`}>
                               <PhoneInput
                                 international
                                 defaultCountry="US"
                                 value={formData.phone || undefined}
                                 onChange={(value) => handleInputChange("phone", value || "")}
-                                disabled={!isTurnstileVerified || process.env.NEXT_PUBLIC_USE_STATIC_IMAGES === '1'}
+                                disabled={!isRecaptchaVerified || process.env.NEXT_PUBLIC_USE_STATIC_IMAGES === '1'}
                                 className="font-comfortaa"
                               />
                             </div>
@@ -682,8 +682,8 @@ export function Header() {
                               value={formData.participants}
                               onChange={(e) => handleInputChange("participants", e.target.value)}
                               placeholder="Enter number of participants"
-                              disabled={!isTurnstileVerified || process.env.NEXT_PUBLIC_USE_STATIC_IMAGES === '1'}
-                              className={`font-comfortaa ${!isTurnstileVerified ? "opacity-50 cursor-not-allowed bg-gray-100" : ""}`}
+                              disabled={!isRecaptchaVerified || process.env.NEXT_PUBLIC_USE_STATIC_IMAGES === '1'}
+                              className={`font-comfortaa ${!isRecaptchaVerified ? "opacity-50 cursor-not-allowed bg-gray-100" : ""}`}
                               style={{ fontSize: 'clamp(0.75rem, 0.8vw, 0.875rem)', height: 'clamp(2rem, 2.2vw, 2.25rem)' }}
                             />
                           </div>
@@ -704,7 +704,7 @@ export function Header() {
                                 name="dateRange"
                                 checked={!formData.dateRange}
                                 onChange={() => handleDateRangeToggle(false)}
-                                disabled={!isTurnstileVerified || process.env.NEXT_PUBLIC_USE_STATIC_IMAGES === '1'}
+                                disabled={!isRecaptchaVerified || process.env.NEXT_PUBLIC_USE_STATIC_IMAGES === '1'}
                                 className="cursor-pointer"
                               />
                               <span className="font-comfortaa text-sm" style={{ fontSize: 'clamp(0.6875rem, 0.7vw, 0.75rem)' }}>Single Day</span>
@@ -715,7 +715,7 @@ export function Header() {
                                 name="dateRange"
                                 checked={formData.dateRange}
                                 onChange={() => handleDateRangeToggle(true)}
-                                disabled={!isTurnstileVerified || process.env.NEXT_PUBLIC_USE_STATIC_IMAGES === '1'}
+                                disabled={!isRecaptchaVerified || process.env.NEXT_PUBLIC_USE_STATIC_IMAGES === '1'}
                                 className="cursor-pointer"
                               />
                               <span className="font-comfortaa text-sm" style={{ fontSize: 'clamp(0.6875rem, 0.7vw, 0.75rem)' }}>Date Range</span>
@@ -739,7 +739,7 @@ export function Header() {
                                   handleStartDateChange(new Date(e.target.value))
                                 }
                               }}
-                              disabled={!isTurnstileVerified || process.env.NEXT_PUBLIC_USE_STATIC_IMAGES === '1'}
+                              disabled={!isRecaptchaVerified || process.env.NEXT_PUBLIC_USE_STATIC_IMAGES === '1'}
                               style={{ 
                                 position: 'absolute',
                                 width: '1px',
@@ -758,8 +758,8 @@ export function Header() {
                                 <Button
                                   id="startDate-visual"
                                   variant="outline"
-                                  disabled={!isTurnstileVerified || process.env.NEXT_PUBLIC_USE_STATIC_IMAGES === '1'}
-                                  className={`w-full justify-start text-left font-normal font-comfortaa ${!isTurnstileVerified ? "opacity-50 cursor-not-allowed" : ""}`}
+                                  disabled={!isRecaptchaVerified || process.env.NEXT_PUBLIC_USE_STATIC_IMAGES === '1'}
+                                  className={`w-full justify-start text-left font-normal font-comfortaa ${!isRecaptchaVerified ? "opacity-50 cursor-not-allowed" : ""}`}
                                   style={{ fontSize: 'clamp(0.75rem, 0.8vw, 0.875rem)', height: 'clamp(2rem, 2.2vw, 2.25rem)' }}
                                 >
                                   <CalendarIcon className="mr-2" style={{ width: 'clamp(0.75rem, 0.8vw, 1rem)', height: 'clamp(0.75rem, 0.8vw, 1rem)' }} />
@@ -770,7 +770,7 @@ export function Header() {
                                 <SimpleCalendar
                                   selected={startDate}
                                   onSelect={handleStartDateChange}
-                                  disabled={(date) => date < new Date() || !isTurnstileVerified || process.env.NEXT_PUBLIC_USE_STATIC_IMAGES === '1'}
+                                  disabled={(date) => date < new Date() || !isRecaptchaVerified || process.env.NEXT_PUBLIC_USE_STATIC_IMAGES === '1'}
                                 />
                               </PopoverContent>
                             </Popover>
@@ -790,7 +790,7 @@ export function Header() {
                                     handleEndDateChange(new Date(e.target.value))
                                   }
                                 }}
-                                disabled={!isTurnstileVerified || process.env.NEXT_PUBLIC_USE_STATIC_IMAGES === '1'}
+                                disabled={!isRecaptchaVerified || process.env.NEXT_PUBLIC_USE_STATIC_IMAGES === '1'}
                                 style={{ 
                                   position: 'absolute',
                                   width: '1px',
@@ -809,8 +809,8 @@ export function Header() {
                                   <Button
                                     id="endDate-visual"
                                     variant="outline"
-                                    disabled={!isTurnstileVerified || process.env.NEXT_PUBLIC_USE_STATIC_IMAGES === '1'}
-                                    className={`w-full justify-start text-left font-normal font-comfortaa ${!isTurnstileVerified ? "opacity-50 cursor-not-allowed" : ""}`}
+                                    disabled={!isRecaptchaVerified || process.env.NEXT_PUBLIC_USE_STATIC_IMAGES === '1'}
+                                    className={`w-full justify-start text-left font-normal font-comfortaa ${!isRecaptchaVerified ? "opacity-50 cursor-not-allowed" : ""}`}
                                     style={{ fontSize: 'clamp(0.75rem, 0.8vw, 0.875rem)', height: 'clamp(2rem, 2.2vw, 2.25rem)' }}
                                   >
                                     <CalendarIcon className="mr-2" style={{ width: 'clamp(0.75rem, 0.8vw, 1rem)', height: 'clamp(0.75rem, 0.8vw, 1rem)' }} />
@@ -821,7 +821,7 @@ export function Header() {
                                   <SimpleCalendar
                                     selected={endDate}
                                     onSelect={handleEndDateChange}
-                                    disabled={(date) => (startDate && date < startDate) || date < new Date() || !isTurnstileVerified || process.env.NEXT_PUBLIC_USE_STATIC_IMAGES === '1'}
+                                    disabled={(date) => (startDate && date < startDate) || date < new Date() || !isRecaptchaVerified || process.env.NEXT_PUBLIC_USE_STATIC_IMAGES === '1'}
                                   />
                                 </PopoverContent>
                               </Popover>
@@ -839,8 +839,8 @@ export function Header() {
                                 required
                                 value={formData.startTime}
                                 onChange={(e) => handleInputChange("startTime", e.target.value)}
-                                disabled={!isTurnstileVerified || process.env.NEXT_PUBLIC_USE_STATIC_IMAGES === '1'}
-                                className={`font-comfortaa ${!isTurnstileVerified ? "opacity-50 cursor-not-allowed bg-gray-100" : ""}`}
+                                disabled={!isRecaptchaVerified || process.env.NEXT_PUBLIC_USE_STATIC_IMAGES === '1'}
+                                className={`font-comfortaa ${!isRecaptchaVerified ? "opacity-50 cursor-not-allowed bg-gray-100" : ""}`}
                                 style={{ fontSize: 'clamp(0.75rem, 0.8vw, 0.875rem)', height: 'clamp(2rem, 2.2vw, 2.25rem)' }}
                               />
                               <Clock className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400 pointer-events-none" />
@@ -858,8 +858,8 @@ export function Header() {
                                 required
                                 value={formData.endTime}
                                 onChange={(e) => handleInputChange("endTime", e.target.value)}
-                                disabled={!isTurnstileVerified || process.env.NEXT_PUBLIC_USE_STATIC_IMAGES === '1'}
-                                className={`font-comfortaa ${!isTurnstileVerified ? "opacity-50 cursor-not-allowed bg-gray-100" : ""}`}
+                                disabled={!isRecaptchaVerified || process.env.NEXT_PUBLIC_USE_STATIC_IMAGES === '1'}
+                                className={`font-comfortaa ${!isRecaptchaVerified ? "opacity-50 cursor-not-allowed bg-gray-100" : ""}`}
                                 style={{ fontSize: 'clamp(0.75rem, 0.8vw, 0.875rem)', height: 'clamp(2rem, 2.2vw, 2.25rem)' }}
                               />
                               <Clock className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400 pointer-events-none" />
@@ -874,7 +874,7 @@ export function Header() {
                               name="eventType"
                               value={formData.eventType}
                               onChange={(e) => handleInputChange("eventType", e.target.value)}
-                              disabled={!isTurnstileVerified || process.env.NEXT_PUBLIC_USE_STATIC_IMAGES === '1'}
+                              disabled={!isRecaptchaVerified || process.env.NEXT_PUBLIC_USE_STATIC_IMAGES === '1'}
                               style={{ 
                                 position: 'absolute',
                                 width: '1px',
@@ -895,8 +895,8 @@ export function Header() {
                               <option value="Holiday Festive">Holiday Festive</option>
                               <option value="Other">Other</option>
                             </select>
-                            <Select value={formData.eventType} onValueChange={(value) => handleInputChange("eventType", value)} disabled={!isTurnstileVerified || process.env.NEXT_PUBLIC_USE_STATIC_IMAGES === '1'}>
-                              <SelectTrigger id="eventType-visual" aria-labelledby="eventType-label" className={`font-comfortaa ${!isTurnstileVerified ? "opacity-50 cursor-not-allowed" : ""}`} style={{ fontSize: 'clamp(0.75rem, 0.8vw, 0.875rem)', height: 'clamp(2rem, 2.2vw, 2.25rem)' }}>
+                            <Select value={formData.eventType} onValueChange={(value) => handleInputChange("eventType", value)} disabled={!isRecaptchaVerified || process.env.NEXT_PUBLIC_USE_STATIC_IMAGES === '1'}>
+                              <SelectTrigger id="eventType-visual" aria-labelledby="eventType-label" className={`font-comfortaa ${!isRecaptchaVerified ? "opacity-50 cursor-not-allowed" : ""}`} style={{ fontSize: 'clamp(0.75rem, 0.8vw, 0.875rem)', height: 'clamp(2rem, 2.2vw, 2.25rem)' }}>
                                 <SelectValue placeholder="Select event type" />
                               </SelectTrigger>
                               <SelectContent>
@@ -922,8 +922,8 @@ export function Header() {
                               value={formData.otherEventType}
                               onChange={(e) => handleInputChange("otherEventType", e.target.value)}
                               placeholder="Please specify your event type"
-                              disabled={!isTurnstileVerified || process.env.NEXT_PUBLIC_USE_STATIC_IMAGES === '1'}
-                              className={`font-comfortaa ${!isTurnstileVerified ? "opacity-50 cursor-not-allowed bg-gray-100" : ""}`}
+                              disabled={!isRecaptchaVerified || process.env.NEXT_PUBLIC_USE_STATIC_IMAGES === '1'}
+                              className={`font-comfortaa ${!isRecaptchaVerified ? "opacity-50 cursor-not-allowed bg-gray-100" : ""}`}
                               style={{ fontSize: 'clamp(0.75rem, 0.8vw, 0.875rem)', height: 'clamp(2rem, 2.2vw, 2.25rem)' }}
                             />
                           </div>
@@ -935,17 +935,17 @@ export function Header() {
                           <RadioGroup
                             value={formData.organizationType}
                             onValueChange={(value) => handleInputChange("organizationType", value)}
-                            disabled={!isTurnstileVerified || process.env.NEXT_PUBLIC_USE_STATIC_IMAGES === '1'}
+                            disabled={!isRecaptchaVerified || process.env.NEXT_PUBLIC_USE_STATIC_IMAGES === '1'}
                             className="flex flex-row gap-6"
                           >
                             <div className="flex items-center space-x-2">
-                              <RadioGroupItem value="Tailor Event" id="tailor-event" disabled={!isTurnstileVerified || process.env.NEXT_PUBLIC_USE_STATIC_IMAGES === '1'} />
+                              <RadioGroupItem value="Tailor Event" id="tailor-event" disabled={!isRecaptchaVerified || process.env.NEXT_PUBLIC_USE_STATIC_IMAGES === '1'} />
                               <Label htmlFor="tailor-event" className="font-comfortaa cursor-pointer" style={{ fontSize: 'clamp(0.75rem, 0.8vw, 0.875rem)' }}>
                                 Tailor Event
                               </Label>
                             </div>
                             <div className="flex items-center space-x-2">
-                              <RadioGroupItem value="Space Only" id="space-only" disabled={!isTurnstileVerified || process.env.NEXT_PUBLIC_USE_STATIC_IMAGES === '1'} />
+                              <RadioGroupItem value="Space Only" id="space-only" disabled={!isRecaptchaVerified || process.env.NEXT_PUBLIC_USE_STATIC_IMAGES === '1'} />
                               <Label htmlFor="space-only" className="font-comfortaa cursor-pointer" style={{ fontSize: 'clamp(0.75rem, 0.8vw, 0.875rem)' }}>
                                 Space Only
                               </Label>
@@ -972,10 +972,10 @@ export function Header() {
                               required
                               value={formData.introduction}
                               onChange={(e) => handleInputChange("introduction", e.target.value)}
-                              placeholder={isTurnstileVerified ? "Tell us a bit about yourself..." : "Please complete CAPTCHA verification first..."}
-                              disabled={!isTurnstileVerified || process.env.NEXT_PUBLIC_USE_STATIC_IMAGES === '1'}
+                              placeholder={isRecaptchaVerified ? "Tell us a bit about yourself..." : "Please complete CAPTCHA verification first..."}
+                              disabled={!isRecaptchaVerified || process.env.NEXT_PUBLIC_USE_STATIC_IMAGES === '1'}
                               rows={2}
-                              className={`font-comfortaa resize-none ${!isTurnstileVerified ? "opacity-50 cursor-not-allowed bg-gray-100" : ""}`}
+                              className={`font-comfortaa resize-none ${!isRecaptchaVerified ? "opacity-50 cursor-not-allowed bg-gray-100" : ""}`}
                               style={{ fontSize: 'clamp(0.75rem, 0.8vw, 0.875rem)', minHeight: 'clamp(3rem, 3.5vw, 4rem)' }}
                             />
                           </div>
@@ -987,10 +987,10 @@ export function Header() {
                               autoComplete="off"
                               value={formData.biography}
                               onChange={(e) => handleInputChange("biography", e.target.value)}
-                              placeholder={isTurnstileVerified ? "Share your interests, profession..." : "Please complete CAPTCHA verification first..."}
-                              disabled={!isTurnstileVerified || process.env.NEXT_PUBLIC_USE_STATIC_IMAGES === '1'}
+                              placeholder={isRecaptchaVerified ? "Share your interests, profession..." : "Please complete CAPTCHA verification first..."}
+                              disabled={!isRecaptchaVerified || process.env.NEXT_PUBLIC_USE_STATIC_IMAGES === '1'}
                               rows={2}
-                              className={`font-comfortaa resize-none ${!isTurnstileVerified ? "opacity-50 cursor-not-allowed bg-gray-100" : ""}`}
+                              className={`font-comfortaa resize-none ${!isRecaptchaVerified ? "opacity-50 cursor-not-allowed bg-gray-100" : ""}`}
                               style={{ fontSize: 'clamp(0.75rem, 0.8vw, 0.875rem)', minHeight: 'clamp(3rem, 3.5vw, 4rem)' }}
                             />
                           </div>
@@ -1002,10 +1002,10 @@ export function Header() {
                               autoComplete="off"
                               value={formData.specialRequests}
                               onChange={(e) => handleInputChange("specialRequests", e.target.value)}
-                              placeholder={isTurnstileVerified ? "Describe your vision, special requirements..." : "Please complete CAPTCHA verification first..."}
-                              disabled={!isTurnstileVerified || process.env.NEXT_PUBLIC_USE_STATIC_IMAGES === '1'}
+                              placeholder={isRecaptchaVerified ? "Describe your vision, special requirements..." : "Please complete CAPTCHA verification first..."}
+                              disabled={!isRecaptchaVerified || process.env.NEXT_PUBLIC_USE_STATIC_IMAGES === '1'}
                               rows={2}
-                              className={`font-comfortaa resize-none ${!isTurnstileVerified ? "opacity-50 cursor-not-allowed bg-gray-100" : ""}`}
+                              className={`font-comfortaa resize-none ${!isRecaptchaVerified ? "opacity-50 cursor-not-allowed bg-gray-100" : ""}`}
                               style={{ fontSize: 'clamp(0.75rem, 0.8vw, 0.875rem)', minHeight: 'clamp(3rem, 3.5vw, 4rem)' }}
                             />
                           </div>
@@ -1020,7 +1020,7 @@ export function Header() {
                               ? "bg-yellow-50 border-yellow-200 text-yellow-800"
                               : error.type === "network"
                               ? "bg-red-50 border-red-200 text-red-800"
-                              : error.type === "turnstile"
+                              : error.type === "recaptcha"
                               ? "bg-orange-50 border-orange-200 text-orange-800"
                               : error.type === "static"
                               ? "bg-yellow-50 border-yellow-300 text-yellow-800"
@@ -1055,7 +1055,7 @@ export function Header() {
                       <div className="flex flex-col items-center space-y-1.5 sm:space-y-2 lg:space-y-1 pt-2 sm:pt-2.5 lg:pt-1.5">
                         <Button
                           type="submit"
-                          disabled={!isTurnstileVerified || isSubmitting || process.env.NEXT_PUBLIC_USE_STATIC_IMAGES === '1'}
+                          disabled={!isRecaptchaVerified || isSubmitting || process.env.NEXT_PUBLIC_USE_STATIC_IMAGES === '1'}
                           className="font-comfortaa bg-[#5B9AB8] hover:bg-[#4d8ea7] text-white disabled:opacity-50 disabled:cursor-not-allowed"
                           style={{ 
                             padding: 'clamp(0.5rem, 0.6vw, 0.75rem) clamp(1rem, 1.2vw, 1.5rem)',

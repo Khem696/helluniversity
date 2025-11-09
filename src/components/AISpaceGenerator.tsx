@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useRef, useMemo, useCallback, memo } from "react"
 import { withBasePath, getThumbnailUrl, loadThumbnailManifest } from "@/lib/utils"
-import { Turnstile } from "./Turnstile"
+import { Recaptcha } from "./Recaptcha"
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogClose } from "./ui/dialog"
 import {
   Carousel,
@@ -45,14 +45,14 @@ const IMAGE_STYLE: React.CSSProperties = {
 const ImageSlideItem = memo(function ImageSlideItem({
   url,
   isSelected,
-  isTurnstileVerified,
+  isRecaptchaVerified,
   onToggle,
   index,
   shouldPreload
 }: {
   url: string
   isSelected: boolean
-  isTurnstileVerified: boolean
+  isRecaptchaVerified: boolean
   onToggle: (url: string) => void
   index: number
   shouldPreload: boolean
@@ -141,15 +141,15 @@ const ImageSlideItem = memo(function ImageSlideItem({
     <CarouselItem className="pl-2 md:pl-4 basis-auto">
       <div
         ref={containerRef}
-        onClick={() => isTurnstileVerified && onToggle(url)}
+        onClick={() => isRecaptchaVerified && onToggle(url)}
         className={`relative group cursor-pointer rounded-lg border-2 overflow-hidden bg-gray-100 w-[200px] h-[200px] sm:w-[240px] sm:h-[240px] md:w-[280px] md:h-[280px] ${
           isSelected ? 'border-[#5B9AB8] ring-2 ring-[#5B9AB8]/20' : 'border-gray-200 hover:border-gray-300'
-        } ${!isTurnstileVerified ? 'opacity-50 cursor-not-allowed pointer-events-none' : ''}`}
+        } ${!isRecaptchaVerified ? 'opacity-50 cursor-not-allowed pointer-events-none' : ''}`}
         role="button"
-        tabIndex={isTurnstileVerified ? 0 : -1}
+        tabIndex={isRecaptchaVerified ? 0 : -1}
         aria-label={`Select image ${fileName}`}
         onKeyDown={(e) => {
-          if ((e.key === 'Enter' || e.key === ' ') && isTurnstileVerified) {
+          if ((e.key === 'Enter' || e.key === ' ') && isRecaptchaVerified) {
             e.preventDefault()
             onToggle(url)
           }
@@ -215,7 +215,7 @@ const ImageSlideItem = memo(function ImageSlideItem({
           }`}>
             <Checkbox
               checked={isSelected}
-              disabled={!isTurnstileVerified}
+              disabled={!isRecaptchaVerified}
               className="size-5 sm:size-6 pointer-events-none"
               aria-label={`Select ${fileName}`}
             />
@@ -249,15 +249,15 @@ export function AISpaceGenerator() {
   const [isLoading, setIsLoading] = useState(false)
   const [results, setResults] = useState<string[]>([])
   const [error, setError] = useState<string>("")
-  const [turnstileToken, setTurnstileToken] = useState<string | null>(null)
-  const [isTurnstileVerified, setIsTurnstileVerified] = useState(false)
+  const [recaptchaToken, setRecaptchaToken] = useState<string | null>(null)
+  const [isRecaptchaVerified, setIsRecaptchaVerified] = useState(false)
   const [resultsModalOpen, setResultsModalOpen] = useState(false)
   const [carouselApi, setCarouselApi] = useState<CarouselApi>()
   const [currentImageIndex, setCurrentImageIndex] = useState(0)
   const [loadingProgress, setLoadingProgress] = useState(0)
   const [isLoadingImages, setIsLoadingImages] = useState(true)
   const [imageLoadErrors, setImageLoadErrors] = useState<Set<number>>(new Set())
-  const turnstileKeyRef = useRef(0) // Force Turnstile re-render
+  const recaptchaKeyRef = useRef(0) // Force reCAPTCHA re-render
 
   // Load generated images from localStorage on component mount
   useEffect(() => {
@@ -285,20 +285,20 @@ export function AISpaceGenerator() {
     }
   }, [])
 
-  function handleTurnstileVerify(token: string) {
-    setTurnstileToken(token)
-    setIsTurnstileVerified(true)
+  function handleRecaptchaVerify(token: string) {
+    setRecaptchaToken(token)
+    setIsRecaptchaVerified(true)
   }
 
-  function handleTurnstileError() {
-    setTurnstileToken(null)
-    setIsTurnstileVerified(false)
+  function handleRecaptchaError() {
+    setRecaptchaToken(null)
+    setIsRecaptchaVerified(false)
     setError("CAPTCHA verification failed. Please try again.")
   }
 
-  function handleTurnstileExpire() {
-    setTurnstileToken(null)
-    setIsTurnstileVerified(false)
+  function handleRecaptchaExpire() {
+    setRecaptchaToken(null)
+    setIsRecaptchaVerified(false)
   }
 
   // Handle modal open/close - prevent closing while loading
@@ -317,11 +317,11 @@ export function AISpaceGenerator() {
   // Reset CAPTCHA when user wants to generate again
   function handleGenerateAgain() {
     // Reset CAPTCHA verification
-    setTurnstileToken(null)
-    setIsTurnstileVerified(false)
+    setRecaptchaToken(null)
+    setIsRecaptchaVerified(false)
     setError("")
-    // Force Turnstile to re-render by incrementing key
-    turnstileKeyRef.current += 1
+    // Force reCAPTCHA to re-render by incrementing key
+    recaptchaKeyRef.current += 1
     // Clear previous results
     setResults([])
     setPrompt("")
@@ -335,7 +335,7 @@ export function AISpaceGenerator() {
   }
 
   async function onGenerate() {
-    if (!isTurnstileVerified || !turnstileToken) {
+    if (!isRecaptchaVerified || !recaptchaToken) {
       setError("Please complete the CAPTCHA verification first.")
       return
     }
@@ -368,7 +368,7 @@ export function AISpaceGenerator() {
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
-          token: turnstileToken,
+          token: recaptchaToken,
           selectedImages,
           prompt,
         }),
@@ -438,9 +438,9 @@ export function AISpaceGenerator() {
       }
       
       // Reset CAPTCHA after successful generation (user needs to verify again to generate more)
-      setTurnstileToken(null)
-      setIsTurnstileVerified(false)
-      turnstileKeyRef.current += 1
+      setRecaptchaToken(null)
+      setIsRecaptchaVerified(false)
+      recaptchaKeyRef.current += 1
       
       // Open modal if there are results
       if (generatedImages.length > 0) {
@@ -474,7 +474,7 @@ export function AISpaceGenerator() {
 
   // Stable toggle handler - O(1) operations using Set
   const handleToggleImage = useCallback((url: string) => {
-    if (!isTurnstileVerified) return
+    if (!isRecaptchaVerified) return
     
     setSelectedImages((prev) => {
       const prevSet = new Set(prev)
@@ -488,7 +488,7 @@ export function AISpaceGenerator() {
         return Array.from(prevSet)
       }
     })
-  }, [isTurnstileVerified])
+  }, [isRecaptchaVerified])
 
   // Fetch studio images dynamically on component mount
   // Unified approach: Always try manifest first (works in both static and production), fallback to API
@@ -630,21 +630,21 @@ export function AISpaceGenerator() {
 
   return (
     <div className="flex flex-col" style={{ gap: 'clamp(0.75rem, 0.9vw, 1rem)' }}>
-      {/* Turnstile CAPTCHA - Must be verified before using the form */}
+      {/* reCAPTCHA v2 - Must be verified before using the form */}
       <div style={{ display: 'flex', flexDirection: 'column', gap: 'clamp(0.375rem, 0.5vw, 0.5rem)' }}>
         <p className="text-[#5a3a2a]/70 font-comfortaa" style={{ fontSize: 'clamp(0.625rem, 0.7vw, 0.75rem)' }}>
           Please verify you're human before proceeding:
         </p>
         <div className="lg:scale-75 xl:scale-90 origin-left">
-          <Turnstile
-            key={turnstileKeyRef.current}
-            onVerify={handleTurnstileVerify}
-            onError={handleTurnstileError}
-            onExpire={handleTurnstileExpire}
+          <Recaptcha
+            key={recaptchaKeyRef.current}
+            onVerify={handleRecaptchaVerify}
+            onError={handleRecaptchaError}
+            onExpire={handleRecaptchaExpire}
             size="compact"
           />
         </div>
-        {!isTurnstileVerified && (
+        {!isRecaptchaVerified && (
           <p className="text-[#5a3a2a]/60 font-comfortaa italic" style={{ fontSize: 'clamp(0.625rem, 0.7vw, 0.75rem)' }}>
             Complete verification to enable form fields
           </p>
@@ -689,7 +689,7 @@ export function AISpaceGenerator() {
                     key={url}
                     url={url}
                     isSelected={selectedImagesSet.has(url)}
-                    isTurnstileVerified={isTurnstileVerified}
+                    isRecaptchaVerified={isRecaptchaVerified}
                     onToggle={handleToggleImage}
                     index={index}
                     shouldPreload={index < 5} // Preload first 5 images
@@ -713,9 +713,9 @@ export function AISpaceGenerator() {
           autoComplete="off"
           value={prompt}
           onChange={(e) => setPrompt(e.target.value)}
-          placeholder={isTurnstileVerified ? "Describe the decoration style you want..." : "Please complete CAPTCHA verification first..."}
-          disabled={!isTurnstileVerified}
-          className={`w-full border rounded resize-none font-comfortaa ${!isTurnstileVerified ? "opacity-50 cursor-not-allowed bg-gray-100" : ""}`}
+          placeholder={isRecaptchaVerified ? "Describe the decoration style you want..." : "Please complete CAPTCHA verification first..."}
+          disabled={!isRecaptchaVerified}
+          className={`w-full border rounded resize-none font-comfortaa ${!isRecaptchaVerified ? "opacity-50 cursor-not-allowed bg-gray-100" : ""}`}
           style={{ 
             minHeight: 'clamp(3rem, 3.5vw, 4rem)',
             padding: 'clamp(0.5rem, 0.6vw, 0.75rem)',
@@ -728,7 +728,7 @@ export function AISpaceGenerator() {
         <button
           type="button"
           onClick={onGenerate}
-          disabled={isLoading || selectedImages.length === 0 || prompt.trim().length === 0 || !isTurnstileVerified || results.length > 0}
+          disabled={isLoading || selectedImages.length === 0 || prompt.trim().length === 0 || !isRecaptchaVerified || results.length > 0}
           className="rounded bg-black text-white disabled:opacity-50 disabled:cursor-not-allowed"
           style={{ 
             padding: 'clamp(0.5rem, 0.6vw, 0.75rem) clamp(0.75rem, 0.9vw, 1rem)',
