@@ -50,22 +50,36 @@ export async function GET() {
     const { getTursoClient } = await import("@/lib/turso")
     const db = getTursoClient()
     
-    // Check if tables exist
+    // Check if all required tables exist
+    const requiredTables = [
+      'images',
+      'events',
+      'rate_limits',
+      'bookings',
+      'booking_status_history',
+      'admin_actions',
+      'event_images'
+    ]
+    
+    // SQLite IN clause with string literals
+    const tableNames = requiredTables.map(name => `'${name}'`).join(', ')
     const result = await db.execute(`
       SELECT name FROM sqlite_master 
-      WHERE type='table' AND name IN ('images', 'events', 'rate_limits')
+      WHERE type='table' AND name IN (${tableNames})
     `)
     
-    const tables = result.rows.map((row: any) => row.name)
+    const existingTables = result.rows.map((row: any) => row.name)
+    const tablesStatus: Record<string, boolean> = {}
+    
+    requiredTables.forEach(table => {
+      tablesStatus[table] = existingTables.includes(table)
+    })
     
     return NextResponse.json({
       success: true,
-      tables: {
-        images: tables.includes("images"),
-        events: tables.includes("events"),
-        rate_limits: tables.includes("rate_limits"),
-      },
-      allTablesExist: tables.length === 3,
+      tables: tablesStatus,
+      allTablesExist: existingTables.length === requiredTables.length,
+      missingTables: requiredTables.filter(table => !existingTables.includes(table)),
     })
   } catch (error) {
     console.error("Database status check error:", error)
