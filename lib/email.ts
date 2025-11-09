@@ -55,16 +55,20 @@ function getTransporter(): nodemailer.Transporter {
   return transporter
 }
 
+// Helper to ensure we always have a string (never undefined/null)
+function ensureString(value: any): string {
+  if (value === null || value === undefined) return ''
+  const str = String(value)
+  if (str === 'undefined' || str === 'null' || str === 'NaN') return ''
+  return str
+}
+
 // Escape HTML to prevent XSS and ensure proper display
 function escapeHtml(text: string | null | undefined): string {
-  // Always return a string, never undefined
-  if (text === null || text === undefined) return ''
+  const safeText = ensureString(text)
+  if (!safeText) return ''
   try {
-    const str = String(text || '')
-    if (!str || str === 'undefined' || str === 'null' || str === 'NaN') return ''
-    // Ensure we have a valid string before calling replace
-    if (typeof str !== 'string') return ''
-    return str
+    return safeText
       .replace(/&/g, '&amp;')
       .replace(/</g, '&lt;')
       .replace(/>/g, '&gt;')
@@ -72,29 +76,35 @@ function escapeHtml(text: string | null | undefined): string {
       .replace(/'/g, '&#039;')
   } catch (error) {
     console.error('❌ escapeHtml error:', error, 'Input:', text)
-    return '' // Always return empty string on error
+    return ''
   }
 }
 
 // Format event type for display
 function formatEventType(eventType: string, otherEventType?: string): string {
-  if (!eventType) return 'Not specified'
-  
-  if (eventType === "Other" && otherEventType) {
-    return `Other: ${otherEventType || 'Not specified'}`
+  try {
+    if (!eventType) return 'Not specified'
+    
+    if (eventType === "Other" && otherEventType) {
+      return `Other: ${ensureString(otherEventType) || 'Not specified'}`
+    }
+    const eventTypes: Record<string, string> = {
+      'reunion': 'Reunion',
+      'family-friends': 'Family & Friends',
+      'baby-shower': 'Baby Shower',
+      'engagement': 'Engagement',
+      'art-workshop': 'Art Workshop',
+      'painting-workshop': 'Painting Workshop',
+      'ceramics-workshop': 'Ceramics Workshop',
+      'brainstorming-session': 'Brainstorming Session',
+      'other': 'Other',
+    }
+    const result = eventTypes[eventType] || ensureString(eventType) || 'Not specified'
+    return ensureString(result) // Double-check it's a string
+  } catch (error) {
+    console.error('❌ formatEventType error:', error)
+    return 'Not specified'
   }
-  const eventTypes: Record<string, string> = {
-    'reunion': 'Reunion',
-    'family-friends': 'Family & Friends',
-    'baby-shower': 'Baby Shower',
-    'engagement': 'Engagement',
-    'art-workshop': 'Art Workshop',
-    'painting-workshop': 'Painting Workshop',
-    'ceramics-workshop': 'Ceramics Workshop',
-    'brainstorming-session': 'Brainstorming Session',
-    'other': 'Other',
-  }
-  return eventTypes[eventType] || eventType || 'Not specified'
 }
 
 // Format date for display
@@ -180,39 +190,45 @@ function formatDateTime(dateString: string | null | undefined, timeString: strin
 
 // Format date range for display
 function formatDateRange(data: ReservationData): string {
-  if (!data.startDate) {
-    console.warn('⚠️ formatDateRange: startDate is missing')
-    return "Not specified"
-  }
-  
-  console.error('📅 formatDateRange called with:')
-  console.error('   - startDate:', data.startDate)
-  console.error('   - startTime:', data.startTime)
-  console.error('   - endDate:', data.endDate)
-  console.error('   - endTime:', data.endTime)
-  console.error('   - dateRange:', data.dateRange)
-  
-  const startDateTime = formatDateTime(data.startDate, data.startTime || null)
-  console.error('   - formatted startDateTime:', startDateTime)
-  
-  if (!data.dateRange || !data.endDate) {
-    // Single day - show start date/time to end time
-    if (data.endTime) {
-      const result = `${startDateTime} - ${data.endTime}`
-      console.error('   - single day result:', result)
-      return result
+  try {
+    if (!data.startDate) {
+      console.warn('⚠️ formatDateRange: startDate is missing')
+      return "Not specified"
+    }
+    
+    console.error('📅 formatDateRange called with:')
+    console.error('   - startDate:', data.startDate)
+    console.error('   - startTime:', data.startTime)
+    console.error('   - endDate:', data.endDate)
+    console.error('   - endTime:', data.endTime)
+    console.error('   - dateRange:', data.dateRange)
+    
+    const startDateTime = ensureString(formatDateTime(data.startDate, data.startTime || null) || "Not specified")
+    console.error('   - formatted startDateTime:', startDateTime)
+    
+    if (!data.dateRange || !data.endDate) {
+      // Single day - show start date/time to end time
+      if (data.endTime) {
+        const endTime = ensureString(data.endTime)
+        const result = `${startDateTime} - ${endTime}`
+        console.error('   - single day result:', result)
+        return result
+      } else {
+        const result = startDateTime
+        console.error('   - single day (no end time) result:', result)
+        return result
+      }
     } else {
-      const result = startDateTime
-      console.error('   - single day (no end time) result:', result)
+      // Date range - show start date/time to end date/time
+      const endDateTime = ensureString(formatDateTime(data.endDate, data.endTime || null) || "Not specified")
+      console.error('   - formatted endDateTime:', endDateTime)
+      const result = `${startDateTime} to ${endDateTime}`
+      console.error('   - date range result:', result)
       return result
     }
-  } else {
-    // Date range - show start date/time to end date/time
-    const endDateTime = formatDateTime(data.endDate, data.endTime || null)
-    console.error('   - formatted endDateTime:', endDateTime)
-    const result = `${startDateTime} to ${endDateTime}`
-    console.error('   - date range result:', result)
-    return result
+  } catch (error) {
+    console.error('❌ formatDateRange error:', error)
+    return "Not specified"
   }
 }
 
@@ -227,23 +243,22 @@ function generateAdminEmailHTML(data: ReservationData): string {
     console.error('   - endTime:', data.endTime)
     console.error('   - dateRange:', data.dateRange)
     
-    // Safely get all values with defaults - ensure they're never undefined
-    const safeIntroduction = String(data.introduction || "Not provided")
-    const safeBiography = (data.biography && String(data.biography).trim()) ? String(data.biography) : null
-    const safeSpecialRequests = (data.specialRequests && String(data.specialRequests).trim()) ? String(data.specialRequests) : null
+    // Safely get all values with defaults using ensureString
+    const safeIntroduction = ensureString(data.introduction) || "Not provided"
+    const safeBiography = (data.biography && ensureString(data.biography).trim()) ? ensureString(data.biography) : null
+    const safeSpecialRequests = (data.specialRequests && ensureString(data.specialRequests).trim()) ? ensureString(data.specialRequests) : null
     
-    // Validate all safe values are strings
-    if (typeof safeIntroduction !== 'string') {
-      console.error('❌ ERROR: safeIntroduction is not a string:', safeIntroduction)
-      throw new Error('Invalid introduction data')
-    }
-    
-    const formattedDateRange = formatDateRange(data) || "Not specified"
-    const formattedEventType = formatEventType(data.eventType || "", data.otherEventType) || "Not specified"
+    const formattedDateRange = ensureString(formatDateRange(data) || "Not specified")
+    const formattedEventType = ensureString(formatEventType(data.eventType || "", data.otherEventType) || "Not specified")
     const organizationRemark = (data.organizationType === "Tailor Event" ? "Organized by HU" : "Organized by Client")
     
-    console.error('   - formattedDateRange:', formattedDateRange)
-    console.error('   - formattedEventType:', formattedEventType)
+    // Ensure all formatted values are strings
+    const safeFormattedDateRange = ensureString(formattedDateRange)
+    const safeFormattedEventType = ensureString(formattedEventType)
+    const safeOrganizationRemark = ensureString(organizationRemark)
+    
+    console.error('   - formattedDateRange:', safeFormattedDateRange)
+    console.error('   - formattedEventType:', safeFormattedEventType)
 
     return `
 <!DOCTYPE html>
@@ -327,31 +342,31 @@ function generateAdminEmailHTML(data: ReservationData): string {
       <div class="section-title">Booking Details</div>
       <div class="field">
         <span class="field-label">Name:</span>
-        <span class="field-value">${escapeHtml(String(data.name || "Not provided"))}</span>
+        <span class="field-value">${escapeHtml(ensureString(data.name) || "Not provided")}</span>
       </div>
       <div class="field">
         <span class="field-label">Email:</span>
-        <span class="field-value"><a href="mailto:${escapeHtml(String(data.email || "Not provided"))}">${escapeHtml(String(data.email || "Not provided"))}</a></span>
+        <span class="field-value"><a href="mailto:${escapeHtml(ensureString(data.email) || "Not provided")}">${escapeHtml(ensureString(data.email) || "Not provided")}</a></span>
       </div>
       <div class="field">
         <span class="field-label">Phone:</span>
-        <span class="field-value"><a href="tel:${escapeHtml(String(data.phone || "Not provided"))}">${escapeHtml(String(data.phone || "Not provided"))}</a></span>
+        <span class="field-value"><a href="tel:${escapeHtml(ensureString(data.phone) || "Not provided")}">${escapeHtml(ensureString(data.phone) || "Not provided")}</a></span>
       </div>
       <div class="field">
         <span class="field-label">Number of Participants:</span>
-        <span class="field-value">${escapeHtml(String(data.participants || "Not specified"))}</span>
+        <span class="field-value">${escapeHtml(ensureString(data.participants) || "Not specified")}</span>
       </div>
       <div class="field">
         <span class="field-label">Event Type:</span>
-        <span class="field-value">${escapeHtml(String(formattedEventType || "Not specified"))}</span>
+        <span class="field-value">${escapeHtml(safeFormattedEventType)}</span>
       </div>
       <div class="field">
         <span class="field-label">Date & Time:</span>
-        <span class="field-value">${escapeHtml(String(formattedDateRange || "Not specified"))}</span>
+        <span class="field-value">${escapeHtml(safeFormattedDateRange)}</span>
       </div>
       <div class="field">
         <span class="field-label">Organization:</span>
-        <span class="field-value">${escapeHtml(String(data.organizationType || "Not specified"))} (${escapeHtml(String(organizationRemark))})</span>
+        <span class="field-value">${escapeHtml(ensureString(data.organizationType) || "Not specified")} (${escapeHtml(safeOrganizationRemark)})</span>
       </div>
     </div>
 
@@ -359,18 +374,18 @@ function generateAdminEmailHTML(data: ReservationData): string {
       <div class="section-title">Guest Information</div>
       <div class="field">
         <span class="field-label">Introduction:</span>
-        <div class="text-content">${String(escapeHtml(safeIntroduction) || '').replace(/\n/g, '<br>')}</div>
+        <div class="text-content">${ensureString(escapeHtml(safeIntroduction)).replace(/\n/g, '<br>')}</div>
       </div>
       ${safeBiography ? `
       <div class="field">
         <span class="field-label">Background & Interests:</span>
-        <div class="text-content">${String(escapeHtml(safeBiography) || '').replace(/\n/g, '<br>')}</div>
+        <div class="text-content">${ensureString(escapeHtml(safeBiography)).replace(/\n/g, '<br>')}</div>
       </div>
       ` : ''}
       ${safeSpecialRequests ? `
       <div class="field">
         <span class="field-label">Special Requests:</span>
-        <div class="text-content">${String(escapeHtml(safeSpecialRequests) || '').replace(/\n/g, '<br>')}</div>
+        <div class="text-content">${ensureString(escapeHtml(safeSpecialRequests)).replace(/\n/g, '<br>')}</div>
       </div>
       ` : ''}
     </div>
@@ -481,14 +496,14 @@ function generateUserEmailHTML(data: ReservationData): string {
     console.error('   - endTime:', data.endTime)
     console.error('   - dateRange:', data.dateRange)
     
-    const formattedDateRange = formatDateRange(data) || "Not specified"
-    const formattedEventType = formatEventType(data.eventType || "", data.otherEventType) || "Not specified"
+    const formattedDateRange = ensureString(formatDateRange(data) || "Not specified")
+    const formattedEventType = ensureString(formatEventType(data.eventType || "", data.otherEventType) || "Not specified")
     const organizationRemark = (data.organizationType === "Tailor Event" ? "Organized by HU" : "Organized by Client")
     
-    // Ensure all values are strings
-    const safeFormattedDateRange = String(formattedDateRange || "Not specified")
-    const safeFormattedEventType = String(formattedEventType || "Not specified")
-    const safeOrganizationRemark = String(organizationRemark || "Organized by Client")
+    // Ensure all values are strings using ensureString
+    const safeFormattedDateRange = ensureString(formattedDateRange)
+    const safeFormattedEventType = ensureString(formattedEventType)
+    const safeOrganizationRemark = ensureString(organizationRemark)
     
     console.error('   - formattedDateRange:', safeFormattedDateRange)
     console.error('   - formattedEventType:', safeFormattedEventType)

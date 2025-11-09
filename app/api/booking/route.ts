@@ -188,7 +188,49 @@ export async function POST(request: Request) {
         console.error("⚠️ Admin notifications will use SMTP_USER as fallback:", process.env.SMTP_USER || "NOT SET")
       }
       
-      const emailStatus = await sendReservationEmails(bookingData)
+      // Normalize booking data to ensure all fields are properly formatted
+      const normalizedBookingData = {
+        name: String(bookingData.name || "").trim(),
+        email: String(bookingData.email || "").trim(),
+        phone: String(bookingData.phone || "").trim(),
+        participants: bookingData.participants ? String(bookingData.participants).trim() : undefined,
+        eventType: String(bookingData.eventType || "").trim(),
+        otherEventType: bookingData.otherEventType ? String(bookingData.otherEventType).trim() : undefined,
+        dateRange: Boolean(bookingData.dateRange),
+        startDate: bookingData.startDate ? String(bookingData.startDate).trim() : null,
+        endDate: bookingData.endDate ? String(bookingData.endDate).trim() : null,
+        startTime: bookingData.startTime ? String(bookingData.startTime).trim() : undefined,
+        endTime: bookingData.endTime ? String(bookingData.endTime).trim() : undefined,
+        organizationType: (bookingData.organizationType as "Tailor Event" | "Space Only" | "") || "",
+        introduction: String(bookingData.introduction || "").trim(),
+        biography: bookingData.biography ? String(bookingData.biography).trim() : "",
+        specialRequests: bookingData.specialRequests ? String(bookingData.specialRequests).trim() : "",
+      }
+      
+      // Validate normalized data
+      if (!normalizedBookingData.name || !normalizedBookingData.email || !normalizedBookingData.startDate) {
+        return NextResponse.json(
+          { success: false, error: "Missing required booking information after normalization" },
+          { status: 400 }
+        )
+      }
+      
+      console.error("📦 Normalized booking data:", {
+        name: normalizedBookingData.name,
+        email: normalizedBookingData.email,
+        phone: normalizedBookingData.phone,
+        participants: normalizedBookingData.participants,
+        eventType: normalizedBookingData.eventType,
+        startDate: normalizedBookingData.startDate,
+        endDate: normalizedBookingData.endDate,
+        startTime: normalizedBookingData.startTime,
+        endTime: normalizedBookingData.endTime,
+        introduction: normalizedBookingData.introduction ? `${normalizedBookingData.introduction.substring(0, 30)}...` : "empty",
+        biography: normalizedBookingData.biography ? `${normalizedBookingData.biography.substring(0, 30)}...` : "empty",
+        specialRequests: normalizedBookingData.specialRequests ? `${normalizedBookingData.specialRequests.substring(0, 30)}...` : "empty",
+      })
+      
+      const emailStatus = await sendReservationEmails(normalizedBookingData)
       
       console.error("Email sending results:", {
         adminSent: emailStatus.adminSent,
