@@ -112,60 +112,78 @@ function formatEventType(eventType: string, otherEventType?: string): string {
 // Format date for display
 function formatDate(dateString: string): string {
   try {
-    const date = new Date(dateString)
-    return date.toLocaleDateString('en-US', {
+    const safeDateString = ensureString(dateString)
+    if (!safeDateString || safeDateString === 'undefined' || safeDateString === 'null') {
+      return "Not specified"
+    }
+    const date = new Date(safeDateString)
+    if (isNaN(date.getTime())) {
+      return safeDateString
+    }
+    const formatted = date.toLocaleDateString('en-US', {
       weekday: 'long',
       year: 'numeric',
       month: 'long',
       day: 'numeric',
     })
-  } catch {
-    return dateString
+    return ensureString(formatted) || safeDateString
+  } catch (error) {
+    console.error('❌ formatDate error:', error)
+    return ensureString(dateString) || "Not specified"
   }
 }
 
 // Format date and time for display
 function formatDateTime(dateString: string | null | undefined, timeString: string | null | undefined): string {
   try {
-    if (!dateString) {
-      console.warn('⚠️ formatDateTime: dateString is missing')
+    // Ensure inputs are strings
+    const safeDateString = ensureString(dateString)
+    const safeTimeString = ensureString(timeString)
+    
+    if (!safeDateString || safeDateString === 'undefined' || safeDateString === 'null') {
+      console.warn('⚠️ formatDateTime: dateString is missing or invalid')
       return "Not specified"
     }
     
-    if (!timeString) {
+    if (!safeTimeString || safeTimeString === 'undefined' || safeTimeString === 'null' || safeTimeString.trim() === '') {
       console.warn('⚠️ formatDateTime: timeString is missing, formatting date only')
       // Format just the date if time is missing
       try {
-        const date = new Date(dateString)
+        const date = new Date(safeDateString)
         if (isNaN(date.getTime())) {
-          return dateString
+          return ensureString(safeDateString) || "Not specified"
         }
-        return date.toLocaleDateString('en-US', {
+        const formatted = date.toLocaleDateString('en-US', {
           weekday: 'long',
           year: 'numeric',
           month: 'long',
           day: 'numeric',
         })
+        return ensureString(formatted) || safeDateString
       } catch {
-        return dateString
+        return ensureString(safeDateString) || "Not specified"
       }
     }
     
-    const date = new Date(dateString)
+    const date = new Date(safeDateString)
     
     // Check if date is valid
     if (isNaN(date.getTime())) {
-      console.warn('⚠️ formatDateTime: Invalid date:', dateString)
-      return `${dateString} at ${timeString}`
+      console.warn('⚠️ formatDateTime: Invalid date:', safeDateString)
+      return `${ensureString(safeDateString)} at ${ensureString(safeTimeString)}`
     }
     
-    const [hours, minutes] = timeString.split(':')
-    if (!hours || !minutes) {
-      console.warn('⚠️ formatDateTime: Invalid time format:', timeString)
-      return `${dateString} at ${timeString}`
+    // Safely split time string
+    const timeParts = ensureString(safeTimeString).split(':')
+    const hours = timeParts[0]
+    const minutes = timeParts[1]
+    
+    if (!hours || !minutes || hours === 'undefined' || minutes === 'undefined') {
+      console.warn('⚠️ formatDateTime: Invalid time format:', safeTimeString)
+      return `${ensureString(safeDateString)} at ${ensureString(safeTimeString)}`
     }
     
-    date.setHours(parseInt(hours, 10), parseInt(minutes, 10))
+    date.setHours(parseInt(ensureString(hours), 10), parseInt(ensureString(minutes), 10))
     
     // Check if the formatted date is valid
     const formatted = date.toLocaleString('en-US', {
@@ -178,15 +196,18 @@ function formatDateTime(dateString: string | null | undefined, timeString: strin
       hour12: true,
     })
     
-    if (formatted.includes('Invalid')) {
+    const safeFormatted = ensureString(formatted)
+    if (!safeFormatted || safeFormatted.includes('Invalid')) {
       console.warn('⚠️ formatDateTime: Formatted date contains "Invalid"')
-      return `${dateString} at ${timeString}`
+      return `${ensureString(safeDateString)} at ${ensureString(safeTimeString)}`
     }
     
-    return formatted
+    return safeFormatted
   } catch (error) {
     console.error('❌ formatDateTime error:', error)
-    return dateString && timeString ? `${dateString} at ${timeString}` : "Not specified"
+    const safeDate = ensureString(dateString) || "Not specified"
+    const safeTime = ensureString(timeString) || ""
+    return safeTime ? `${safeDate} at ${safeTime}` : safeDate
   }
 }
 
@@ -987,14 +1008,23 @@ export async function sendReservationEmails(
   let userSent = false
 
   // Send admin notification FIRST - MUST succeed before sending user email
+  // Wrap in additional try-catch to ensure we catch ALL errors
   try {
     console.error('='.repeat(60))
     console.error('STEP 1: Attempting to send admin notification email...')
     console.error('='.repeat(60))
-    await sendAdminNotification(data)
-    adminSent = true
-    console.error('✅ Admin notification sent successfully')
-    console.error('='.repeat(60))
+    
+    // Wrap the entire admin notification in a try-catch to catch any errors during generation
+    try {
+      await sendAdminNotification(data)
+      adminSent = true
+      console.error('✅ Admin notification sent successfully')
+      console.error('='.repeat(60))
+    } catch (innerError) {
+      // Re-throw to be caught by outer catch
+      console.error('❌ INNER ERROR in sendAdminNotification:', innerError)
+      throw innerError
+    }
   } catch (error) {
     // Enhanced error handling
     let errorMessage = 'Unknown error'
@@ -1046,13 +1076,13 @@ export async function sendReservationEmails(
     return result
   }
 
-  // CRITICAL: Double-check admin email succeeded before proceeding
+  // CRITICAL: Triple-check admin email succeeded before proceeding
   // This should NEVER execute if admin email failed (due to early return above)
   if (!adminSent) {
-    console.error('❌ CRITICAL ERROR: Admin email failed but code reached user email section!')
+    console.error('❌ CRITICAL ERROR: Admin email failed but code reached user email section (second check)!')
     console.error('❌ This should never happen - early return should have prevented this!')
     const result = { adminSent: false, userSent: false, errors }
-    console.error('🚫 FORCING RETURN - User email will NOT be sent:', JSON.stringify(result))
+    console.error('🚫 FORCING RETURN (second check) - User email will NOT be sent:', JSON.stringify(result))
     return result
   }
   
