@@ -1,0 +1,11 @@
+{
+  "buildCommand": "npm run generate:manifest && npm run generate:thumbnails && next build",
+  "installCommand": "npm ci",
+  "framework": "nextjs",
+  "env": {
+    "STATIC_EXPORT": "false",
+    "NODE_ENV": "production",
+    "NEXT_PUBLIC_ENABLE_VERCEL_ANALYTICS": "1"
+  }
+}
+

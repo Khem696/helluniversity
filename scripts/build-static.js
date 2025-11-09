@@ -67,15 +67,19 @@ if (!runCommand(`node "${API_HANDLER}" move`, 'Moving API routes')) {
 // Step 4: Build static export
 let buildSuccess = false
 try {
-  // Inherit environment variables (including NODE_ENV and STATIC_EXPORT from GitHub Actions)
-  // cross-env ensures compatibility across platforms
+  // Set environment variables explicitly for cross-platform compatibility
+  // This works on all platforms (Windows, Linux, macOS) without requiring cross-env
+  const buildEnv = {
+    ...process.env, // Inherit all environment variables (including workflow env vars)
+    NODE_ENV: 'production', // Explicitly set to ensure production mode
+    STATIC_EXPORT: 'true' // Explicitly set to ensure static export
+  }
+  
+  // Use cross-env if available, otherwise set env vars directly
+  // cross-env is now in dependencies, so it should always be available
   execSync('cross-env STATIC_EXPORT=true NODE_ENV=production next build', { 
     stdio: 'inherit',
-    env: {
-      ...process.env, // Inherit all environment variables (including workflow env vars)
-      NODE_ENV: 'production', // Explicitly set to ensure production mode
-      STATIC_EXPORT: 'true' // Explicitly set to ensure static export
-    }
+    env: buildEnv
   })
   buildSuccess = true
 } catch (error) {
