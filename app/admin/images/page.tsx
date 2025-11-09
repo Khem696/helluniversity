@@ -100,7 +100,10 @@ export default function ImagesPage() {
       uploadFormData.append("file", file)
       uploadFormData.append("title", formData.get("title") as string || "")
       uploadFormData.append("event_info", formData.get("event_info") as string || "")
-      uploadFormData.append("category", formData.get("category") as string || "")
+      const category = formData.get("category") as string
+      if (category) {
+        uploadFormData.append("category", category)
+      }
 
       const response = await fetch("/api/admin/images", {
         method: "POST",
@@ -236,10 +239,9 @@ export default function ImagesPage() {
                 <Label htmlFor="category">Category</Label>
                 <Select name="category" disabled={uploading}>
                   <SelectTrigger>
-                    <SelectValue placeholder="Select category" />
+                    <SelectValue placeholder="Select category (optional)" />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="">None</SelectItem>
                     <SelectItem value="artwork_studio">Artwork Studio</SelectItem>
                     <SelectItem value="building_studio">Building Studio</SelectItem>
                     <SelectItem value="gallery">Gallery</SelectItem>
@@ -375,12 +377,11 @@ export default function ImagesPage() {
               </div>
               <div>
                 <Label htmlFor="edit-category">Category</Label>
-                <Select name="category" defaultValue={editingImage.category || ""}>
+                <Select name="category" defaultValue={editingImage.category || undefined}>
                   <SelectTrigger>
-                    <SelectValue placeholder="Select category" />
+                    <SelectValue placeholder="Select category (optional)" />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="">None</SelectItem>
                     <SelectItem value="artwork_studio">Artwork Studio</SelectItem>
                     <SelectItem value="building_studio">Building Studio</SelectItem>
                     <SelectItem value="gallery">Gallery</SelectItem>
