@@ -10,10 +10,23 @@
  * Thumbnails are used in static export mode where API routes are unavailable.
  */
 
-const sharp = require('sharp')
 const { readdir, mkdir, writeFile } = require('fs/promises')
 const { join } = require('path')
 const { existsSync } = require('fs')
+
+// Try to load sharp, but handle gracefully if it fails (e.g., on Vercel build)
+let sharp = null
+try {
+  // Check if sharp module exists before requiring
+  require.resolve('sharp')
+  // If resolve succeeds, try to actually require it
+  sharp = require('sharp')
+} catch (error) {
+  // Sharp is not available or failed to load - this is OK for Vercel builds
+  // where thumbnails aren't critical (API routes are available)
+  // Silently set to null - we'll handle this in the function
+  sharp = null
+}
 
 const THUMBNAIL_WIDTH = 280
 const THUMBNAIL_HEIGHT = 280
@@ -21,6 +34,22 @@ const THUMBNAIL_QUALITY = 80
 
 async function generateThumbnails() {
   try {
+    // If sharp is not available, skip thumbnail generation but create empty manifest
+    if (!sharp) {
+      const manifestPath = join(process.cwd(), 'public', 'aispaces', 'studio-thumbnails.json')
+      await writeFile(manifestPath, JSON.stringify({ 
+        success: true, 
+        thumbnails: {}, 
+        count: 0,
+        skipped: true,
+        reason: 'sharp module not available'
+      }, null, 2))
+      console.log('⚠ Skipped thumbnail generation (sharp not available)')
+      console.log('  This is normal on Vercel builds where API routes handle image processing')
+      console.log('  Generated empty thumbnail manifest')
+      return
+    }
+
     const studioDir = join(process.cwd(), 'public', 'aispaces', 'studio')
     const thumbnailsDir = join(studioDir, 'thumbnails')
     const manifestPath = join(process.cwd(), 'public', 'aispaces', 'studio-thumbnails.json')
@@ -143,7 +172,31 @@ async function generateThumbnails() {
 
 // Run if called directly
 if (require.main === module) {
-  generateThumbnails()
+  generateThumbnails().catch((error) => {
+    // If sharp failed to load, create empty manifest and exit gracefully
+    if (error.message && (error.message.includes('sharp') || error.message.includes('Could not load'))) {
+      const { writeFile } = require('fs/promises')
+      const { join } = require('path')
+      const manifestPath = join(process.cwd(), 'public', 'aispaces', 'studio-thumbnails.json')
+      writeFile(manifestPath, JSON.stringify({ 
+        success: true, 
+        thumbnails: {}, 
+        count: 0,
+        skipped: true,
+        reason: 'sharp module not available'
+      }, null, 2)).then(() => {
+        console.log('⚠ Skipped thumbnail generation (sharp not available)')
+        console.log('  This is normal on Vercel builds where API routes handle image processing')
+        console.log('  Generated empty thumbnail manifest')
+        process.exit(0)
+      }).catch(() => {
+        process.exit(1)
+      })
+    } else {
+      console.error('Error generating thumbnails:', error)
+      process.exit(1)
+    }
+  })
 }
 
 module.exports = { generateThumbnails }
