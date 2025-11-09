@@ -28,26 +28,26 @@ export async function POST(request: Request) {
     const body = await request.json()
     const { token, ...bookingData } = body
     
-    // Log received booking data for debugging
-    console.log('='.repeat(60))
-    console.log('📥 RECEIVED BOOKING DATA FROM FORM:')
-    console.log('='.repeat(60))
-    console.log('Name:', bookingData.name || 'MISSING')
-    console.log('Email:', bookingData.email || 'MISSING')
-    console.log('Phone:', bookingData.phone || 'MISSING')
-    console.log('Participants:', bookingData.participants || 'MISSING')
-    console.log('Event Type:', bookingData.eventType || 'MISSING')
-    console.log('Other Event Type:', bookingData.otherEventType || 'N/A')
-    console.log('Date Range:', bookingData.dateRange ? 'YES' : 'NO')
-    console.log('Start Date:', bookingData.startDate || 'MISSING')
-    console.log('End Date:', bookingData.endDate || 'MISSING')
-    console.log('Start Time:', bookingData.startTime || 'MISSING')
-    console.log('End Time:', bookingData.endTime || 'MISSING')
-    console.log('Organization Type:', bookingData.organizationType || 'MISSING')
-    console.log('Introduction:', bookingData.introduction ? `${bookingData.introduction.substring(0, 50)}...` : 'MISSING')
-    console.log('Biography:', bookingData.biography ? `${bookingData.biography.substring(0, 50)}...` : 'N/A')
-    console.log('Special Requests:', bookingData.specialRequests ? `${bookingData.specialRequests.substring(0, 50)}...` : 'N/A')
-    console.log('='.repeat(60))
+    // Log received booking data for debugging (using error so it shows in production)
+    console.error('='.repeat(60))
+    console.error('📥 RECEIVED BOOKING DATA FROM FORM:')
+    console.error('='.repeat(60))
+    console.error('Name:', bookingData.name || 'MISSING')
+    console.error('Email:', bookingData.email || 'MISSING')
+    console.error('Phone:', bookingData.phone || 'MISSING')
+    console.error('Participants:', bookingData.participants || 'MISSING')
+    console.error('Event Type:', bookingData.eventType || 'MISSING')
+    console.error('Other Event Type:', bookingData.otherEventType || 'N/A')
+    console.error('Date Range:', bookingData.dateRange ? 'YES' : 'NO')
+    console.error('Start Date:', bookingData.startDate || 'MISSING')
+    console.error('End Date:', bookingData.endDate || 'MISSING')
+    console.error('Start Time:', bookingData.startTime || 'MISSING')
+    console.error('End Time:', bookingData.endTime || 'MISSING')
+    console.error('Organization Type:', bookingData.organizationType || 'MISSING')
+    console.error('Introduction:', bookingData.introduction ? `${bookingData.introduction.substring(0, 50)}...` : 'MISSING')
+    console.error('Biography:', bookingData.biography ? `${bookingData.biography.substring(0, 50)}...` : 'N/A')
+    console.error('Special Requests:', bookingData.specialRequests ? `${bookingData.specialRequests.substring(0, 50)}...` : 'N/A')
+    console.error('='.repeat(60))
 
     // Validate reCAPTCHA token
     if (!token) {
@@ -197,21 +197,11 @@ export async function POST(request: Request) {
       })
       
       // If user confirmation was sent, consider it a success (user got their email)
-      // Admin notification failure is logged but doesn't block the booking
-      if (emailStatus.userSent) {
-        // Log admin notification status
-        if (!emailStatus.adminSent) {
-          console.error("⚠️ WARNING: Admin notification FAILED, but user confirmation sent")
-          console.error("Admin email errors:", emailStatus.errors.filter(e => e.includes("Admin")))
-          console.error("This means the reservation was received but admin was NOT notified!")
-        } else {
-          console.log("✅ Both admin notification and user confirmation sent successfully")
-        }
-        
-        // Log successful booking
-        console.log("Booking received and user confirmation sent:", bookingData)
+      // Both emails must succeed - if admin email fails, user email is not sent
+      if (emailStatus.adminSent && emailStatus.userSent) {
+        console.error("✅ Both admin notification and user confirmation sent successfully")
+        console.error("Booking received and emails sent:", bookingData)
 
-        // Return success if user email was sent
         return NextResponse.json({
           success: true,
           message: "Booking request received successfully. Confirmation email has been sent.",
@@ -222,14 +212,25 @@ export async function POST(request: Request) {
         })
       }
       
-      // If user email failed, return error
+      // If either email failed, return error
       const errorMessages = emailStatus.errors.join("; ")
-      console.error("User confirmation email failed:", errorMessages)
+      console.error("❌ Email sending failed:", errorMessages)
+      console.error("Admin sent:", emailStatus.adminSent, "User sent:", emailStatus.userSent)
+      
+      // Determine appropriate error message
+      let errorMessage = "Failed to send confirmation emails. Please try again."
+      if (!emailStatus.adminSent && !emailStatus.userSent) {
+        errorMessage = "Failed to process your booking request. Please try again later."
+      } else if (!emailStatus.adminSent) {
+        errorMessage = "Failed to process your booking request. Please try again later."
+      } else if (!emailStatus.userSent) {
+        errorMessage = "Failed to send confirmation email. Please try again."
+      }
       
       return NextResponse.json(
         { 
           success: false, 
-          error: "Failed to send confirmation email. Please try again.",
+          error: errorMessage,
           details: errorMessages,
           emailStatus: {
             adminNotification: emailStatus.adminSent,

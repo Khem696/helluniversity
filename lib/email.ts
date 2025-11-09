@@ -58,9 +58,9 @@ function getTransporter(): nodemailer.Transporter {
 // Escape HTML to prevent XSS and ensure proper display
 function escapeHtml(text: string | null | undefined): string {
   if (text === null || text === undefined) return ''
-  const str = String(text)
+  const str = String(text || '')
   if (str === 'undefined' || str === 'null') return ''
-  return str
+  return (str || '')
     .replace(/&/g, '&amp;')
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;')
@@ -177,63 +177,61 @@ function formatDateRange(data: ReservationData): string {
     return "Not specified"
   }
   
-  console.log('📅 formatDateRange called with:')
-  console.log('   - startDate:', data.startDate)
-  console.log('   - startTime:', data.startTime)
-  console.log('   - endDate:', data.endDate)
-  console.log('   - endTime:', data.endTime)
-  console.log('   - dateRange:', data.dateRange)
+  console.error('📅 formatDateRange called with:')
+  console.error('   - startDate:', data.startDate)
+  console.error('   - startTime:', data.startTime)
+  console.error('   - endDate:', data.endDate)
+  console.error('   - endTime:', data.endTime)
+  console.error('   - dateRange:', data.dateRange)
   
   const startDateTime = formatDateTime(data.startDate, data.startTime || null)
-  console.log('   - formatted startDateTime:', startDateTime)
+  console.error('   - formatted startDateTime:', startDateTime)
   
   if (!data.dateRange || !data.endDate) {
     // Single day - show start date/time to end time
     if (data.endTime) {
       const result = `${startDateTime} - ${data.endTime}`
-      console.log('   - single day result:', result)
+      console.error('   - single day result:', result)
       return result
     } else {
       const result = startDateTime
-      console.log('   - single day (no end time) result:', result)
+      console.error('   - single day (no end time) result:', result)
       return result
     }
   } else {
     // Date range - show start date/time to end date/time
     const endDateTime = formatDateTime(data.endDate, data.endTime || null)
-    console.log('   - formatted endDateTime:', endDateTime)
+    console.error('   - formatted endDateTime:', endDateTime)
     const result = `${startDateTime} to ${endDateTime}`
-    console.log('   - date range result:', result)
+    console.error('   - date range result:', result)
     return result
   }
 }
 
 // Generate HTML email template for admin notification
 function generateAdminEmailHTML(data: ReservationData): string {
-  // Log data being used for email generation
-  console.log('📧 Generating admin email HTML with data:')
-  console.log('   - startDate:', data.startDate)
-  console.log('   - endDate:', data.endDate)
-  console.log('   - startTime:', data.startTime)
-  console.log('   - endTime:', data.endTime)
-  console.log('   - dateRange:', data.dateRange)
-  
-  const formattedDateRange = formatDateRange(data) || "Not specified"
-  const formattedEventType = formatEventType(data.eventType || "", data.otherEventType) || "Not specified"
-  const organizationRemark = (data.organizationType === "Tailor Event" ? "Organized by HU" : "Organized by Client")
-  
-  // Ensure all values are strings
-  if (typeof formattedDateRange !== 'string') {
-    console.error('❌ ERROR: formattedDateRange is not a string:', formattedDateRange)
-  }
-  if (typeof formattedEventType !== 'string') {
-    console.error('❌ ERROR: formattedEventType is not a string:', formattedEventType)
-  }
-  
-  console.error('   - formattedDateRange:', formattedDateRange)
-  console.error('   - formattedEventType:', formattedEventType)
+  try {
+    // Log data being used for email generation
+    console.error('📧 Generating admin email HTML with data:')
+    console.error('   - startDate:', data.startDate)
+    console.error('   - endDate:', data.endDate)
+    console.error('   - startTime:', data.startTime)
+    console.error('   - endTime:', data.endTime)
+    console.error('   - dateRange:', data.dateRange)
+    
+    // Safely get all values with defaults
+    const safeIntroduction = String(data.introduction || "Not provided")
+    const safeBiography = data.biography ? String(data.biography) : null
+    const safeSpecialRequests = data.specialRequests ? String(data.specialRequests) : null
+    
+    const formattedDateRange = formatDateRange(data) || "Not specified"
+    const formattedEventType = formatEventType(data.eventType || "", data.otherEventType) || "Not specified"
+    const organizationRemark = (data.organizationType === "Tailor Event" ? "Organized by HU" : "Organized by Client")
+    
+    console.error('   - formattedDateRange:', formattedDateRange)
+    console.error('   - formattedEventType:', formattedEventType)
 
-  return `
+    return `
 <!DOCTYPE html>
 <html>
 <head>
@@ -347,18 +345,18 @@ function generateAdminEmailHTML(data: ReservationData): string {
       <div class="section-title">Guest Information</div>
       <div class="field">
         <span class="field-label">Introduction:</span>
-        <div class="text-content">${escapeHtml(String(data.introduction || "Not provided")).replace(/\n/g, '<br>')}</div>
+        <div class="text-content">${(escapeHtml(safeIntroduction) || '').replace(/\n/g, '<br>')}</div>
       </div>
-      ${data.biography ? `
+      ${safeBiography ? `
       <div class="field">
         <span class="field-label">Background & Interests:</span>
-        <div class="text-content">${escapeHtml(String(data.biography || "")).replace(/\n/g, '<br>')}</div>
+        <div class="text-content">${(escapeHtml(safeBiography) || '').replace(/\n/g, '<br>')}</div>
       </div>
       ` : ''}
-      ${data.specialRequests ? `
+      ${safeSpecialRequests ? `
       <div class="field">
         <span class="field-label">Special Requests:</span>
-        <div class="text-content">${escapeHtml(String(data.specialRequests || "")).replace(/\n/g, '<br>')}</div>
+        <div class="text-content">${(escapeHtml(safeSpecialRequests) || '').replace(/\n/g, '<br>')}</div>
       </div>
       ` : ''}
     </div>
@@ -377,6 +375,23 @@ function generateAdminEmailHTML(data: ReservationData): string {
 </body>
 </html>
   `.trim()
+  } catch (error) {
+    console.error('❌ ERROR in generateAdminEmailHTML:', error)
+    console.error('Data received:', JSON.stringify(data, null, 2))
+    // Return a simple fallback email
+    return `
+<!DOCTYPE html>
+<html>
+<body>
+  <h1>New Reservation Inquiry</h1>
+  <p><strong>Name:</strong> ${String(data.name || 'Not provided')}</p>
+  <p><strong>Email:</strong> ${String(data.email || 'Not provided')}</p>
+  <p><strong>Phone:</strong> ${String(data.phone || 'Not provided')}</p>
+  <p><strong>Error generating full email template:</strong> ${error instanceof Error ? error.message : 'Unknown error'}</p>
+</body>
+</html>
+    `.trim()
+  }
 }
 
 // Generate plain text version for admin notification
@@ -415,28 +430,26 @@ Received: ${new Date().toLocaleString('en-US', {
 
 // Generate HTML email template for user auto-reply
 function generateUserEmailHTML(data: ReservationData): string {
-  // Log data being used for email generation
-  console.log('📧 Generating user email HTML with data:')
-  console.log('   - startDate:', data.startDate)
-  console.log('   - endDate:', data.endDate)
-  console.log('   - startTime:', data.startTime)
-  console.log('   - endTime:', data.endTime)
-  console.log('   - dateRange:', data.dateRange)
-  
-  const formattedDateRange = formatDateRange(data) || "Not specified"
-  const formattedEventType = formatEventType(data.eventType || "", data.otherEventType) || "Not specified"
-  const organizationRemark = (data.organizationType === "Tailor Event" ? "Organized by HU" : "Organized by Client")
-  
-  // Ensure all values are strings
-  if (typeof formattedDateRange !== 'string') {
-    console.error('❌ ERROR: formattedDateRange is not a string:', formattedDateRange)
-  }
-  if (typeof formattedEventType !== 'string') {
-    console.error('❌ ERROR: formattedEventType is not a string:', formattedEventType)
-  }
-  
-  console.error('   - formattedDateRange:', formattedDateRange)
-  console.error('   - formattedEventType:', formattedEventType)
+  try {
+    // Log data being used for email generation
+    console.error('📧 Generating user email HTML with data:')
+    console.error('   - startDate:', data.startDate)
+    console.error('   - endDate:', data.endDate)
+    console.error('   - startTime:', data.startTime)
+    console.error('   - endTime:', data.endTime)
+    console.error('   - dateRange:', data.dateRange)
+    
+    const formattedDateRange = formatDateRange(data) || "Not specified"
+    const formattedEventType = formatEventType(data.eventType || "", data.otherEventType) || "Not specified"
+    const organizationRemark = (data.organizationType === "Tailor Event" ? "Organized by HU" : "Organized by Client")
+    
+    // Ensure all values are strings
+    const safeFormattedDateRange = String(formattedDateRange || "Not specified")
+    const safeFormattedEventType = String(formattedEventType || "Not specified")
+    const safeOrganizationRemark = String(organizationRemark || "Organized by Client")
+    
+    console.error('   - formattedDateRange:', safeFormattedDateRange)
+    console.error('   - formattedEventType:', safeFormattedEventType)
 
   return `
 <!DOCTYPE html>
@@ -507,16 +520,16 @@ function generateUserEmailHTML(data: ReservationData): string {
     <div class="summary">
       <h3 style="margin-top: 0; color: #5a3a2a;">Your Inquiry Summary:</h3>
       <div class="summary-item">
-        <span class="summary-label">Event Type:</span> ${String(formattedEventType || "Not specified")}
+        <span class="summary-label">Event Type:</span> ${escapeHtml(safeFormattedEventType)}
       </div>
       <div class="summary-item">
-        <span class="summary-label">Date & Time:</span> ${String(formattedDateRange || "Not specified")}
+        <span class="summary-label">Date & Time:</span> ${escapeHtml(safeFormattedDateRange)}
       </div>
       <div class="summary-item">
-        <span class="summary-label">Number of Participants:</span> ${String(data.participants || "Not specified")}
+        <span class="summary-label">Number of Participants:</span> ${escapeHtml(String(data.participants || "Not specified"))}
       </div>
       <div class="summary-item">
-        <span class="summary-label">Organization:</span> ${String(data.organizationType || "Not specified")} (${String(organizationRemark)})
+        <span class="summary-label">Organization:</span> ${escapeHtml(String(data.organizationType || "Not specified"))} (${escapeHtml(safeOrganizationRemark)})
       </div>
     </div>
     
@@ -538,6 +551,22 @@ function generateUserEmailHTML(data: ReservationData): string {
 </body>
 </html>
   `.trim()
+  } catch (error) {
+    console.error('❌ ERROR in generateUserEmailHTML:', error)
+    console.error('Data received:', JSON.stringify(data, null, 2))
+    // Return a simple fallback email
+    return `
+<!DOCTYPE html>
+<html>
+<body>
+  <h1>Reservation Inquiry Received</h1>
+  <p>Dear ${escapeHtml(String(data.name || "Guest"))},</p>
+  <p>Thank you for your reservation inquiry with Hell University! We have received your request and our curation team will carefully review it.</p>
+  <p><strong>Error generating full email template:</strong> ${error instanceof Error ? escapeHtml(error.message) : 'Unknown error'}</p>
+</body>
+</html>
+    `.trim()
+  }
 }
 
 // Generate plain text version for user auto-reply
@@ -803,7 +832,7 @@ export async function sendReservationEmails(
   let adminSent = false
   let userSent = false
 
-  // Send admin notification FIRST
+  // Send admin notification FIRST - MUST succeed before sending user email
   try {
     console.error('='.repeat(60))
     console.error('STEP 1: Attempting to send admin notification email...')
@@ -852,9 +881,14 @@ export async function sendReservationEmails(
     }
     console.error('Recipient email:', process.env.RESERVATION_EMAIL || process.env.SMTP_USER)
     console.error('='.repeat(60))
+    console.error('⚠️ CRITICAL: Admin email failed. User email will NOT be sent to avoid confusion.')
+    console.error('='.repeat(60))
+    
+    // Return early - don't send user email if admin email failed
+    return { adminSent: false, userSent: false, errors }
   }
 
-  // Send user confirmation SECOND
+  // Send user confirmation SECOND - only if admin email succeeded
   try {
     console.error('='.repeat(60))
     console.error('STEP 2: Attempting to send user confirmation email...')
