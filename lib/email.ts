@@ -507,11 +507,29 @@ export async function sendAdminNotification(data: ReservationData): Promise<void
     html: generateAdminEmailHTML(data),
   }
 
-  const emailTransporter = getTransporter()
-  const result = await emailTransporter.sendMail(mailOptions)
+  console.log('Mail options prepared:', {
+    from: mailOptions.from,
+    to: mailOptions.to,
+    subject: mailOptions.subject.substring(0, 50) + '...',
+    hasText: !!mailOptions.text,
+    hasHtml: !!mailOptions.html
+  })
   
-  // Log successful send
-  console.log('Admin notification email sent successfully:', result.messageId, 'to:', recipientEmail)
+  const emailTransporter = getTransporter()
+  console.log('Transporter obtained, attempting to send...')
+  
+  try {
+    const result = await emailTransporter.sendMail(mailOptions)
+    console.log('✅ Admin notification email sent successfully!')
+    console.log('Message ID:', result.messageId)
+    console.log('Response:', result.response || 'N/A')
+    console.log('To:', recipientEmail)
+    return result
+  } catch (sendError) {
+    console.error('❌ sendMail() threw an error:')
+    console.error('Error:', sendError)
+    throw sendError // Re-throw to be caught by outer try-catch
+  }
 }
 
 /**
@@ -527,9 +545,29 @@ export async function sendUserConfirmation(data: ReservationData): Promise<void>
   }
 
   console.log('Sending user confirmation to:', data.email)
+  console.log('Mail options prepared:', {
+    from: mailOptions.from,
+    to: mailOptions.to,
+    subject: mailOptions.subject,
+    hasText: !!mailOptions.text,
+    hasHtml: !!mailOptions.html
+  })
+  
   const emailTransporter = getTransporter()
-  const result = await emailTransporter.sendMail(mailOptions)
-  console.log('User confirmation email sent successfully:', result.messageId, 'to:', data.email)
+  console.log('Transporter obtained, attempting to send...')
+  
+  try {
+    const result = await emailTransporter.sendMail(mailOptions)
+    console.log('✅ User confirmation email sent successfully!')
+    console.log('Message ID:', result.messageId)
+    console.log('Response:', result.response || 'N/A')
+    console.log('To:', data.email)
+    return result
+  } catch (sendError) {
+    console.error('❌ sendMail() threw an error:')
+    console.error('Error:', sendError)
+    throw sendError // Re-throw to be caught by outer try-catch
+  }
 }
 
 /**
@@ -543,40 +581,119 @@ export async function sendReservationEmails(
   let adminSent = false
   let userSent = false
 
-  // Send admin notification
+  // Send admin notification FIRST
   try {
-    console.log('Attempting to send admin notification email...')
+    console.log('='.repeat(60))
+    console.log('STEP 1: Attempting to send admin notification email...')
+    console.log('='.repeat(60))
     await sendAdminNotification(data)
     adminSent = true
-    console.log('Admin notification sent successfully')
+    console.log('✅ Admin notification sent successfully')
+    console.log('='.repeat(60))
   } catch (error) {
-    const errorMessage = error instanceof Error ? error.message : 'Unknown error'
+    // Enhanced error handling
+    let errorMessage = 'Unknown error'
+    let errorCode = 'UNKNOWN'
+    let errorResponse = ''
+    
+    if (error instanceof Error) {
+      errorMessage = error.message
+      errorCode = (error as any).code || 'NO_CODE'
+      
+      // Try to get response from nodemailer error
+      if ((error as any).response) {
+        errorResponse = String((error as any).response)
+      }
+      
+      // Check for specific nodemailer error codes
+      if (errorCode === 'EAUTH') {
+        errorMessage = 'SMTP authentication failed. Please check your credentials.'
+      } else if (errorCode === 'ECONNECTION') {
+        errorMessage = 'SMTP connection failed. Please check your network and SMTP settings.'
+      } else if (errorCode === 'ETIMEDOUT') {
+        errorMessage = 'SMTP connection timeout. Please check your SMTP host and port.'
+      } else if (errorCode === 'EMESSAGE') {
+        errorMessage = 'Invalid message format or recipient address.'
+      }
+    }
+    
     errors.push(`Admin notification failed: ${errorMessage}`)
-    console.error('Failed to send admin notification:', error)
-    console.error('Error details:', {
-      message: errorMessage,
-      stack: error instanceof Error ? error.stack : undefined,
-      recipientEmail: process.env.RESERVATION_EMAIL || process.env.SMTP_USER
-    })
+    
+    console.error('❌ FAILED to send admin notification email')
+    console.error('Error type:', error?.constructor?.name || 'Unknown')
+    console.error('Error message:', errorMessage)
+    console.error('Error code:', errorCode)
+    console.error('Error response:', errorResponse || 'N/A')
+    console.error('Full error object:', error)
+    if (error instanceof Error) {
+      console.error('Error stack:', error.stack)
+    }
+    console.error('Recipient email:', process.env.RESERVATION_EMAIL || process.env.SMTP_USER)
+    console.error('='.repeat(60))
   }
 
-  // Send user confirmation
+  // Send user confirmation SECOND
   try {
-    console.log('Attempting to send user confirmation email...')
+    console.log('='.repeat(60))
+    console.log('STEP 2: Attempting to send user confirmation email...')
+    console.log('='.repeat(60))
     await sendUserConfirmation(data)
     userSent = true
-    console.log('User confirmation sent successfully')
+    console.log('✅ User confirmation sent successfully')
+    console.log('='.repeat(60))
   } catch (error) {
-    const errorMessage = error instanceof Error ? error.message : 'Unknown error'
+    // Enhanced error handling
+    let errorMessage = 'Unknown error'
+    let errorCode = 'UNKNOWN'
+    let errorResponse = ''
+    
+    if (error instanceof Error) {
+      errorMessage = error.message
+      errorCode = (error as any).code || 'NO_CODE'
+      
+      // Try to get response from nodemailer error
+      if ((error as any).response) {
+        errorResponse = String((error as any).response)
+      }
+      
+      // Check for specific nodemailer error codes
+      if (errorCode === 'EAUTH') {
+        errorMessage = 'SMTP authentication failed. Please check your credentials.'
+      } else if (errorCode === 'ECONNECTION') {
+        errorMessage = 'SMTP connection failed. Please check your network and SMTP settings.'
+      } else if (errorCode === 'ETIMEDOUT') {
+        errorMessage = 'SMTP connection timeout. Please check your SMTP host and port.'
+      } else if (errorCode === 'EMESSAGE') {
+        errorMessage = 'Invalid message format or recipient address.'
+      }
+    }
+    
     errors.push(`User confirmation failed: ${errorMessage}`)
-    console.error('Failed to send user confirmation:', error)
-    console.error('Error details:', {
-      message: errorMessage,
-      stack: error instanceof Error ? error.stack : undefined,
-      userEmail: data.email
-    })
+    
+    console.error('❌ FAILED to send user confirmation email')
+    console.error('Error type:', error?.constructor?.name || 'Unknown')
+    console.error('Error message:', errorMessage)
+    console.error('Error code:', errorCode)
+    console.error('Error response:', errorResponse || 'N/A')
+    console.error('Full error object:', error)
+    if (error instanceof Error) {
+      console.error('Error stack:', error.stack)
+    }
+    console.error('User email:', data.email)
+    console.error('='.repeat(60))
   }
 
+  // Final summary
+  console.log('='.repeat(60))
+  console.log('EMAIL SENDING SUMMARY:')
+  console.log('='.repeat(60))
+  console.log('Admin notification:', adminSent ? '✅ SENT' : '❌ FAILED')
+  console.log('User confirmation:', userSent ? '✅ SENT' : '❌ FAILED')
+  if (errors.length > 0) {
+    console.log('Errors:', errors)
+  }
+  console.log('='.repeat(60))
+  
   return { adminSent, userSent, errors }
 }
 
