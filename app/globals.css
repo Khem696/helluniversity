@@ -1285,10 +1285,10 @@ body:has([data-login-page]) > header {
   overflow: hidden !important;
 }
 
-/* Hide header on all admin pages */
-html[data-admin-page="true"] header,
-html[data-admin-page="true"] > body > header,
-body:has([data-admin-page]) > header {
+/* Hide main website header on all admin pages (but not admin header) */
+html[data-admin-page="true"] .main-site-header,
+html[data-admin-page="true"] > body > .main-site-header,
+body:has([data-admin-page]) .main-site-header {
   display: none !important;
   visibility: hidden !important;
   opacity: 0 !important;
