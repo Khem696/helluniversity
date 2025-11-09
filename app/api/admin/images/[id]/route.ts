@@ -1,15 +1,13 @@
 import { NextResponse } from "next/server"
 import { getTursoClient } from "@/lib/turso"
-import { deleteImageWithMetadata } from "@/lib/blob"
 import { requireAuthorizedDomain, unauthorizedResponse, forbiddenResponse } from "@/lib/auth"
 
 /**
- * Admin Image Management API
+ * Admin Image Update API
  * 
- * GET /api/admin/images/[id] - Get image by ID
- * DELETE /api/admin/images/[id] - Delete image (from both Blob Storage and database)
- * PATCH /api/admin/images/[id] - Update image metadata
- * - All routes require Google Workspace authentication
+ * PATCH /api/admin/images/[id]
+ * - Update image metadata (category, display_order, title, etc.)
+ * - Requires Google Workspace authentication
  */
 
 async function checkAuth() {
@@ -24,20 +22,65 @@ async function checkAuth() {
   return null
 }
 
-export async function GET(
+export async function PATCH(
   request: Request,
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
     const authError = await checkAuth()
     if (authError) return authError
-    const { id } = await params
-    const db = getTursoClient()
 
+    const { id } = await params
+    const body = await request.json()
+    const { category, display_order, title, event_info } = body
+
+    const db = getTursoClient()
+    const now = Math.floor(Date.now() / 1000)
+
+    // Build update fields
+    const updates: string[] = ["updated_at = ?"]
+    const args: any[] = [now]
+
+    if (category !== undefined) {
+      updates.push("category = ?")
+      args.push(category)
+    }
+
+    if (display_order !== undefined) {
+      updates.push("display_order = ?")
+      args.push(parseInt(String(display_order)))
+    }
+
+    if (title !== undefined) {
+      updates.push("title = ?")
+      args.push(title)
+    }
+
+    if (event_info !== undefined) {
+      updates.push("event_info = ?")
+      args.push(event_info)
+    }
+
+    if (updates.length === 1) {
+      // Only updated_at, nothing to update
+      return NextResponse.json(
+        { success: false, error: "No fields to update" },
+        { status: 400 }
+      )
+    }
+
+    args.push(id)
+
+    await db.execute({
+      sql: `UPDATE images SET ${updates.join(", ")} WHERE id = ?`,
+      args,
+    })
+
+    // Fetch updated image
     const result = await db.execute({
       sql: `
         SELECT 
-          id, blob_url, title, event_info, format,
+          id, blob_url, title, event_info, category, display_order, format,
           width, height, file_size, original_filename,
           created_at, updated_at
         FROM images
@@ -58,107 +101,6 @@ export async function GET(
       image: result.rows[0],
     })
   } catch (error) {
-    console.error("Get image error:", error)
-    return NextResponse.json(
-      {
-        success: false,
-        error: error instanceof Error ? error.message : "Failed to get image",
-      },
-      { status: 500 }
-    )
-  }
-}
-
-export async function DELETE(
-  request: Request,
-  { params }: { params: Promise<{ id: string }> }
-) {
-  try {
-    const authError = await checkAuth()
-    if (authError) return authError
-    const { id } = await params
-
-    // Delete from both Blob Storage and database
-    await deleteImageWithMetadata(id)
-
-    return NextResponse.json({
-      success: true,
-      message: "Image deleted successfully",
-    })
-  } catch (error) {
-    console.error("Delete image error:", error)
-    return NextResponse.json(
-      {
-        success: false,
-        error: error instanceof Error ? error.message : "Failed to delete image",
-      },
-      { status: 500 }
-    )
-  }
-}
-
-export async function PATCH(
-  request: Request,
-  { params }: { params: Promise<{ id: string }> }
-) {
-  try {
-    const authError = await checkAuth()
-    if (authError) return authError
-    const { id } = await params
-    const body = await request.json()
-    const { title, event_info } = body
-
-    const db = getTursoClient()
-    const now = Math.floor(Date.now() / 1000)
-
-    // Build update query dynamically based on provided fields
-    const updates: string[] = []
-    const args: any[] = []
-
-    if (title !== undefined) {
-      updates.push("title = ?")
-      args.push(title || null)
-    }
-
-    if (event_info !== undefined) {
-      updates.push("event_info = ?")
-      args.push(event_info || null)
-    }
-
-    if (updates.length === 0) {
-      return NextResponse.json(
-        { success: false, error: "No fields to update" },
-        { status: 400 }
-      )
-    }
-
-    updates.push("updated_at = ?")
-    args.push(now)
-    args.push(id) // For WHERE clause
-
-    await db.execute({
-      sql: `UPDATE images SET ${updates.join(", ")} WHERE id = ?`,
-      args,
-    })
-
-    // Fetch updated image
-    const result = await db.execute({
-      sql: `
-        SELECT 
-          id, blob_url, title, event_info, format,
-          width, height, file_size, original_filename,
-          created_at, updated_at
-        FROM images
-        WHERE id = ?
-      `,
-      args: [id],
-    })
-
-    return NextResponse.json({
-      success: true,
-      image: result.rows[0],
-    })
-  } catch (error) {
     console.error("Update image error:", error)
     return NextResponse.json(
       {
@@ -169,4 +111,3 @@ export async function PATCH(
     )
   }
 }
-

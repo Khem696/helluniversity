@@ -65,7 +65,7 @@ export const metadata: Metadata = {
     title: 'Hell University - A Cultural House for Creative Expression',
     description: 'Promoting cultural activities and community engagement through art, music, and creativity.',
     images: [withBasePath('/og-image.jpg')],
-    creator: '@helluniversity',
+    creator: '@huculturehub',
   },
   robots: {
     index: true,

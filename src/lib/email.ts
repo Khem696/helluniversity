@@ -1,4 +1,5 @@
 import nodemailer, { type Transporter } from 'nodemailer'
+import type { Booking } from './bookings'
 
 interface ReservationData {
   name: string
@@ -806,5 +807,262 @@ export function verifyEmailConfig(): { valid: boolean; errors: string[] } {
     valid: errors.length === 0,
     errors,
   }
+}
+
+/**
+ * Generate booking status change email HTML
+ */
+function generateStatusChangeEmailHTML(
+  booking: Booking,
+  status: string,
+  changeReason?: string,
+  proposedDate?: string | null,
+  responseToken?: string
+): string {
+  // Use NEXT_PUBLIC_SITE_URL if set, otherwise try VERCEL_URL (for preview deployments),
+  // otherwise fall back to production domain
+  const siteUrl = process.env.NEXT_PUBLIC_SITE_URL 
+    || (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : null)
+    || 'https://huculturehub.com'
+  const responseUrl = responseToken
+    ? `${siteUrl}/booking/response/${responseToken}`
+    : null
+
+  const statusMessages: Record<string, { title: string; message: string; color: string }> = {
+    accepted: {
+      title: 'Reservation Accepted',
+      message: 'Great news! Your reservation request has been accepted.',
+      color: '#10b981',
+    },
+    rejected: {
+      title: 'Reservation Not Available',
+      message: 'We regret to inform you that your reservation request could not be accommodated at this time.',
+      color: '#ef4444',
+    },
+    postponed: {
+      title: 'Reservation Postponed',
+      message: 'Your reservation has been postponed. Please review the proposed new date below and respond.',
+      color: '#f59e0b',
+    },
+  }
+
+  const statusInfo = statusMessages[status] || {
+    title: 'Reservation Status Update',
+    message: 'Your reservation status has been updated.',
+    color: '#3b82f6',
+  }
+
+  const formattedEventType = formatEventType(booking.eventType, booking.otherEventType)
+  const formattedDateRange = formatDateRange({
+    dateRange: booking.dateRange,
+    startDate: booking.startDate,
+    endDate: booking.endDate || undefined,
+    startTime: booking.startTime,
+    endTime: booking.endTime,
+  } as ReservationData)
+
+  return `
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>${statusInfo.title}</title>
+</head>
+<body style="margin: 0; padding: 0; font-family: Arial, sans-serif; background-color: #f5f5f5;">
+  <table width="100%" cellpadding="0" cellspacing="0" style="background-color: #f5f5f5; padding: 20px;">
+    <tr>
+      <td align="center">
+        <table width="600" cellpadding="0" cellspacing="0" style="background-color: #ffffff; border-radius: 8px; overflow: hidden; box-shadow: 0 2px 4px rgba(0,0,0,0.1);">
+          <!-- Header -->
+          <tr>
+            <td style="background-color: ${statusInfo.color}; padding: 30px; text-align: center;">
+              <h1 style="margin: 0; color: #ffffff; font-size: 24px; font-weight: bold;">
+                ${statusInfo.title}
+              </h1>
+            </td>
+          </tr>
+          
+          <!-- Content -->
+          <tr>
+            <td style="padding: 30px;">
+              <p style="margin: 0 0 20px 0; color: #333333; font-size: 16px; line-height: 1.6;">
+                Dear ${sanitizeHTML(booking.name)},
+              </p>
+              
+              <p style="margin: 0 0 20px 0; color: #333333; font-size: 16px; line-height: 1.6;">
+                ${statusInfo.message}
+              </p>
+              
+              <div style="background-color: #f9fafb; border-left: 4px solid ${statusInfo.color}; padding: 20px; margin: 20px 0; border-radius: 4px;">
+                <h3 style="margin: 0 0 15px 0; color: #111827; font-size: 18px;">Reservation Details</h3>
+                <table width="100%" cellpadding="5" cellspacing="0">
+                  <tr>
+                    <td style="color: #6b7280; font-size: 14px; width: 120px;">Event Type:</td>
+                    <td style="color: #111827; font-size: 14px; font-weight: 500;">${sanitizeHTML(formattedEventType)}</td>
+                  </tr>
+                  <tr>
+                    <td style="color: #6b7280; font-size: 14px;">Date & Time:</td>
+                    <td style="color: #111827; font-size: 14px; font-weight: 500;">${sanitizeHTML(formattedDateRange)}</td>
+                  </tr>
+                </table>
+              </div>
+              
+              ${proposedDate ? `
+              <div style="background-color: #fef3c7; border-left: 4px solid #f59e0b; padding: 20px; margin: 20px 0; border-radius: 4px;">
+                <h3 style="margin: 0 0 10px 0; color: #92400e; font-size: 18px;">Proposed New Date</h3>
+                <p style="margin: 0; color: #78350f; font-size: 16px; font-weight: 500;">
+                  ${sanitizeHTML(new Date(proposedDate).toLocaleDateString('en-US', { 
+                    weekday: 'long', 
+                    year: 'numeric', 
+                    month: 'long', 
+                    day: 'numeric' 
+                  }))}
+                </p>
+              </div>
+              ` : ''}
+              
+              ${changeReason ? `
+              <div style="margin: 20px 0;">
+                <p style="margin: 0 0 10px 0; color: #6b7280; font-size: 14px; font-weight: 500;">Additional Notes:</p>
+                <p style="margin: 0; color: #333333; font-size: 14px; line-height: 1.6; white-space: pre-wrap;">${sanitizeHTML(changeReason)}</p>
+              </div>
+              ` : ''}
+              
+              ${responseUrl && status === 'postponed' ? `
+              <div style="margin: 30px 0; text-align: center;">
+                <p style="margin: 0 0 20px 0; color: #333333; font-size: 16px; line-height: 1.6;">
+                  Please click the button below to respond to this proposal:
+                </p>
+                <a href="${responseUrl}" style="display: inline-block; background-color: ${statusInfo.color}; color: #ffffff; text-decoration: none; padding: 14px 28px; border-radius: 6px; font-size: 16px; font-weight: 600;">
+                  Respond to Proposal
+                </a>
+                <p style="margin: 20px 0 0 0; color: #6b7280; font-size: 12px; line-height: 1.6;">
+                  Or copy and paste this link into your browser:<br>
+                  <a href="${responseUrl}" style="color: #3b82f6; word-break: break-all;">${responseUrl}</a>
+                </p>
+              </div>
+              ` : ''}
+              
+              <p style="margin: 30px 0 0 0; color: #6b7280; font-size: 14px; line-height: 1.6;">
+                If you have any questions, please don't hesitate to contact us.
+              </p>
+              
+              <p style="margin: 20px 0 0 0; color: #6b7280; font-size: 14px; line-height: 1.6;">
+                Best regards,<br>
+                <strong>Hell University Team</strong>
+              </p>
+            </td>
+          </tr>
+        </table>
+      </td>
+    </tr>
+  </table>
+</body>
+</html>
+  `
+}
+
+/**
+ * Generate booking status change email text
+ */
+function generateStatusChangeEmailText(
+  booking: Booking,
+  status: string,
+  changeReason?: string,
+  proposedDate?: string | null,
+  responseUrl?: string | null
+): string {
+  const statusMessages: Record<string, string> = {
+    accepted: 'Great news! Your reservation request has been accepted.',
+    rejected: 'We regret to inform you that your reservation request could not be accommodated at this time.',
+    postponed: 'Your reservation has been postponed. Please review the proposed new date below and respond.',
+  }
+
+  const message = statusMessages[status] || 'Your reservation status has been updated.'
+  const formattedEventType = formatEventType(booking.eventType, booking.otherEventType)
+  const formattedDateRange = formatDateRange({
+    dateRange: booking.dateRange,
+    startDate: booking.startDate,
+    endDate: booking.endDate || undefined,
+    startTime: booking.startTime,
+    endTime: booking.endTime,
+  } as ReservationData)
+
+  let text = `Dear ${booking.name},\n\n`
+  text += `${message}\n\n`
+  text += `RESERVATION DETAILS:\n`
+  text += `Event Type: ${formattedEventType}\n`
+  text += `Date & Time: ${formattedDateRange}\n\n`
+
+  if (proposedDate) {
+    text += `PROPOSED NEW DATE:\n`
+    text += `${new Date(proposedDate).toLocaleDateString('en-US', { 
+      weekday: 'long', 
+      year: 'numeric', 
+      month: 'long', 
+      day: 'numeric' 
+    })}\n\n`
+  }
+
+  if (changeReason) {
+    text += `ADDITIONAL NOTES:\n${changeReason}\n\n`
+  }
+
+  if (responseUrl && status === 'postponed') {
+    text += `Please visit the following link to respond:\n${responseUrl}\n\n`
+  }
+
+  text += `If you have any questions, please don't hesitate to contact us.\n\n`
+  text += `Best regards,\nHell University Team`
+
+  return text
+}
+
+/**
+ * Send booking status change notification to user
+ */
+export async function sendBookingStatusNotification(
+  booking: Booking,
+  status: string,
+  options?: {
+    changeReason?: string
+    proposedDate?: string | null
+    responseToken?: string
+  }
+): Promise<void> {
+  // Use NEXT_PUBLIC_SITE_URL if set, otherwise try VERCEL_URL (for preview deployments),
+  // otherwise fall back to production domain
+  const siteUrl = process.env.NEXT_PUBLIC_SITE_URL 
+    || (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : null)
+    || 'https://huculturehub.com'
+  const responseUrl = options?.responseToken
+    ? `${siteUrl}/booking/response/${options.responseToken}`
+    : null
+
+  const mailOptions: nodemailer.SendMailOptions = {
+    from: `"Hell University" <${process.env.SMTP_USER}>`,
+    to: booking.email,
+    subject: `Reservation Status Update - ${booking.eventType}`,
+    text: generateStatusChangeEmailText(
+      booking,
+      status,
+      options?.changeReason,
+      options?.proposedDate,
+      responseUrl
+    ),
+    html: generateStatusChangeEmailHTML(
+      booking,
+      status,
+      options?.changeReason,
+      options?.proposedDate,
+      options?.responseToken
+    ),
+  }
+
+  const emailTransporter = await getTransporter()
+  const result = await emailTransporter.sendMail(mailOptions)
+  
+  console.log('Booking status notification email sent:', result.messageId)
 }
 

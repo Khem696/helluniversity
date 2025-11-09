@@ -28,7 +28,7 @@ export async function POST(request: Request) {
     const authError = await checkAuth()
     if (authError) return authError
     const body = await request.json()
-    const { title, description, image_id, event_date, location } = body
+    const { title, description, image_id, event_date, start_date, end_date, location } = body
 
     if (!title) {
       return NextResponse.json(
@@ -41,19 +41,26 @@ export async function POST(request: Request) {
     const eventId = randomUUID()
     const now = Math.floor(Date.now() / 1000)
 
-    // Convert event_date to Unix timestamp if provided as ISO string
-    const eventTimestamp = event_date
-      ? typeof event_date === "string"
-        ? Math.floor(new Date(event_date).getTime() / 1000)
-        : event_date
-      : null
+    // Convert dates to Unix timestamps
+    const convertToTimestamp = (date: string | number | null | undefined): number | null => {
+      if (!date) return null
+      if (typeof date === "number") return date
+      return Math.floor(new Date(date).getTime() / 1000)
+    }
+
+    const eventTimestamp = convertToTimestamp(event_date)
+    const startTimestamp = convertToTimestamp(start_date)
+    const endTimestamp = convertToTimestamp(end_date)
+
+    // Use start_date if provided, otherwise fall back to event_date
+    const finalStartDate = startTimestamp || eventTimestamp
 
     await db.execute({
       sql: `
         INSERT INTO events (
-          id, title, description, image_id, event_date,
+          id, title, description, image_id, event_date, start_date, end_date,
           location, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `,
       args: [
         eventId,
@@ -61,6 +68,8 @@ export async function POST(request: Request) {
         description || null,
         image_id || null,
         eventTimestamp,
+        finalStartDate,
+        endTimestamp,
         location || null,
         now,
         now,
@@ -72,7 +81,7 @@ export async function POST(request: Request) {
       sql: `
         SELECT 
           e.id, e.title, e.description, e.image_id, e.event_date,
-          e.location, e.created_at, e.updated_at,
+          e.start_date, e.end_date, e.location, e.created_at, e.updated_at,
           i.blob_url as image_url, i.title as image_title
         FROM events e
         LEFT JOIN images i ON e.image_id = i.id
@@ -114,7 +123,8 @@ export async function GET(request: Request) {
 
     if (upcoming) {
       const now = Math.floor(Date.now() / 1000)
-      whereClause = "WHERE e.event_date >= ?"
+      // Use end_date if available, otherwise fall back to event_date
+      whereClause = "WHERE COALESCE(e.end_date, e.event_date, e.start_date) >= ?"
       args.push(now)
     }
 
@@ -130,12 +140,12 @@ export async function GET(request: Request) {
       sql: `
         SELECT 
           e.id, e.title, e.description, e.image_id, e.event_date,
-          e.location, e.created_at, e.updated_at,
+          e.start_date, e.end_date, e.location, e.created_at, e.updated_at,
           i.blob_url as image_url, i.title as image_title
         FROM events e
         LEFT JOIN images i ON e.image_id = i.id
         ${whereClause}
-        ORDER BY e.event_date ASC, e.created_at DESC
+        ORDER BY COALESCE(e.end_date, e.event_date, e.start_date) ASC, e.created_at DESC
         LIMIT ? OFFSET ?
       `,
       args: [...(upcoming ? args : []), limit, offset],

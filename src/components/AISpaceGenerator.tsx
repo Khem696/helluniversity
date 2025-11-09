@@ -491,7 +491,7 @@ export function AISpaceGenerator() {
   }, [isRecaptchaVerified])
 
   // Fetch studio images dynamically on component mount
-  // Unified approach: Always try manifest first (works in both static and production), fallback to API
+  // Priority: New API endpoint -> Old API -> Manifest -> Error
   useEffect(() => {
     async function fetchStudioImages() {
       try {
@@ -503,33 +503,26 @@ export function AISpaceGenerator() {
           await loadThumbnailManifest()
         }
         
-        let data: { success: boolean; images?: string[]; error?: string }
-        
-        // Always try manifest first (available in both static and production builds)
+        // Try new database API first (with display_order)
         try {
-          const manifestResponse = await fetch(withBasePath("/aispaces/studio-images.json"), {
-            cache: 'force-cache', // Use cached version if available
-            headers: {
-              'Cache-Control': 'max-age=3600' // Cache for 1 hour
-            }
+          const dbApiResponse = await fetch("/api/images?category=aispace_studio&limit=100", {
+            cache: 'no-store'
           })
           
-          if (manifestResponse.ok) {
-            data = await manifestResponse.json()
-            // If manifest loaded successfully, use it
-            if (data.success && data.images) {
-              const imagesWithBasePath = data.images.map((path: string) => withBasePath(path))
-              setStudioImages(imagesWithBasePath)
+          if (dbApiResponse.ok) {
+            const dbData = await dbApiResponse.json()
+            if (dbData.success && dbData.images?.length > 0) {
+              // Use blob_url from database
+              const images = dbData.images.map((img: any) => img.blob_url)
+              setStudioImages(images)
               
-              // Prefetch first 5 optimized thumbnails for instant display
-              const prefetchCount = Math.min(5, imagesWithBasePath.length)
+              // Prefetch first 5 images for instant display
+              const prefetchCount = Math.min(5, images.length)
               for (let i = 0; i < prefetchCount; i++) {
-                const originalPath = data.images[i]
-                const optimizedUrl = getThumbnailUrl(originalPath, 280, 280, 80)
                 const link = document.createElement('link')
                 link.rel = 'preload'
                 link.as = 'image'
-                link.href = optimizedUrl.startsWith('/') ? optimizedUrl : withBasePath(optimizedUrl)
+                link.href = images[i]
                 document.head.appendChild(link)
               }
               
@@ -537,23 +530,23 @@ export function AISpaceGenerator() {
               return
             }
           }
-        } catch (manifestError) {
-          console.warn("Manifest not available, trying API fallback:", manifestError)
+        } catch (dbApiError) {
+          console.warn("New database API not available, trying fallbacks:", dbApiError)
         }
         
-        // Fallback to API route if manifest fails or is unavailable
+        // Fallback to old API route
         try {
           const apiResponse = await fetch("/api/ai-space/images", {
-            cache: 'no-store' // Always fetch fresh from API
+            cache: 'no-store'
           })
           
           if (apiResponse.ok) {
-            data = await apiResponse.json()
+            const data = await apiResponse.json()
             if (data.success && data.images) {
               const imagesWithBasePath = data.images.map((path: string) => withBasePath(path))
               setStudioImages(imagesWithBasePath)
               
-              // Prefetch first 5 optimized thumbnails for instant display
+              // Prefetch first 5 optimized thumbnails
               const prefetchCount = Math.min(5, imagesWithBasePath.length)
               for (let i = 0; i < prefetchCount; i++) {
                 const originalPath = data.images[i]
@@ -570,11 +563,46 @@ export function AISpaceGenerator() {
             }
           }
         } catch (apiError) {
-          console.error("API fallback also failed:", apiError)
+          console.warn("Old API also failed, trying manifest:", apiError)
         }
         
-        // If both failed
-        console.warn("Failed to load studio images from both manifest and API")
+        // Fallback to manifest
+        try {
+          const manifestResponse = await fetch(withBasePath("/aispaces/studio-images.json"), {
+            cache: 'force-cache',
+            headers: {
+              'Cache-Control': 'max-age=3600'
+            }
+          })
+          
+          if (manifestResponse.ok) {
+            const data = await manifestResponse.json()
+            if (data.success && data.images) {
+              const imagesWithBasePath = data.images.map((path: string) => withBasePath(path))
+              setStudioImages(imagesWithBasePath)
+              
+              // Prefetch first 5 optimized thumbnails
+              const prefetchCount = Math.min(5, imagesWithBasePath.length)
+              for (let i = 0; i < prefetchCount; i++) {
+                const originalPath = data.images[i]
+                const optimizedUrl = getThumbnailUrl(originalPath, 280, 280, 80)
+                const link = document.createElement('link')
+                link.rel = 'preload'
+                link.as = 'image'
+                link.href = optimizedUrl.startsWith('/') ? optimizedUrl : withBasePath(optimizedUrl)
+                document.head.appendChild(link)
+              }
+              
+              setIsLoadingImages(false)
+              return
+            }
+          }
+        } catch (manifestError) {
+          console.warn("Manifest also failed:", manifestError)
+        }
+        
+        // If all failed
+        console.warn("Failed to load studio images from all sources")
         setError("Failed to load studio images. Please refresh the page.")
       } catch (error) {
         console.error("Error fetching studio images:", error)
