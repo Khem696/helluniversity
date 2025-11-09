@@ -245,19 +245,88 @@ function generateAdminEmailHTML(data: ReservationData): string {
     console.error('   - endTime:', data.endTime)
     console.error('   - dateRange:', data.dateRange)
     
-    // Safely get all values with defaults using ensureString
+    // Safely get all values with defaults using ensureString - do this BEFORE template string
+    const safeName = ensureString(data.name) || "Not provided"
+    const safeEmail = ensureString(data.email) || "Not provided"
+    const safePhone = ensureString(data.phone) || "Not provided"
+    const safeParticipants = ensureString(data.participants) || "Not specified"
     const safeIntroduction = ensureString(data.introduction) || "Not provided"
     const safeBiography = (data.biography && ensureString(data.biography).trim()) ? ensureString(data.biography) : null
     const safeSpecialRequests = (data.specialRequests && ensureString(data.specialRequests).trim()) ? ensureString(data.specialRequests) : null
+    const safeOrganizationType = ensureString(data.organizationType) || "Not specified"
     
     const formattedDateRange = ensureString(formatDateRange(data) || "Not specified")
     const formattedEventType = ensureString(formatEventType(data.eventType || "", data.otherEventType) || "Not specified")
     const organizationRemark = (data.organizationType === "Tailor Event" ? "Organized by HU" : "Organized by Client")
     
-    // Ensure all formatted values are strings
+    // Ensure all formatted values are strings - do this BEFORE template string
     const safeFormattedDateRange = ensureString(formattedDateRange)
     const safeFormattedEventType = ensureString(formattedEventType)
     const safeOrganizationRemark = ensureString(organizationRemark)
+    
+    // Pre-process all escaped values BEFORE template string to avoid evaluation errors
+    const escapedName = escapeHtml(safeName)
+    const escapedEmail = escapeHtml(safeEmail)
+    const escapedPhone = escapeHtml(safePhone)
+    const escapedParticipants = escapeHtml(safeParticipants)
+    const escapedEventType = escapeHtml(safeFormattedEventType)
+    const escapedDateRange = escapeHtml(safeFormattedDateRange)
+    const escapedOrgType = escapeHtml(safeOrganizationType)
+    const escapedOrgRemark = escapeHtml(safeOrganizationRemark)
+    
+    // Pre-process introduction with newlines
+    const processedIntroduction = (function() {
+      try {
+        const introEscaped = escapeHtml(safeIntroduction)
+        const intro = ensureString(introEscaped)
+        if (!intro || typeof intro !== 'string') return ensureString(safeIntroduction) || ''
+        return intro.replace(/\n/g, '<br>')
+      } catch (e) {
+        console.error('❌ Error processing introduction:', e)
+        return ensureString(safeIntroduction) || ''
+      }
+    })()
+    
+    // Pre-process biography with newlines
+    const processedBiography = safeBiography ? (function() {
+      try {
+        if (!safeBiography) return ''
+        const bioEscaped = escapeHtml(safeBiography)
+        const bio = ensureString(bioEscaped)
+        if (!bio || typeof bio !== 'string') return ensureString(safeBiography) || ''
+        return bio.replace(/\n/g, '<br>')
+      } catch (e) {
+        console.error('❌ Error processing biography:', e)
+        return ensureString(safeBiography) || ''
+      }
+    })() : null
+    
+    // Pre-process special requests with newlines
+    const processedSpecialRequests = safeSpecialRequests ? (function() {
+      try {
+        if (!safeSpecialRequests) return ''
+        const reqEscaped = escapeHtml(safeSpecialRequests)
+        const req = ensureString(reqEscaped)
+        if (!req || typeof req !== 'string') return ensureString(safeSpecialRequests) || ''
+        return req.replace(/\n/g, '<br>')
+      } catch (e) {
+        console.error('❌ Error processing special requests:', e)
+        return ensureString(safeSpecialRequests) || ''
+      }
+    })() : null
+    
+    // Pre-process timestamp
+    const timestamp = (function() {
+      try {
+        return new Date().toLocaleString('en-US', {
+          timeZone: 'UTC',
+          dateStyle: 'long',
+          timeStyle: 'long',
+        })
+      } catch {
+        return new Date().toISOString()
+      }
+    })()
     
     console.error('   - formattedDateRange:', safeFormattedDateRange)
     console.error('   - formattedEventType:', safeFormattedEventType)
@@ -344,31 +413,31 @@ function generateAdminEmailHTML(data: ReservationData): string {
       <div class="section-title">Booking Details</div>
       <div class="field">
         <span class="field-label">Name:</span>
-        <span class="field-value">${escapeHtml(ensureString(data.name) || "Not provided")}</span>
+        <span class="field-value">${escapedName}</span>
       </div>
       <div class="field">
         <span class="field-label">Email:</span>
-        <span class="field-value"><a href="mailto:${escapeHtml(ensureString(data.email) || "Not provided")}">${escapeHtml(ensureString(data.email) || "Not provided")}</a></span>
+        <span class="field-value"><a href="mailto:${escapedEmail}">${escapedEmail}</a></span>
       </div>
       <div class="field">
         <span class="field-label">Phone:</span>
-        <span class="field-value"><a href="tel:${escapeHtml(ensureString(data.phone) || "Not provided")}">${escapeHtml(ensureString(data.phone) || "Not provided")}</a></span>
+        <span class="field-value"><a href="tel:${escapedPhone}">${escapedPhone}</a></span>
       </div>
       <div class="field">
         <span class="field-label">Number of Participants:</span>
-        <span class="field-value">${escapeHtml(ensureString(data.participants) || "Not specified")}</span>
+        <span class="field-value">${escapedParticipants}</span>
       </div>
       <div class="field">
         <span class="field-label">Event Type:</span>
-        <span class="field-value">${escapeHtml(safeFormattedEventType)}</span>
+        <span class="field-value">${escapedEventType}</span>
       </div>
       <div class="field">
         <span class="field-label">Date & Time:</span>
-        <span class="field-value">${escapeHtml(safeFormattedDateRange)}</span>
+        <span class="field-value">${escapedDateRange}</span>
       </div>
       <div class="field">
         <span class="field-label">Organization:</span>
-        <span class="field-value">${escapeHtml(ensureString(data.organizationType) || "Not specified")} (${escapeHtml(safeOrganizationRemark)})</span>
+        <span class="field-value">${escapedOrgType} (${escapedOrgRemark})</span>
       </div>
     </div>
 
@@ -376,49 +445,24 @@ function generateAdminEmailHTML(data: ReservationData): string {
       <div class="section-title">Guest Information</div>
       <div class="field">
         <span class="field-label">Introduction:</span>
-        <div class="text-content">${(function() {
-          try {
-            const intro = ensureString(escapeHtml(safeIntroduction))
-            return intro ? intro.replace(/\n/g, '<br>') : ''
-          } catch {
-            return ensureString(safeIntroduction) || ''
-          }
-        })()}</div>
+        <div class="text-content">${processedIntroduction}</div>
       </div>
-      ${safeBiography ? `
+      ${processedBiography ? `
       <div class="field">
         <span class="field-label">Background & Interests:</span>
-        <div class="text-content">${(function() {
-          try {
-            const bio = ensureString(escapeHtml(safeBiography))
-            return bio ? bio.replace(/\n/g, '<br>') : ''
-          } catch {
-            return ensureString(safeBiography) || ''
-          }
-        })()}</div>
+        <div class="text-content">${processedBiography}</div>
       </div>
       ` : ''}
-      ${safeSpecialRequests ? `
+      ${processedSpecialRequests ? `
       <div class="field">
         <span class="field-label">Special Requests:</span>
-        <div class="text-content">${(function() {
-          try {
-            const req = ensureString(escapeHtml(safeSpecialRequests))
-            return req ? req.replace(/\n/g, '<br>') : ''
-          } catch {
-            return ensureString(safeSpecialRequests) || ''
-          }
-        })()}</div>
+        <div class="text-content">${processedSpecialRequests}</div>
       </div>
       ` : ''}
     </div>
 
     <div class="timestamp">
-      Received: ${new Date().toLocaleString('en-US', {
-        timeZone: 'UTC',
-        dateStyle: 'long',
-        timeStyle: 'long',
-      })}
+      Received: ${timestamp}
     </div>
   </div>
   <div class="footer">
@@ -746,20 +790,30 @@ export async function sendAdminNotification(data: ReservationData): Promise<void
   let emailText: string
   let emailHtml: string
   
+  // Generate email content with comprehensive error handling
+  // If generation fails, throw error to prevent email sending
   try {
     emailText = generateAdminEmailText(data)
+    if (!emailText || typeof emailText !== 'string') {
+      throw new Error('Generated email text is invalid')
+    }
   } catch (error) {
     console.error('❌ ERROR generating admin email text:', error)
-    // Use minimal fallback
-    emailText = `NEW RESERVATION INQUIRY\n\nName: ${ensureString(data.name)}\nEmail: ${ensureString(data.email)}\nPhone: ${ensureString(data.phone)}`
+    console.error('Error details:', error instanceof Error ? error.stack : error)
+    // Re-throw to prevent email from being sent
+    throw new Error(`Failed to generate admin email text: ${error instanceof Error ? error.message : 'Unknown error'}`)
   }
   
   try {
     emailHtml = generateAdminEmailHTML(data)
+    if (!emailHtml || typeof emailHtml !== 'string') {
+      throw new Error('Generated email HTML is invalid')
+    }
   } catch (error) {
     console.error('❌ ERROR generating admin email HTML:', error)
-    // Use minimal fallback
-    emailHtml = `<html><body><h1>New Reservation Inquiry</h1><p>Name: ${escapeHtml(ensureString(data.name))}</p><p>Email: ${escapeHtml(ensureString(data.email))}</p><p>Phone: ${escapeHtml(ensureString(data.phone))}</p></body></html>`
+    console.error('Error details:', error instanceof Error ? error.stack : error)
+    // Re-throw to prevent email from being sent
+    throw new Error(`Failed to generate admin email HTML: ${error instanceof Error ? error.message : 'Unknown error'}`)
   }
 
   const formattedEventType = ensureString(formatEventType(data.eventType, data.otherEventType) || "Event")
@@ -987,17 +1041,23 @@ export async function sendReservationEmails(
     // Return early - don't send user email if admin email failed
     // This MUST return immediately to prevent user email from being sent
     const result = { adminSent: false, userSent: false, errors }
-    console.error('🚫 RETURNING EARLY - User email will NOT be sent:', result)
+    console.error('🚫 RETURNING EARLY - User email will NOT be sent:', JSON.stringify(result))
+    console.error('🚫 EXITING FUNCTION - User email code will NOT execute')
     return result
   }
 
-  // Send user confirmation SECOND - only if admin email succeeded
-  // This code should ONLY execute if admin email succeeded (adminSent === true)
+  // CRITICAL: Double-check admin email succeeded before proceeding
+  // This should NEVER execute if admin email failed (due to early return above)
   if (!adminSent) {
     console.error('❌ CRITICAL ERROR: Admin email failed but code reached user email section!')
-    return { adminSent: false, userSent: false, errors }
+    console.error('❌ This should never happen - early return should have prevented this!')
+    const result = { adminSent: false, userSent: false, errors }
+    console.error('🚫 FORCING RETURN - User email will NOT be sent:', JSON.stringify(result))
+    return result
   }
   
+  // Only execute if admin email succeeded
+  console.error('✅ Admin email succeeded, proceeding to send user email...')
   try {
     console.error('='.repeat(60))
     console.error('STEP 2: Attempting to send user confirmation email...')
