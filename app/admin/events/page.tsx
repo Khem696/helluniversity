@@ -194,10 +194,11 @@ export default function EventsPage() {
     setSaving(true)
 
     const formData = new FormData(e.currentTarget)
+    const imageId = formData.get("image_id") as string
     const eventData = {
       title: formData.get("title") as string,
       description: formData.get("description") as string || null,
-      image_id: formData.get("image_id") as string || null,
+      image_id: imageId && imageId.trim() ? imageId : null,
       event_date: formData.get("event_date") as string || null,
       start_date: formData.get("start_date") as string || null,
       end_date: formData.get("end_date") as string || null,
@@ -247,7 +248,8 @@ export default function EventsPage() {
 
     if (title !== editingEvent.title) updates.title = title
     if (description !== (editingEvent.description || "")) updates.description = description || null
-    if (imageId !== (editingEvent.image_id || "")) updates.image_id = imageId || null
+    const finalImageId = imageId && imageId.trim() ? imageId : null
+    if (finalImageId !== (editingEvent.image_id || null)) updates.image_id = finalImageId
     if (eventDate) {
       const timestamp = Math.floor(new Date(eventDate).getTime() / 1000)
       if (timestamp !== editingEvent.event_date) updates.event_date = timestamp
@@ -373,10 +375,9 @@ export default function EventsPage() {
                 <Label htmlFor="create-image_id">Poster Image</Label>
                 <Select name="image_id" disabled={saving}>
                   <SelectTrigger>
-                    <SelectValue placeholder="Select an image" />
+                    <SelectValue placeholder="Select an image (optional)" />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="">None</SelectItem>
                     {images.map(img => (
                       <SelectItem key={img.id} value={img.id}>
                         {img.title || img.id}
@@ -557,12 +558,11 @@ export default function EventsPage() {
               </div>
               <div>
                 <Label htmlFor="edit-image_id">Poster Image</Label>
-                <Select name="image_id" defaultValue={editingEvent.image_id || ""} disabled={saving}>
+                <Select name="image_id" defaultValue={editingEvent.image_id || undefined} disabled={saving}>
                   <SelectTrigger>
-                    <SelectValue placeholder="Select an image" />
+                    <SelectValue placeholder="Select an image (optional)" />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="">None</SelectItem>
                     {images.map(img => (
                       <SelectItem key={img.id} value={img.id}>
                         {img.title || img.id}
