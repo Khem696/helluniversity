@@ -17,6 +17,7 @@ import { format } from "date-fns"
 import { withBasePath } from "@/lib/utils"
 import { Recaptcha } from "./Recaptcha"
 import PhoneInput from "react-phone-number-input"
+import { TimePicker } from "@/components/ui/time-picker"
 
 const STORAGE_KEY = "helluniversity_booking_form"
 const DEBOUNCE_DELAY = 500 // milliseconds
@@ -909,50 +910,30 @@ export function Header() {
 
                           {/* Start Time */}
                           <div style={{ display: 'flex', flexDirection: 'column', gap: 'clamp(0.25rem, 0.3vw, 0.375rem)' }}>
-                            <Label htmlFor="startTime" className="text-[#5a3a2a] font-comfortaa" style={{ fontSize: 'clamp(0.6875rem, 0.7vw, 0.75rem)' }}>Start Time *</Label>
-                            <div className="relative">
-                              <Input
-                                id="startTime"
-                                name="startTime"
-                                type="time"
-                                required
-                                value={formData.startTime}
-                                onChange={(e) => handleInputChange("startTime", e.target.value)}
-                                disabled={!isRecaptchaVerified || process.env.NEXT_PUBLIC_USE_STATIC_IMAGES === '1'}
-                                className={`font-comfortaa ${!isRecaptchaVerified ? "opacity-50 cursor-not-allowed bg-gray-100" : ""}`}
-                                style={{ fontSize: 'clamp(0.75rem, 0.8vw, 0.875rem)', height: 'clamp(2rem, 2.2vw, 2.25rem)' }}
-                              />
-                              <Clock className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400 pointer-events-none" />
-                            </div>
-                            {formData.startTime && (
-                              <span className="text-xs text-gray-600 font-comfortaa" style={{ fontSize: 'clamp(0.625rem, 0.65vw, 0.6875rem)' }}>
-                                {formatTimeWithAMPM(formData.startTime)}
-                              </span>
-                            )}
+                            <Label id="startTime-label" htmlFor="startTime" className="text-[#5a3a2a] font-comfortaa" style={{ fontSize: 'clamp(0.6875rem, 0.7vw, 0.75rem)' }}>Start Time *</Label>
+                            <TimePicker
+                              id="startTime"
+                              name="startTime"
+                              value={formData.startTime}
+                              onChange={(value) => handleInputChange("startTime", value)}
+                              disabled={!isRecaptchaVerified || process.env.NEXT_PUBLIC_USE_STATIC_IMAGES === '1'}
+                              required
+                              className={!isRecaptchaVerified ? "opacity-50 cursor-not-allowed" : ""}
+                            />
                           </div>
 
                           {/* End Time */}
                           <div style={{ display: 'flex', flexDirection: 'column', gap: 'clamp(0.25rem, 0.3vw, 0.375rem)' }}>
-                            <Label htmlFor="endTime" className="text-[#5a3a2a] font-comfortaa" style={{ fontSize: 'clamp(0.6875rem, 0.7vw, 0.75rem)' }}>End Time *</Label>
-                            <div className="relative">
-                              <Input
-                                id="endTime"
-                                name="endTime"
-                                type="time"
-                                required
-                                value={formData.endTime}
-                                onChange={(e) => handleInputChange("endTime", e.target.value)}
-                                disabled={!isRecaptchaVerified || process.env.NEXT_PUBLIC_USE_STATIC_IMAGES === '1'}
-                                className={`font-comfortaa ${!isRecaptchaVerified ? "opacity-50 cursor-not-allowed bg-gray-100" : ""}`}
-                                style={{ fontSize: 'clamp(0.75rem, 0.8vw, 0.875rem)', height: 'clamp(2rem, 2.2vw, 2.25rem)' }}
-                              />
-                              <Clock className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400 pointer-events-none" />
-                            </div>
-                            {formData.endTime && (
-                              <span className="text-xs text-gray-600 font-comfortaa" style={{ fontSize: 'clamp(0.625rem, 0.65vw, 0.6875rem)' }}>
-                                {formatTimeWithAMPM(formData.endTime)}
-                              </span>
-                            )}
+                            <Label id="endTime-label" htmlFor="endTime" className="text-[#5a3a2a] font-comfortaa" style={{ fontSize: 'clamp(0.6875rem, 0.7vw, 0.75rem)' }}>End Time *</Label>
+                            <TimePicker
+                              id="endTime"
+                              name="endTime"
+                              value={formData.endTime}
+                              onChange={(value) => handleInputChange("endTime", value)}
+                              disabled={!isRecaptchaVerified || process.env.NEXT_PUBLIC_USE_STATIC_IMAGES === '1'}
+                              required
+                              className={!isRecaptchaVerified ? "opacity-50 cursor-not-allowed" : ""}
+                            />
                           </div>
 
                           {/* Event Type */}
