@@ -6,7 +6,6 @@ import { useSession } from "next-auth/react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
-import { Textarea } from "@/components/ui/textarea"
 import {
   Dialog,
   DialogContent,
@@ -21,11 +20,8 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select"
-import {
-  RadioGroup,
-  RadioGroupItem,
-} from "@/components/ui/radio-group"
 import { Badge } from "@/components/ui/badge"
+import { Textarea } from "@/components/ui/textarea"
 import {
   Loader2,
   Calendar,
@@ -33,19 +29,14 @@ import {
   Phone,
   Users,
   Clock,
-  FileText,
   Eye,
-  CheckCircle2,
-  XCircle,
-  AlertCircle,
-  Ban,
-  CalendarX,
   Archive,
+  ArrowLeft,
   Trash2,
 } from "lucide-react"
-import Link from "next/link"
 import { toast } from "sonner"
 import { format } from "date-fns"
+import Link from "next/link"
 
 interface Booking {
   id: string
@@ -87,23 +78,19 @@ interface StatusHistory {
   created_at: number
 }
 
-export default function BookingsPage() {
+export default function BookingsArchivePage() {
   const { data: session, status } = useSession()
   const [bookings, setBookings] = useState<Booking[]>([])
   const [loading, setLoading] = useState(true)
-  const [saving, setSaving] = useState(false)
   const [selectedBooking, setSelectedBooking] = useState<Booking | null>(null)
   const [statusHistory, setStatusHistory] = useState<StatusHistory[]>([])
   const [viewDialogOpen, setViewDialogOpen] = useState(false)
   const [statusDialogOpen, setStatusDialogOpen] = useState(false)
   const [statusFilter, setStatusFilter] = useState<string>("all")
   const [emailFilter, setEmailFilter] = useState("")
+  const [saving, setSaving] = useState(false)
+  const [newStatus, setNewStatus] = useState<string>("")
   const [proposedDateRange, setProposedDateRange] = useState<"single" | "multiple">("single")
-  const [postponeMode, setPostponeMode] = useState<"user-propose" | "admin-propose">("user-propose")
-  const [selectedStatusInForm, setSelectedStatusInForm] = useState<string>("")
-  const [lastCheckedAt, setLastCheckedAt] = useState<number>(Date.now())
-  const [newResponsesCount, setNewResponsesCount] = useState<number>(0)
-  const [seenResponseIds, setSeenResponseIds] = useState<Set<string>>(new Set())
 
   // Redirect if not authenticated
   useEffect(() => {
@@ -117,6 +104,7 @@ export default function BookingsPage() {
     try {
       setLoading(true)
       const params = new URLSearchParams()
+      params.append("archive", "true") // Request archive bookings
       if (statusFilter !== "all") {
         params.append("status", statusFilter)
       }
@@ -130,10 +118,10 @@ export default function BookingsPage() {
       if (data.success) {
         setBookings(data.bookings)
       } else {
-        toast.error(data.error || "Failed to load bookings")
+        toast.error(data.error || "Failed to load archived bookings")
       }
     } catch (error) {
-      toast.error("Failed to load bookings")
+      toast.error("Failed to load archived bookings")
       console.error(error)
     } finally {
       setLoading(false)
@@ -143,101 +131,8 @@ export default function BookingsPage() {
   useEffect(() => {
     if (session) {
       fetchBookings()
-      setLastCheckedAt(Date.now())
     }
   }, [session, statusFilter, emailFilter])
-
-  // Poll for new user responses every 30 seconds
-  useEffect(() => {
-    if (!session) return
-
-    const pollInterval = setInterval(async () => {
-      try {
-        // Check for bookings with new user responses
-        const params = new URLSearchParams()
-        params.append("limit", "1000")
-        const response = await fetch(`/api/admin/bookings?${params.toString()}`)
-        const data = await response.json()
-        
-        if (data.success && data.bookings) {
-          const currentBookings = data.bookings as Booking[]
-          
-          // Find bookings with new user responses (response_date after lastCheckedAt)
-          const newResponses = currentBookings.filter(booking => {
-            if (!booking.user_response || !booking.response_date) return false
-            
-            // Check if this response is new (response_date is after lastCheckedAt)
-            const responseTime = booking.response_date * 1000 // Convert to milliseconds
-            const isNew = responseTime > lastCheckedAt
-            
-            // Check if we've already seen this response
-            const responseId = `${booking.id}-${booking.response_date}`
-            const alreadySeen = seenResponseIds.has(responseId)
-            
-            return isNew && !alreadySeen
-          })
-
-          if (newResponses.length > 0) {
-            // Mark responses as seen
-            const newSeenIds = new Set(seenResponseIds)
-            newResponses.forEach(booking => {
-              if (booking.response_date) {
-                const responseId = `${booking.id}-${booking.response_date}`
-                newSeenIds.add(responseId)
-              }
-            })
-            setSeenResponseIds(newSeenIds)
-
-            // Show notifications for each new response
-            newResponses.forEach(booking => {
-              const responseType = booking.user_response?.toLowerCase() || ""
-              let message = ""
-              let type: "success" | "info" | "warning" = "info"
-
-              if (responseType.includes("accept")) {
-                message = `${booking.name} accepted the proposed date`
-                type = "success"
-              } else if (responseType.includes("propose")) {
-                message = `${booking.name} proposed an alternative date`
-                type = "warning"
-              } else if (responseType.includes("cancel")) {
-                message = `${booking.name} cancelled their reservation`
-                type = "warning"
-              } else {
-                message = `${booking.name} responded to their reservation`
-              }
-
-              toast[type](message, {
-                description: `Event: ${booking.event_type}`,
-                action: {
-                  label: "View",
-                  onClick: () => {
-                    setSelectedBooking(booking)
-                    setViewDialogOpen(true)
-                    fetchBookingDetails(booking.id)
-                  },
-                },
-                duration: 5000,
-              })
-            })
-
-            // Update new responses count
-            setNewResponsesCount(prev => prev + newResponses.length)
-            
-            // Refresh bookings list to show updated data
-            fetchBookings()
-          }
-
-          // Update last checked time
-          setLastCheckedAt(Date.now())
-        }
-      } catch (error) {
-        console.error("Error polling for new responses:", error)
-      }
-    }, 30000) // Poll every 30 seconds
-
-    return () => clearInterval(pollInterval)
-  }, [session, lastCheckedAt, seenResponseIds])
 
   // Fetch booking details and history
   const fetchBookingDetails = async (bookingId: string) => {
@@ -247,10 +142,6 @@ export default function BookingsPage() {
       if (data.success) {
         setSelectedBooking(data.booking)
         setStatusHistory(data.statusHistory || [])
-        // Reset postpone mode when opening dialog
-        setPostponeMode("user-propose")
-        setProposedDateRange("single")
-        setSelectedStatusInForm(data.booking.status)
       } else {
         toast.error(data.error || "Failed to load booking details")
       }
@@ -264,16 +155,9 @@ export default function BookingsPage() {
   const handleDeleteBooking = async (bookingId: string) => {
     // Find the booking to check its status
     const booking = bookings.find(b => b.id === bookingId)
-    let statusText = ""
-    if (booking?.status === "rejected" || booking?.status === "cancelled" || booking?.status === "finished") {
-      statusText = booking?.status === "finished"
-        ? "Only admin will be notified. No user email will be sent as the event has already finished."
-        : "Only admin will be notified of this deletion."
-    } else if (booking?.status === "accepted" || booking?.status === "checked-in") {
-      statusText = "A cancellation email will be sent to the user, and admin will be notified."
-    } else {
-      statusText = "A rejection email will be sent to the user, and admin will be notified."
-    }
+    const statusText = booking?.status === "rejected" || booking?.status === "cancelled" 
+      ? "Only admin will be notified of this deletion."
+      : "A rejection email will be sent to the user, and admin will be notified."
     
     if (!confirm(`Are you sure you want to delete this booking? This action cannot be undone. ${statusText}`)) {
       return
@@ -307,61 +191,22 @@ export default function BookingsPage() {
     e.preventDefault()
     if (!selectedBooking) return
 
-    // Prevent status updates for checked-in bookings
-    if ((selectedBooking.status as string) === "checked-in") {
-      toast.error("Cannot update status for checked-in bookings. Only deletion is allowed.")
-      return
-    }
-
     setSaving(true)
     const formData = new FormData(e.currentTarget)
-    const status = formData.get("status") as string
+    const statusValue = formData.get("status") as string
     const changeReason = formData.get("change_reason") as string
     const adminNotes = formData.get("admin_notes") as string
     const proposedStartDate = formData.get("proposed_start_date") as string
     const proposedEndDate = formData.get("proposed_end_date") as string
-    const proposedStartTime = formData.get("proposed_start_time") as string
-    const proposedEndTime = formData.get("proposed_end_time") as string
-    const proposedDateRange = formData.get("proposed_date_range") as string
-    const postponeModeValue = formData.get("postpone_mode") as string
+    const proposedDateRangeValue = formData.get("proposed_date_range") as string
 
-    // For postponed status, handle two modes:
-    // 1. "user-propose": Admin doesn't propose dates (set to null)
-    // 2. "admin-propose": Admin proposes dates (validate and set)
+    // For postponed status, construct proposed date based on single/multiple day
     let proposedDate: string | null = null
-    let finalProposedEndDate: string | null = null
-    
-    if (status === "postponed") {
-      if (postponeModeValue === "admin-propose") {
-        // Admin proposes: validate that dates are provided
-        if (!proposedStartDate) {
-          toast.error("Proposed start date is required when admin proposes dates")
-          setSaving(false)
-          return
-        }
-        if (!proposedStartTime) {
-          toast.error("Proposed start time is required when admin proposes dates")
-          setSaving(false)
-          return
-        }
-        if (!proposedEndTime) {
-          toast.error("Proposed end time is required when admin proposes dates")
-          setSaving(false)
-          return
-        }
+    if (statusValue === "postponed" && proposedStartDate) {
+      if (proposedDateRangeValue === "multiple" && proposedEndDate) {
         proposedDate = proposedStartDate
-        if (proposedDateRange === "multiple") {
-          if (!proposedEndDate) {
-            toast.error("Proposed end date is required for multiple day proposals")
-            setSaving(false)
-            return
-          }
-          finalProposedEndDate = proposedEndDate
-        }
       } else {
-        // User proposes: set dates to null
-        proposedDate = null
-        finalProposedEndDate = null
+        proposedDate = proposedStartDate
       }
     }
 
@@ -370,14 +215,12 @@ export default function BookingsPage() {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          status,
+          status: statusValue,
           changeReason: changeReason || null,
           adminNotes: adminNotes || null,
-          proposedDate: proposedDate,
-          proposedStartDate: status === "postponed" && postponeModeValue === "admin-propose" && proposedStartDate ? proposedStartDate : null,
-          proposedEndDate: status === "postponed" && postponeModeValue === "admin-propose" ? finalProposedEndDate : null,
-          proposedStartTime: status === "postponed" && postponeModeValue === "admin-propose" && proposedStartTime ? proposedStartTime : null,
-          proposedEndTime: status === "postponed" && postponeModeValue === "admin-propose" && proposedEndTime ? proposedEndTime : null,
+          proposedDate: proposedDate || null,
+          proposedStartDate: statusValue === "postponed" && proposedStartDate ? proposedStartDate : null,
+          proposedEndDate: statusValue === "postponed" && proposedDateRangeValue === "multiple" && proposedEndDate ? proposedEndDate : null,
         }),
       })
 
@@ -385,8 +228,6 @@ export default function BookingsPage() {
       if (data.success) {
         toast.success("Booking status updated successfully. Email notification sent.")
         setStatusDialogOpen(false)
-        setPostponeMode("user-propose")
-        setProposedDateRange("single")
         fetchBookings()
         if (viewDialogOpen) {
           fetchBookingDetails(selectedBooking.id)
@@ -404,26 +245,18 @@ export default function BookingsPage() {
 
   const getStatusBadge = (status: string) => {
     const variants: Record<string, "default" | "secondary" | "destructive" | "outline"> = {
-      pending: "outline",
-      accepted: "default",
-      rejected: "destructive",
-      postponed: "secondary",
-      cancelled: "destructive",
       finished: "default",
-      "checked-in": "default",
+      rejected: "destructive",
+      cancelled: "destructive",
     }
     const colors: Record<string, string> = {
-      pending: "bg-yellow-100 text-yellow-800 border-yellow-300",
-      accepted: "bg-green-100 text-green-800 border-green-300",
-      rejected: "bg-red-100 text-red-800 border-red-300",
-      postponed: "bg-blue-100 text-blue-800 border-blue-300",
-      cancelled: "bg-gray-100 text-gray-800 border-gray-300",
       finished: "bg-gray-100 text-gray-800 border-gray-300",
-      "checked-in": "bg-emerald-100 text-emerald-800 border-emerald-300",
+      rejected: "bg-red-100 text-red-800 border-red-300",
+      cancelled: "bg-orange-100 text-orange-800 border-orange-300",
     }
     return (
       <Badge className={colors[status] || ""} variant={variants[status] || "default"}>
-        {status === "checked-in" ? "Checked In" : status.charAt(0).toUpperCase() + status.slice(1)}
+        {status.charAt(0).toUpperCase() + status.slice(1)}
       </Badge>
     )
   }
@@ -469,35 +302,20 @@ export default function BookingsPage() {
   return (
     <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-12">
       <div className="mb-8">
-        <div className="flex items-center justify-between mb-4">
-          <div>
-            <h1 className="text-4xl font-bold text-gray-900 mb-2">Reservation Management</h1>
-            <p className="text-gray-600">Manage booking requests and status updates</p>
-            {newResponsesCount > 0 && (
-              <div className="mt-2 flex items-center gap-2">
-                <Badge className="bg-blue-100 text-blue-800 border-blue-300">
-                  <AlertCircle className="w-3 h-3 mr-1" />
-                  {newResponsesCount} new response{newResponsesCount > 1 ? 's' : ''} received
-                </Badge>
-                <Button
-                  size="sm"
-                  variant="outline"
-                  onClick={() => {
-                    setNewResponsesCount(0)
-                    setLastCheckedAt(Date.now())
-                  }}
-                >
-                  Mark as read
-                </Button>
-              </div>
-            )}
-          </div>
-          <Link href="/admin/bookings/archive">
-            <Button variant="outline">
-              <Archive className="w-4 h-4 mr-2" />
-              View Archive
+        <div className="flex items-center gap-4 mb-4">
+          <Link href="/admin/bookings">
+            <Button variant="outline" size="sm">
+              <ArrowLeft className="w-4 h-4 mr-2" />
+              Back to Bookings
             </Button>
           </Link>
+        </div>
+        <div className="flex items-center gap-3">
+          <Archive className="w-8 h-8 text-gray-600" />
+          <div>
+            <h1 className="text-4xl font-bold text-gray-900 mb-2">Booking Archive</h1>
+            <p className="text-gray-600">View finished, rejected, and cancelled reservations</p>
+          </div>
         </div>
       </div>
 
@@ -509,9 +327,9 @@ export default function BookingsPage() {
           </SelectTrigger>
           <SelectContent>
             <SelectItem value="all">All Statuses</SelectItem>
-            <SelectItem value="pending">Pending</SelectItem>
-            <SelectItem value="accepted">Accepted</SelectItem>
-            <SelectItem value="postponed">Postponed</SelectItem>
+            <SelectItem value="finished">Finished</SelectItem>
+            <SelectItem value="rejected">Rejected</SelectItem>
+            <SelectItem value="cancelled">Cancelled</SelectItem>
           </SelectContent>
         </Select>
         <Input
@@ -525,8 +343,8 @@ export default function BookingsPage() {
       {/* Bookings Table */}
       {bookings.length === 0 ? (
         <div className="text-center py-12">
-          <Calendar className="w-16 h-16 mx-auto text-gray-400 mb-4" />
-          <p className="text-gray-600">No bookings found</p>
+          <Archive className="w-16 h-16 mx-auto text-gray-400 mb-4" />
+          <p className="text-gray-600">No archived bookings found</p>
         </div>
       ) : (
         <div className="bg-white rounded-lg shadow overflow-hidden">
@@ -544,9 +362,6 @@ export default function BookingsPage() {
                     Date/Time
                   </th>
                   <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                    Proposed Date
-                  </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                     Status
                   </th>
                   <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
@@ -558,25 +373,10 @@ export default function BookingsPage() {
                 </tr>
               </thead>
               <tbody className="bg-white divide-y divide-gray-200">
-                {bookings.map((booking) => {
-                  const hasNewResponse = booking.user_response && booking.response_date && 
-                    (booking.response_date * 1000) > lastCheckedAt - 300000 // New if within last 5 minutes
-                  
-                  return (
-                  <tr 
-                    key={booking.id} 
-                    className={`hover:bg-gray-50 ${hasNewResponse ? 'bg-blue-50 border-l-4 border-l-blue-500' : ''}`}
-                  >
+                {bookings.map((booking) => (
+                  <tr key={booking.id} className="hover:bg-gray-50">
                     <td className="px-6 py-4 whitespace-nowrap">
-                      <div className="flex items-center gap-2">
-                        <div className="text-sm font-medium text-gray-900">{booking.name}</div>
-                        {booking.user_response && (
-                          <Badge variant="outline" className="bg-blue-100 text-blue-800 border-blue-300">
-                            <AlertCircle className="w-3 h-3 mr-1" />
-                            Response
-                          </Badge>
-                        )}
-                      </div>
+                      <div className="text-sm font-medium text-gray-900">{booking.name}</div>
                       <div className="text-sm text-gray-500 flex items-center gap-1 mt-1">
                         <Mail className="w-3 h-3" />
                         {booking.email}
@@ -611,25 +411,13 @@ export default function BookingsPage() {
                       </div>
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap">
-                      {booking.proposed_date ? (
-                        <div className="text-sm text-gray-900">
-                          {formatDate(booking.proposed_date)}
-                          {booking.proposed_end_date && booking.proposed_end_date !== booking.proposed_date && (
-                            <span> - {formatDate(booking.proposed_end_date)}</span>
-                          )}
-                        </div>
-                      ) : (
-                        <div className="text-sm text-gray-400">-</div>
-                      )}
-                    </td>
-                    <td className="px-6 py-4 whitespace-nowrap">
                       {getStatusBadge(booking.status)}
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
                       {formatTimestamp(booking.created_at)}
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
-                      <div className="flex items-center gap-2 justify-end">
+                      <div className="flex gap-2 justify-end">
                         <Button
                           size="sm"
                           variant="outline"
@@ -644,6 +432,18 @@ export default function BookingsPage() {
                         </Button>
                         <Button
                           size="sm"
+                          variant="default"
+                          onClick={() => {
+                            setSelectedBooking(booking)
+                            setNewStatus(booking.status)
+                            setStatusDialogOpen(true)
+                            fetchBookingDetails(booking.id)
+                          }}
+                        >
+                          Update Status
+                        </Button>
+                        <Button
+                          size="sm"
                           variant="destructive"
                           onClick={() => handleDeleteBooking(booking.id)}
                           disabled={saving}
@@ -654,8 +454,7 @@ export default function BookingsPage() {
                       </div>
                     </td>
                   </tr>
-                  )
-                })}
+                ))}
               </tbody>
             </table>
           </div>
@@ -668,7 +467,7 @@ export default function BookingsPage() {
           <DialogHeader>
             <DialogTitle>Booking Details</DialogTitle>
             <DialogDescription>
-              View and manage booking information
+              View archived booking information
             </DialogDescription>
           </DialogHeader>
           {selectedBooking && (
@@ -677,15 +476,12 @@ export default function BookingsPage() {
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-3">
                   {getStatusBadge(selectedBooking.status)}
-                  {selectedBooking.proposed_date && selectedBooking.status === "postponed" && (
-                    <div className="text-sm text-gray-600">
-                      Proposed Date: {formatDate(selectedBooking.proposed_date)}
-                    </div>
-                  )}
                 </div>
                 <div className="flex items-center gap-2">
                   <Button
                     onClick={() => {
+                      setSelectedBooking(selectedBooking)
+                      setNewStatus(selectedBooking.status)
                       setStatusDialogOpen(true)
                     }}
                   >
@@ -850,42 +646,25 @@ export default function BookingsPage() {
           <DialogHeader>
             <DialogTitle>Update Booking Status</DialogTitle>
             <DialogDescription>
-              Update the booking status and send notification email to the user
+              Update the booking status and send notification email to the user. This allows manual handling of edge cases for archived bookings.
             </DialogDescription>
           </DialogHeader>
           {selectedBooking && (
             <form onSubmit={handleStatusUpdate} className="space-y-4">
-              {(selectedBooking.status as string) === "checked-in" ? (
-                <div className="bg-yellow-50 border border-yellow-200 text-yellow-800 p-4 rounded">
-                  <p className="font-medium">This booking is checked-in and cannot have its status changed. Only deletion is allowed for edge cases.</p>
-                </div>
-              ) : (
-                <div>
-                  <Label htmlFor="status">New Status *</Label>
-                  <Select 
-                    name="status" 
-                    value={selectedStatusInForm || selectedBooking.status} 
-                    onValueChange={(value) => {
-                      setSelectedStatusInForm(value)
-                      if (value !== "postponed") {
-                        setPostponeMode("user-propose")
-                        setProposedDateRange("single")
-                      }
-                    }}
-                    disabled={saving || (selectedBooking.status as string) === "checked-in"}
-                  >
-                    <SelectTrigger>
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="pending">Pending</SelectItem>
-                      <SelectItem value="accepted">Accepted</SelectItem>
-                      <SelectItem value="rejected">Rejected</SelectItem>
-                      <SelectItem value="postponed">Postponed</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-              )}
+              <div>
+                <Label htmlFor="status">New Status *</Label>
+                <Select name="status" value={newStatus} onValueChange={setNewStatus} disabled={saving}>
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="pending">Pending</SelectItem>
+                    <SelectItem value="accepted">Accepted</SelectItem>
+                    <SelectItem value="rejected">Rejected</SelectItem>
+                    <SelectItem value="postponed">Postponed</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
               <div>
                 <Label htmlFor="change_reason">Change Reason</Label>
                 <Textarea
@@ -896,127 +675,49 @@ export default function BookingsPage() {
                   disabled={saving}
                 />
               </div>
-              {selectedBooking && (() => {
-                // Check if selected status is postponed
-                const currentStatus = selectedStatusInForm || selectedBooking.status
-                if (currentStatus === "postponed") {
-                  return (
-                    <>
-                      <div className="space-y-3">
-                        <Label>Postpone Mode *</Label>
-                        <RadioGroup
-                          name="postpone_mode"
-                          value={postponeMode}
-                          onValueChange={(value) => {
-                            setPostponeMode(value as "user-propose" | "admin-propose")
-                            if (value === "user-propose") {
-                              setProposedDateRange("single")
-                            }
-                          }}
-                          disabled={saving}
-                          className="flex gap-6"
-                        >
-                          <div className="flex items-center space-x-2">
-                            <RadioGroupItem value="user-propose" id="user-propose" />
-                            <Label htmlFor="user-propose" className="font-normal cursor-pointer">
-                              Let User Propose Date
-                            </Label>
-                          </div>
-                          <div className="flex items-center space-x-2">
-                            <RadioGroupItem value="admin-propose" id="admin-propose" />
-                            <Label htmlFor="admin-propose" className="font-normal cursor-pointer">
-                              Admin Proposes Date
-                            </Label>
-                          </div>
-                        </RadioGroup>
-                        <p className="text-sm text-gray-500">
-                          {postponeMode === "user-propose"
-                            ? "User will be asked to propose an alternative date or cancel"
-                            : "You must provide specific dates and times for the user to accept"}
-                        </p>
-                      </div>
-
-                      {postponeMode === "admin-propose" && (
-                        <>
-                          <div>
-                            <Label htmlFor="proposed_date_range">
-                              Date Range Type * <span className="text-red-500">(required)</span>
-                            </Label>
-                            <Select
-                              name="proposed_date_range"
-                              value={proposedDateRange}
-                              onValueChange={(value) => setProposedDateRange(value as "single" | "multiple")}
-                              disabled={saving}
-                              required
-                            >
-                              <SelectTrigger>
-                                <SelectValue />
-                              </SelectTrigger>
-                              <SelectContent>
-                                <SelectItem value="single">Single Day</SelectItem>
-                                <SelectItem value="multiple">Multiple Days</SelectItem>
-                              </SelectContent>
-                            </Select>
-                          </div>
-                          <div>
-                            <Label htmlFor="proposed_start_date">
-                              Proposed Start Date * <span className="text-red-500">(required)</span>
-                            </Label>
-                            <Input
-                              id="proposed_start_date"
-                              name="proposed_start_date"
-                              type="date"
-                              disabled={saving}
-                              required
-                            />
-                          </div>
-                          {proposedDateRange === "multiple" && (
-                            <div>
-                              <Label htmlFor="proposed_end_date">
-                                Proposed End Date * <span className="text-red-500">(required)</span>
-                              </Label>
-                              <Input
-                                id="proposed_end_date"
-                                name="proposed_end_date"
-                                type="date"
-                                disabled={saving}
-                                required
-                              />
-                            </div>
-                          )}
-                          <div>
-                            <Label htmlFor="proposed_start_time">
-                              Proposed Start Time * <span className="text-red-500">(required)</span>
-                            </Label>
-                            <Input
-                              id="proposed_start_time"
-                              name="proposed_start_time"
-                              type="text"
-                              placeholder="e.g., 9:00 AM"
-                              disabled={saving}
-                              required
-                            />
-                          </div>
-                          <div>
-                            <Label htmlFor="proposed_end_time">
-                              Proposed End Time * <span className="text-red-500">(required)</span>
-                            </Label>
-                            <Input
-                              id="proposed_end_time"
-                              name="proposed_end_time"
-                              type="text"
-                              placeholder="e.g., 5:00 PM"
-                              disabled={saving}
-                              required
-                            />
-                          </div>
-                        </>
-                      )}
-                    </>
-                  )
-                }
-                return null
-              })()}
+              {newStatus === "postponed" && (
+                <>
+                  <div>
+                    <Label htmlFor="proposed_date_range">Date Range Type</Label>
+                    <Select
+                      name="proposed_date_range"
+                      value={proposedDateRange}
+                      onValueChange={(value) => setProposedDateRange(value as "single" | "multiple")}
+                      disabled={saving}
+                    >
+                      <SelectTrigger>
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="single">Single Day</SelectItem>
+                        <SelectItem value="multiple">Multiple Days</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div>
+                    <Label htmlFor="proposed_start_date">Proposed Start Date *</Label>
+                    <Input
+                      id="proposed_start_date"
+                      name="proposed_start_date"
+                      type="date"
+                      required
+                      disabled={saving}
+                    />
+                  </div>
+                  {proposedDateRange === "multiple" && (
+                    <div>
+                      <Label htmlFor="proposed_end_date">Proposed End Date *</Label>
+                      <Input
+                        id="proposed_end_date"
+                        name="proposed_end_date"
+                        type="date"
+                        required
+                        disabled={saving}
+                      />
+                    </div>
+                  )}
+                </>
+              )}
               <div>
                 <Label htmlFor="admin_notes">Admin Notes (internal only)</Label>
                 <Textarea
@@ -1037,7 +738,6 @@ export default function BookingsPage() {
                 >
                   Cancel
                 </Button>
-              {(selectedBooking.status as string) !== "checked-in" && (
                 <Button type="submit" disabled={saving}>
                   {saving ? (
                     <>
@@ -1048,7 +748,6 @@ export default function BookingsPage() {
                     "Update Status"
                   )}
                 </Button>
-              )}
               </div>
             </form>
           )}

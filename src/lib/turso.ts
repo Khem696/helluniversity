@@ -125,7 +125,7 @@ export async function initializeDatabase(): Promise<void> {
       SELECT name FROM sqlite_master 
       WHERE type='table' AND name IN (
         'images', 'events', 'rate_limits', 'bookings', 
-        'booking_status_history', 'admin_actions', 'event_images'
+        'booking_status_history', 'admin_actions', 'event_images', 'email_queue', 'email_sent_log'
       )
     `)
 
@@ -227,10 +227,12 @@ export async function initializeDatabase(): Promise<void> {
           introduction TEXT,
           biography TEXT,
           special_requests TEXT,
-          status TEXT DEFAULT 'pending' CHECK(status IN ('pending', 'accepted', 'rejected', 'postponed', 'cancelled')),
+          status TEXT DEFAULT 'pending' CHECK(status IN ('pending', 'accepted', 'rejected', 'postponed', 'cancelled', 'finished', 'checked-in')),
           admin_notes TEXT,
           response_token TEXT,
+          token_expires_at INTEGER,
           proposed_date INTEGER,
+          proposed_end_date INTEGER,
           user_response TEXT,
           response_date INTEGER,
           created_at INTEGER DEFAULT (unixepoch()),
@@ -331,6 +333,67 @@ export async function initializeDatabase(): Promise<void> {
         CREATE INDEX idx_event_images_type ON event_images(event_id, image_type)
       `)
       console.log("✓ Created event_images table")
+    }
+
+    // Create email_queue table for failed email retry system
+    if (!existingTables.has("email_queue")) {
+      await db.execute(`
+        CREATE TABLE email_queue (
+          id TEXT PRIMARY KEY,
+          email_type TEXT NOT NULL CHECK(email_type IN ('admin_notification', 'user_confirmation', 'status_change', 'user_response', 'auto_update')),
+          recipient_email TEXT NOT NULL,
+          subject TEXT NOT NULL,
+          html_content TEXT NOT NULL,
+          text_content TEXT NOT NULL,
+          metadata TEXT,
+          retry_count INTEGER DEFAULT 0,
+          max_retries INTEGER DEFAULT 5,
+          status TEXT DEFAULT 'pending' CHECK(status IN ('pending', 'processing', 'sent', 'failed', 'cancelled')),
+          error_message TEXT,
+          scheduled_at INTEGER DEFAULT (unixepoch()),
+          next_retry_at INTEGER,
+          sent_at INTEGER,
+          created_at INTEGER DEFAULT (unixepoch()),
+          updated_at INTEGER DEFAULT (unixepoch())
+        )
+      `)
+      
+      // Create indexes for queue processing
+      await db.execute(`
+        CREATE INDEX idx_email_queue_status ON email_queue(status, next_retry_at)
+      `)
+      await db.execute(`
+        CREATE INDEX idx_email_queue_retry ON email_queue(status, retry_count, next_retry_at)
+      `)
+      await db.execute(`
+        CREATE INDEX idx_email_queue_created ON email_queue(created_at)
+      `)
+      console.log("✓ Created email_queue table")
+    }
+
+    // Create email_sent_log table for duplicate email prevention
+    if (!existingTables.has("email_sent_log")) {
+      await db.execute(`
+        CREATE TABLE email_sent_log (
+          id TEXT PRIMARY KEY,
+          booking_id TEXT,
+          email_type TEXT NOT NULL,
+          recipient_email TEXT NOT NULL,
+          status TEXT NOT NULL,
+          sent_at INTEGER NOT NULL,
+          created_at INTEGER DEFAULT (unixepoch()),
+          UNIQUE(booking_id, email_type, status, sent_at)
+        )
+      `)
+      
+      // Create indexes for faster lookups
+      await db.execute(`
+        CREATE INDEX idx_email_sent_log_booking ON email_sent_log(booking_id, email_type, status)
+      `)
+      await db.execute(`
+        CREATE INDEX idx_email_sent_log_recipient ON email_sent_log(recipient_email, sent_at)
+      `)
+      console.log("✓ Created email_sent_log table")
     }
 
     // Run migrations for existing tables
@@ -452,9 +515,47 @@ async function migrateExistingTables(
         console.log("✓ Added response_date column to bookings table")
       }
 
+      if (!columnNames.has("token_expires_at")) {
+        await db.execute(`
+          ALTER TABLE bookings ADD COLUMN token_expires_at INTEGER
+        `)
+        console.log("✓ Added token_expires_at column to bookings table")
+      }
+
+      if (!columnNames.has("proposed_end_date")) {
+        await db.execute(`
+          ALTER TABLE bookings ADD COLUMN proposed_end_date INTEGER
+        `)
+        console.log("✓ Added proposed_end_date column to bookings table")
+      }
+
       // Update status check constraint to include 'cancelled'
       // Note: SQLite doesn't support modifying CHECK constraints directly
       // We'll handle this in application logic
+    }
+
+    // Migrate email_sent_log table: add if it doesn't exist
+    if (!existingTables.has("email_sent_log")) {
+      await db.execute(`
+        CREATE TABLE IF NOT EXISTS email_sent_log (
+          id TEXT PRIMARY KEY,
+          booking_id TEXT,
+          email_type TEXT NOT NULL,
+          recipient_email TEXT NOT NULL,
+          status TEXT NOT NULL,
+          sent_at INTEGER NOT NULL,
+          created_at INTEGER DEFAULT (unixepoch()),
+          UNIQUE(booking_id, email_type, status, sent_at)
+        )
+      `)
+      
+      await db.execute(`
+        CREATE INDEX IF NOT EXISTS idx_email_sent_log_booking ON email_sent_log(booking_id, email_type, status)
+      `)
+      await db.execute(`
+        CREATE INDEX IF NOT EXISTS idx_email_sent_log_recipient ON email_sent_log(recipient_email, sent_at)
+      `)
+      console.log("✓ Added email_sent_log table")
     }
   } catch (error) {
     console.error("Migration error:", error)

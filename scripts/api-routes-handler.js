@@ -13,6 +13,31 @@ const path = require('path')
 const API_DIR = path.join(process.cwd(), 'app', 'api')
 const API_BACKUP_DIR = path.join(process.cwd(), '_api-backup')
 
+// Helper function to copy directory recursively
+function copyDirSync(src, dest) {
+  if (!fs.existsSync(src)) {
+    throw new Error(`Source directory does not exist: ${src}`)
+  }
+  
+  // Create destination directory
+  if (!fs.existsSync(dest)) {
+    fs.mkdirSync(dest, { recursive: true })
+  }
+  
+  // Copy all files and subdirectories
+  const entries = fs.readdirSync(src, { withFileTypes: true })
+  for (const entry of entries) {
+    const srcPath = path.join(src, entry.name)
+    const destPath = path.join(dest, entry.name)
+    
+    if (entry.isDirectory()) {
+      copyDirSync(srcPath, destPath)
+    } else {
+      fs.copyFileSync(srcPath, destPath)
+    }
+  }
+}
+
 function moveApiDir() {
   try {
     // Clear Next.js cache to remove stale type definitions that reference API routes
@@ -42,8 +67,7 @@ function moveApiDir() {
       'app/api/ai-space/images/route.ts',
       'app/api/ai-space/route.ts',
       'app/api/booking/route.ts',
-      'app/api/images/proxy/route.ts',
-      'app/api/verify-turnstile/route.ts'
+      'app/api/images/proxy/route.ts'
     ]
     
     const missingFiles = routeFiles.filter(file => !fs.existsSync(path.join(process.cwd(), file)))
@@ -66,7 +90,28 @@ function moveApiDir() {
       fs.rmSync(API_BACKUP_DIR, { recursive: true, force: true })
     }
 
-    fs.renameSync(API_DIR, API_BACKUP_DIR)
+    // Try to rename, with fallback to copy+delete for Windows permission issues
+    try {
+      fs.renameSync(API_DIR, API_BACKUP_DIR)
+    } catch (renameError) {
+      // On Windows, rename can fail if files are locked (EPERM)
+      // Fallback to copy + delete approach
+      if (renameError.code === 'EPERM' || renameError.code === 'EBUSY') {
+        console.log('⚠ Rename failed (files may be locked), using copy+delete approach...')
+        try {
+          // Copy directory recursively
+          copyDirSync(API_DIR, API_BACKUP_DIR)
+          // Delete original after successful copy
+          fs.rmSync(API_DIR, { recursive: true, force: true })
+          console.log('✓ Moved API directory using copy+delete method')
+        } catch (copyError) {
+          throw new Error(`Failed to move API directory: ${copyError.message}`)
+        }
+      } else {
+        throw renameError
+      }
+    }
+    
     console.log('✓ Temporarily moved API directory for static export')
     console.log(`  Backup location: ${API_BACKUP_DIR}`)
     
@@ -96,7 +141,29 @@ function restoreApiDir() {
         fs.rmSync(API_DIR, { recursive: true, force: true })
         console.log('✓ Removed existing API directory before restore')
       }
-      fs.renameSync(API_BACKUP_DIR, API_DIR)
+      
+      // Try to rename, with fallback to copy+delete for Windows permission issues
+      try {
+        fs.renameSync(API_BACKUP_DIR, API_DIR)
+      } catch (renameError) {
+        // On Windows, rename can fail if files are locked (EPERM)
+        // Fallback to copy + delete approach
+        if (renameError.code === 'EPERM' || renameError.code === 'EBUSY') {
+          console.log('⚠ Rename failed (files may be locked), using copy+delete approach...')
+          try {
+            // Copy directory recursively
+            copyDirSync(API_BACKUP_DIR, API_DIR)
+            // Delete backup after successful copy
+            fs.rmSync(API_BACKUP_DIR, { recursive: true, force: true })
+            console.log('✓ Restored API directory using copy+delete method')
+          } catch (copyError) {
+            throw new Error(`Failed to restore API directory: ${copyError.message}`)
+          }
+        } else {
+          throw renameError
+        }
+      }
+      
       console.log('✓ Restored API directory')
       
       // Verify restore was successful
@@ -104,8 +171,7 @@ function restoreApiDir() {
         'app/api/ai-space/images/route.ts',
         'app/api/ai-space/route.ts',
         'app/api/booking/route.ts',
-        'app/api/images/proxy/route.ts',
-        'app/api/verify-turnstile/route.ts'
+        'app/api/images/proxy/route.ts'
       ]
       
       const missingFiles = routeFiles.filter(file => !fs.existsSync(path.join(process.cwd(), file)))
@@ -133,8 +199,7 @@ function restoreApiDir() {
           'app/api/ai-space/images/route.ts',
           'app/api/ai-space/route.ts',
           'app/api/booking/route.ts',
-          'app/api/images/proxy/route.ts',
-          'app/api/verify-turnstile/route.ts'
+          'app/api/images/proxy/route.ts'
         ]
         const missingFiles = routeFiles.filter(file => !fs.existsSync(path.join(process.cwd(), file)))
         if (missingFiles.length > 0) {

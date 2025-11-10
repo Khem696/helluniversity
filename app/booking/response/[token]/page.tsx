@@ -10,6 +10,21 @@ import { Textarea } from "@/components/ui/textarea"
 import { SimpleCalendar } from "@/components/ui/simple-calendar"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import { format } from "date-fns"
+import { TimePicker } from "@/components/ui/time-picker"
+
+// Convert 24-hour format (HH:MM) to 12-hour format with AM/PM
+function convert24To12Hour(time24: string): string {
+  if (!time24 || !time24.includes(':')) return time24
+  const [hours, minutes] = time24.split(':')
+  const hour24 = parseInt(hours, 10)
+  const mins = minutes || '00'
+  if (isNaN(hour24)) return time24
+  
+  let hour12 = hour24 % 12
+  if (hour12 === 0) hour12 = 12
+  const period = hour24 < 12 ? 'AM' : 'PM'
+  return `${hour12}:${mins} ${period}`
+}
 
 interface BookingData {
   id: string
@@ -23,6 +38,7 @@ interface BookingData {
   endTime?: string
   status: string
   proposedDate?: string | null
+  proposedEndDate?: string | null
   userResponse?: string
 }
 
@@ -35,14 +51,19 @@ export default function BookingResponsePage() {
   const [isLoading, setIsLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [isSubmitting, setIsSubmitting] = useState(false)
-  const [response, setResponse] = useState<"accept" | "propose" | "cancel" | null>(null)
+  const [response, setResponse] = useState<"accept" | "propose" | "cancel" | "check-in" | null>(null)
   const [proposedDate, setProposedDate] = useState<Date | null>(null)
+  const [proposedEndDate, setProposedEndDate] = useState<Date | null>(null)
+  const [proposedDateRange, setProposedDateRange] = useState<"single" | "multiple">("single")
+  const [proposedStartTime, setProposedStartTime] = useState("09:00") // 24-hour format for TimePicker
+  const [proposedEndTime, setProposedEndTime] = useState("17:00") // 24-hour format for TimePicker
   const [message, setMessage] = useState("")
   const [submitSuccess, setSubmitSuccess] = useState(false)
 
   useEffect(() => {
     if (!token) {
-      setError("Invalid token")
+      // Fix #12: Better error message for missing token
+      setError("Invalid or missing token. Please contact the administrator if you need a new response link.")
       setIsLoading(false)
       return
     }
@@ -50,12 +71,17 @@ export default function BookingResponsePage() {
     async function fetchBooking() {
       try {
         const response = await fetch(`/api/booking/response/${token}`)
-        if (!response.ok) {
-          throw new Error("Failed to fetch booking details")
+        const data = await response.json()
+        
+        if (!response.ok || !data.success) {
+          // Fix #12: Better error message for token expiration
+          if (data.error && (data.error.includes("expired") || data.error.includes("Invalid"))) {
+            throw new Error(data.error || "This response link has expired. Please contact the administrator to request a new link.")
+          }
+          throw new Error(data.error || "Failed to fetch booking details")
         }
 
-        const data = await response.json()
-        if (data.success && data.booking) {
+        if (data.booking) {
           setBooking(data.booking)
           // Pre-fill proposed date if available
           if (data.booking.proposedDate) {
@@ -66,7 +92,11 @@ export default function BookingResponsePage() {
         }
       } catch (err) {
         console.error("Error fetching booking:", err)
-        setError(err instanceof Error ? err.message : "Failed to load booking")
+        // Fix #12: Better error message
+        const errorMessage = err instanceof Error ? err.message : "Failed to load booking"
+        setError(errorMessage.includes("expired") || errorMessage.includes("Invalid") 
+          ? errorMessage 
+          : "This response link is invalid or expired. Please contact the administrator to request a new link.")
       } finally {
         setIsLoading(false)
       }
@@ -84,7 +114,17 @@ export default function BookingResponsePage() {
     }
 
     if (response === "propose" && !proposedDate) {
-      setError("Please select a proposed date")
+      setError("Please select a proposed start date")
+      return
+    }
+    
+    if (response === "propose" && proposedDateRange === "multiple" && !proposedEndDate) {
+      setError("Please select a proposed end date for multiple day reservation")
+      return
+    }
+    
+    if (response === "propose" && proposedDateRange === "multiple" && proposedEndDate && proposedDate && proposedEndDate < proposedDate) {
+      setError("End date must be after start date")
       return
     }
 
@@ -100,6 +140,9 @@ export default function BookingResponsePage() {
         body: JSON.stringify({
           response,
           proposedDate: proposedDate ? proposedDate.toISOString() : undefined,
+          proposedEndDate: proposedDateRange === "multiple" && proposedEndDate ? proposedEndDate.toISOString() : undefined,
+          proposedStartTime: proposedStartTime ? convert24To12Hour(proposedStartTime) : undefined,
+          proposedEndTime: proposedEndTime ? convert24To12Hour(proposedEndTime) : undefined,
           message: message.trim() || undefined,
         }),
       })
@@ -250,14 +293,60 @@ export default function BookingResponsePage() {
               </p>
             </div>
 
-            {booking.proposedDate && (
+            {booking.status === "postponed" && booking.proposedDate && (
               <div className="bg-[#fef3c7] border-l-4 border-[#f59e0b] p-3 sm:p-4 rounded">
-                <Label className="text-[#92400e] font-comfortaa text-[clamp(12px,1.2vw,14px)] font-semibold flex items-center gap-2">
+                <Label className="text-[#92400e] font-comfortaa text-[clamp(12px,1.2vw,14px)] font-semibold flex items-center gap-2 mb-2">
                   <Calendar className="w-4 h-4" />
-                  Proposed New Date
+                  Date Change Comparison
                 </Label>
-                <p className="text-[#78350f] font-comfortaa text-[clamp(14px,1.5vw,16px)] mt-1 font-medium">
-                  {format(new Date(booking.proposedDate), "EEEE, MMMM d, yyyy")}
+                <div className="space-y-2">
+                  <div>
+                    <p className="text-[#92400e] font-comfortaa text-[clamp(11px,1.1vw,13px)] font-semibold">
+                      Original Date:
+                    </p>
+                    <p className="text-[#78350f] font-comfortaa text-[clamp(13px,1.3vw,15px)]">
+                      {formatDateRange(booking.startDate, booking.endDate || undefined)}
+                      {booking.startTime && (
+                        <span className="ml-2">
+                          {booking.startTime}
+                          {booking.endTime && ` - ${booking.endTime}`}
+                        </span>
+                      )}
+                    </p>
+                  </div>
+                  <div className="border-t border-[#f59e0b]/30 pt-2">
+                    <p className="text-[#92400e] font-comfortaa text-[clamp(11px,1.1vw,13px)] font-semibold">
+                      Proposed New Date{booking.proposedEndDate && booking.proposedEndDate !== booking.proposedDate ? "s" : ""}:
+                    </p>
+                    <p className="text-[#78350f] font-comfortaa text-[clamp(13px,1.3vw,15px)] font-medium">
+                      {booking.proposedEndDate && booking.proposedEndDate !== booking.proposedDate
+                        ? `${format(new Date(booking.proposedDate), "EEEE, MMMM d, yyyy")} - ${format(new Date(booking.proposedEndDate), "EEEE, MMMM d, yyyy")}`
+                        : format(new Date(booking.proposedDate), "EEEE, MMMM d, yyyy")}
+                    </p>
+                  </div>
+                </div>
+              </div>
+            )}
+            {booking.status === "postponed" && !booking.proposedDate && (
+              <div className="bg-[#fee2e2] border-l-4 border-[#ef4444] p-3 sm:p-4 rounded">
+                <Label className="text-[#991b1b] font-comfortaa text-[clamp(12px,1.2vw,14px)] font-semibold flex items-center gap-2 mb-2">
+                  <AlertCircle className="w-4 h-4" />
+                  Action Required
+                </Label>
+                <p className="text-[#991b1b] font-comfortaa text-[clamp(13px,1.3vw,15px)] font-medium mb-2">
+                  Your original reservation date:
+                </p>
+                <p className="text-[#b91c1c] font-comfortaa text-[clamp(14px,1.5vw,16px)] font-semibold mb-3">
+                  {formatDateRange(booking.startDate, booking.endDate || undefined)}
+                  {booking.startTime && (
+                    <span className="ml-2">
+                      {booking.startTime}
+                      {booking.endTime && ` - ${booking.endTime}`}
+                    </span>
+                  )}
+                </p>
+                <p className="text-[#991b1b] font-comfortaa text-[clamp(12px,1.2vw,14px)]">
+                  Please propose an alternative date or cancel your reservation below.
                 </p>
               </div>
             )}
@@ -278,48 +367,94 @@ export default function BookingResponsePage() {
 
           {/* Response Options */}
           <div className="space-y-3 sm:space-y-4 mb-4 sm:mb-6">
-            <button
-              type="button"
-              onClick={() => {
-                setResponse("accept")
-                setError(null)
-              }}
-              className={`w-full p-4 sm:p-5 rounded-lg border-2 transition-all text-left ${
-                response === "accept"
-                  ? "border-[#10b981] bg-[#10b981]/10"
-                  : "border-gray-200 hover:border-[#10b981]/50"
-              }`}
-            >
-              <div className="flex items-center gap-3 sm:gap-4">
-                <div
-                  className={`w-5 h-5 sm:w-6 sm:h-6 rounded-full border-2 flex items-center justify-center flex-shrink-0 ${
-                    response === "accept"
-                      ? "border-[#10b981] bg-[#10b981]"
-                      : "border-gray-300"
-                  }`}
-                >
-                  {response === "accept" && (
-                    <Check className="w-3 h-3 sm:w-4 sm:h-4 text-white" />
-                  )}
+            {/* Show different first option based on booking status */}
+            {booking.status === "accepted" ? (
+              <button
+                type="button"
+                onClick={() => {
+                  setResponse("check-in")
+                  setError(null)
+                }}
+                className={`w-full p-4 sm:p-5 rounded-lg border-2 transition-all text-left ${
+                  response === "check-in"
+                    ? "border-[#10b981] bg-[#10b981]/10"
+                    : "border-gray-200 hover:border-[#10b981]/50"
+                }`}
+              >
+                <div className="flex items-center gap-3 sm:gap-4">
+                  <div
+                    className={`w-5 h-5 sm:w-6 sm:h-6 rounded-full border-2 flex items-center justify-center flex-shrink-0 ${
+                      response === "check-in"
+                        ? "border-[#10b981] bg-[#10b981]"
+                        : "border-gray-300"
+                    }`}
+                  >
+                    {response === "check-in" && (
+                      <Check className="w-3 h-3 sm:w-4 sm:h-4 text-white" />
+                    )}
+                  </div>
+                  <div>
+                    <h3 className="text-[#5a3a2a] font-urbanist text-[clamp(16px,2vw,20px)] font-extrabold mb-1">
+                      Confirm Check-In
+                    </h3>
+                    <p className="text-[#5a3a2a]/70 font-comfortaa text-[clamp(13px,1.3vw,15px)]">
+                      I confirm that I have checked in for my reservation
+                    </p>
+                  </div>
                 </div>
-                <div>
-                  <h3 className="text-[#5a3a2a] font-urbanist text-[clamp(16px,2vw,20px)] font-extrabold mb-1">
-                    Accept Proposed Date
-                  </h3>
-                  <p className="text-[#5a3a2a]/70 font-comfortaa text-[clamp(13px,1.3vw,15px)]">
-                    I accept the proposed new date for my reservation
-                  </p>
+              </button>
+            ) : booking.status === "postponed" && booking.proposedDate ? (
+              <button
+                type="button"
+                onClick={() => {
+                  setResponse("accept")
+                  setError(null)
+                }}
+                className={`w-full p-4 sm:p-5 rounded-lg border-2 transition-all text-left ${
+                  response === "accept"
+                    ? "border-[#10b981] bg-[#10b981]/10"
+                    : "border-gray-200 hover:border-[#10b981]/50"
+                }`}
+              >
+                <div className="flex items-center gap-3 sm:gap-4">
+                  <div
+                    className={`w-5 h-5 sm:w-6 sm:h-6 rounded-full border-2 flex items-center justify-center flex-shrink-0 ${
+                      response === "accept"
+                        ? "border-[#10b981] bg-[#10b981]"
+                        : "border-gray-300"
+                    }`}
+                  >
+                    {response === "accept" && (
+                      <Check className="w-3 h-3 sm:w-4 sm:h-4 text-white" />
+                    )}
+                  </div>
+                  <div>
+                    <h3 className="text-[#5a3a2a] font-urbanist text-[clamp(16px,2vw,20px)] font-extrabold mb-1">
+                      Accept Proposed Date
+                    </h3>
+                    <p className="text-[#5a3a2a]/70 font-comfortaa text-[clamp(13px,1.3vw,15px)]">
+                      I accept the proposed new date for my reservation
+                    </p>
+                  </div>
                 </div>
-              </div>
-            </button>
+              </button>
+            ) : null}
 
-            <button
-              type="button"
+            <div
+              role="button"
+              tabIndex={0}
               onClick={() => {
                 setResponse("propose")
                 setError(null)
               }}
-              className={`w-full p-4 sm:p-5 rounded-lg border-2 transition-all text-left ${
+              onKeyDown={(e) => {
+                if (e.key === "Enter" || e.key === " ") {
+                  e.preventDefault()
+                  setResponse("propose")
+                  setError(null)
+                }
+              }}
+              className={`w-full p-4 sm:p-5 rounded-lg border-2 transition-all text-left cursor-pointer ${
                 response === "propose"
                   ? "border-[#f59e0b] bg-[#f59e0b]/10"
                   : "border-gray-200 hover:border-[#f59e0b]/50"
@@ -345,36 +480,134 @@ export default function BookingResponsePage() {
                     I would like to suggest a different date
                   </p>
                   {response === "propose" && (
-                    <Popover>
-                      <PopoverTrigger asChild>
-                        <Button
-                          type="button"
-                          variant="outline"
-                          className="w-full sm:w-auto font-comfortaa text-[clamp(13px,1.3vw,15px)]"
-                        >
-                          <Calendar className="mr-2 w-4 h-4" />
-                          {proposedDate
-                            ? format(proposedDate, "MMMM d, yyyy")
-                            : "Select Date"}
-                        </Button>
-                      </PopoverTrigger>
-                      <PopoverContent className="w-auto p-0" align="start">
-                        <SimpleCalendar
-                          mode="single"
-                          selected={proposedDate || undefined}
-                          onSelect={(date) => {
-                            setProposedDate(date || null)
+                    <div className="space-y-3 sm:space-y-4" onClick={(e) => e.stopPropagation()}>
+                      <div className="flex items-center gap-2">
+                        <label className="text-sm font-medium text-[#5a3a2a]">Date Range:</label>
+                        <select
+                          value={proposedDateRange}
+                          onChange={(e) => {
+                            setProposedDateRange(e.target.value as "single" | "multiple")
+                            if (e.target.value === "single") {
+                              setProposedEndDate(null)
+                            }
                             setError(null)
                           }}
-                          disabled={(date) => date < new Date()}
-                          initialFocus
-                        />
-                      </PopoverContent>
-                    </Popover>
+                          className="px-2 py-1 border rounded text-sm"
+                          onClick={(e) => e.stopPropagation()}
+                        >
+                          <option value="single">Single Day</option>
+                          <option value="multiple">Multiple Days</option>
+                        </select>
+                      </div>
+                      <div className="flex flex-wrap gap-2">
+                        <Popover>
+                          <PopoverTrigger asChild>
+                            <Button
+                              type="button"
+                              variant="outline"
+                              className="font-comfortaa text-[clamp(13px,1.3vw,15px)]"
+                            >
+                              <Calendar className="mr-2 w-4 h-4" />
+                              {proposedDate
+                                ? format(proposedDate, "MMMM d, yyyy")
+                                : "Select Start Date"}
+                            </Button>
+                          </PopoverTrigger>
+                          <PopoverContent className="w-auto p-0" align="start">
+                            <SimpleCalendar
+                              mode="single"
+                              selected={proposedDate || undefined}
+                              onSelect={(date) => {
+                                setProposedDate(date || null)
+                                if (proposedDateRange === "multiple" && proposedEndDate && date && date > proposedEndDate) {
+                                  setProposedEndDate(null)
+                                }
+                                setError(null)
+                              }}
+                              disabled={(date) => date < new Date()}
+                              initialFocus
+                            />
+                          </PopoverContent>
+                        </Popover>
+                        {proposedDateRange === "multiple" && (
+                          <Popover>
+                            <PopoverTrigger asChild>
+                              <Button
+                                type="button"
+                                variant="outline"
+                                className="font-comfortaa text-[clamp(13px,1.3vw,15px)]"
+                              >
+                                <Calendar className="mr-2 w-4 h-4" />
+                                {proposedEndDate
+                                  ? format(proposedEndDate, "MMMM d, yyyy")
+                                  : "Select End Date"}
+                              </Button>
+                            </PopoverTrigger>
+                            <PopoverContent className="w-auto p-0" align="start">
+                              <SimpleCalendar
+                                mode="single"
+                                selected={proposedEndDate || undefined}
+                                onSelect={(date) => {
+                                  setProposedEndDate(date || null)
+                                  setError(null)
+                                }}
+                                disabled={(date) => {
+                                  if (!proposedDate) return date < new Date()
+                                  return date < proposedDate || date < new Date()
+                                }}
+                                initialFocus
+                              />
+                            </PopoverContent>
+                          </Popover>
+                        )}
+                      </div>
+                      {response === "propose" && (
+                        <div className="space-y-3 sm:space-y-4 mt-4" onClick={(e) => e.stopPropagation()}>
+                          <div>
+                            <Label htmlFor="proposed_start_time" className="text-[#5a3a2a] font-comfortaa text-[clamp(12px,1.2vw,14px)] font-semibold">
+                              Proposed Start Time
+                            </Label>
+                            <div className="mt-1" onClick={(e) => e.stopPropagation()}>
+                              <TimePicker
+                                id="proposed_start_time"
+                                name="proposed_start_time"
+                                value={proposedStartTime}
+                                onChange={(value) => {
+                                  setProposedStartTime(value)
+                                  setError(null)
+                                }}
+                                disabled={isSubmitting}
+                                required
+                                className="w-full"
+                              />
+                            </div>
+                          </div>
+                          <div>
+                            <Label htmlFor="proposed_end_time" className="text-[#5a3a2a] font-comfortaa text-[clamp(12px,1.2vw,14px)] font-semibold">
+                              Proposed End Time
+                            </Label>
+                            <div className="mt-1" onClick={(e) => e.stopPropagation()}>
+                              <TimePicker
+                                id="proposed_end_time"
+                                name="proposed_end_time"
+                                value={proposedEndTime}
+                                onChange={(value) => {
+                                  setProposedEndTime(value)
+                                  setError(null)
+                                }}
+                                disabled={isSubmitting}
+                                required
+                                className="w-full"
+                              />
+                            </div>
+                          </div>
+                        </div>
+                      )}
+                    </div>
                   )}
                 </div>
               </div>
-            </button>
+            </div>
 
             <button
               type="button"
@@ -434,7 +667,7 @@ export default function BookingResponsePage() {
           {/* Submit Button */}
           <Button
             type="submit"
-            disabled={isSubmitting || !response || (response === "propose" && !proposedDate)}
+            disabled={isSubmitting || !response || (response === "propose" && (!proposedDate || (proposedDateRange === "multiple" && !proposedEndDate)))}
             className="w-full sm:w-auto bg-[#3e82bb] hover:bg-[#2a5f8f] text-white font-comfortaa text-[clamp(14px,1.5vw,16px)] font-semibold px-6 sm:px-8 py-2 sm:py-3"
           >
             {isSubmitting ? "Submitting..." : "Submit Response"}

@@ -57,6 +57,11 @@ next-env.d.ts
 # OS
 Thumbs.db
 
+# Local database files (development only)
+local.db
+*.db
+!*.db.example
+
 # Logs
 logs
 *.log

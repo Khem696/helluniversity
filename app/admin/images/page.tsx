@@ -22,8 +22,9 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select"
-import { Upload, Edit, Loader2, Image as ImageIcon } from "lucide-react"
+import { Upload, Edit, Loader2, Image as ImageIcon, ChevronDown, ChevronUp, Globe, Image as ImageIcon2 } from "lucide-react"
 import { toast } from "sonner"
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible"
 
 interface Image {
   id: string
@@ -41,6 +42,43 @@ interface Image {
   updated_at: number
 }
 
+interface SectionInfo {
+  name: string
+  description: string
+  pageUrl: string
+  pageName: string
+  icon: string
+  categories: string[]
+}
+
+// Section mapping: webpage sections and their categories
+const SECTIONS: SectionInfo[] = [
+  {
+    name: "Studio Gallery Page",
+    description: "Main gallery page showing artwork, building, and gallery images",
+    pageUrl: "/studio-gallery",
+    pageName: "Studio Gallery",
+    icon: "🎨",
+    categories: ["artwork_studio", "building_studio", "gallery"],
+  },
+  {
+    name: "AI Space Generator",
+    description: "AI-powered space generation tool with studio images",
+    pageUrl: "/",
+    pageName: "Home Page (AI Space)",
+    icon: "🤖",
+    categories: ["aispace_studio"],
+  },
+  {
+    name: "Events",
+    description: "Event photos and documentation",
+    pageUrl: "/events",
+    pageName: "Events",
+    icon: "📅",
+    categories: ["event"],
+  },
+]
+
 export default function ImagesPage() {
   const { data: session, status } = useSession()
   const [images, setImages] = useState<Image[]>([])
@@ -50,6 +88,8 @@ export default function ImagesPage() {
   const [uploadDialogOpen, setUploadDialogOpen] = useState(false)
   const [editDialogOpen, setEditDialogOpen] = useState(false)
   const [categoryFilter, setCategoryFilter] = useState<string>("all")
+  const [expandedSections, setExpandedSections] = useState<Set<string>>(new Set(SECTIONS.map(s => s.name)))
+  const [viewMode, setViewMode] = useState<"sections" | "grid">("sections")
 
   // Redirect if not authenticated
   useEffect(() => {
@@ -182,6 +222,35 @@ export default function ImagesPage() {
     ? images 
     : images.filter(img => img.category === categoryFilter)
 
+  // Group images by section
+  const imagesBySection = SECTIONS.map(section => ({
+    ...section,
+    images: filteredImages
+      .filter(img => section.categories.includes(img.category || ""))
+      .sort((a, b) => {
+        // Sort by display_order first, then by created_at
+        if (a.display_order !== b.display_order) {
+          return a.display_order - b.display_order
+        }
+        return a.created_at - b.created_at
+      }),
+  }))
+
+  // Get uncategorized images
+  const uncategorizedImages = filteredImages.filter(
+    img => !img.category || !SECTIONS.some(s => img.category && s.categories.includes(img.category))
+  )
+
+  const toggleSection = (sectionName: string) => {
+    const newExpanded = new Set(expandedSections)
+    if (newExpanded.has(sectionName)) {
+      newExpanded.delete(sectionName)
+    } else {
+      newExpanded.add(sectionName)
+    }
+    setExpandedSections(newExpanded)
+  }
+
   if (status === "loading" || loading) {
     return (
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-12">
@@ -237,7 +306,7 @@ export default function ImagesPage() {
               </div>
               <div>
                 <Label htmlFor="category">Category</Label>
-                <Select name="category" disabled={uploading}>
+                <Select name="category" disabled={uploading} defaultValue="">
                   <SelectTrigger>
                     <SelectValue placeholder="Select category (optional)" />
                   </SelectTrigger>
@@ -245,6 +314,7 @@ export default function ImagesPage() {
                     <SelectItem value="artwork_studio">Artwork Studio</SelectItem>
                     <SelectItem value="building_studio">Building Studio</SelectItem>
                     <SelectItem value="gallery">Gallery</SelectItem>
+                    <SelectItem value="aispace_studio">AI Space Studio</SelectItem>
                     <SelectItem value="event">Event</SelectItem>
                     <SelectItem value="portrait">Portrait</SelectItem>
                     <SelectItem value="poem">Poem</SelectItem>
@@ -287,26 +357,238 @@ export default function ImagesPage() {
         </Dialog>
       </div>
 
-      {/* Category Filter */}
-      <div className="mb-6">
-        <Select value={categoryFilter} onValueChange={setCategoryFilter}>
-          <SelectTrigger className="w-64">
-            <SelectValue placeholder="Filter by category" />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="all">All Categories</SelectItem>
-            {categories.map(cat => (
-              <SelectItem key={cat} value={cat}>{cat}</SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
+      {/* View Mode Toggle and Category Filter */}
+      <div className="mb-6 flex items-center justify-between gap-4">
+        <div className="flex items-center gap-4">
+          <div className="flex items-center gap-2 border rounded-lg p-1">
+            <Button
+              variant={viewMode === "sections" ? "default" : "ghost"}
+              size="sm"
+              onClick={() => setViewMode("sections")}
+              className="h-8"
+            >
+              <ImageIcon2 className="w-4 h-4 mr-2" />
+              By Sections
+            </Button>
+            <Button
+              variant={viewMode === "grid" ? "default" : "ghost"}
+              size="sm"
+              onClick={() => setViewMode("grid")}
+              className="h-8"
+            >
+              <ImageIcon className="w-4 h-4 mr-2" />
+              All Images
+            </Button>
+          </div>
+          <Select value={categoryFilter} onValueChange={setCategoryFilter}>
+            <SelectTrigger className="w-64">
+              <SelectValue placeholder="Filter by category" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All Categories</SelectItem>
+              {categories.map(cat => (
+                <SelectItem key={cat} value={cat}>{cat}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
       </div>
 
-      {/* Images Grid */}
+      {/* Images Display */}
       {filteredImages.length === 0 ? (
         <div className="text-center py-12">
           <ImageIcon className="w-16 h-16 mx-auto text-gray-400 mb-4" />
           <p className="text-gray-600">No images found</p>
+        </div>
+      ) : viewMode === "sections" ? (
+        <div className="space-y-6">
+          {/* Sections */}
+          {imagesBySection.map((section) => {
+            if (section.images.length === 0) return null
+            
+            const isExpanded = expandedSections.has(section.name)
+            
+            return (
+              <Collapsible
+                key={section.name}
+                open={isExpanded}
+                onOpenChange={() => toggleSection(section.name)}
+              >
+                <div className="bg-white rounded-lg shadow-md border border-gray-200">
+                  <CollapsibleTrigger className="w-full">
+                    <div className="p-4 hover:bg-gray-50 transition-colors cursor-pointer">
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-3">
+                          <span className="text-2xl">{section.icon}</span>
+                          <div className="text-left">
+                            <h2 className="text-xl font-semibold text-gray-900">
+                              {section.name}
+                            </h2>
+                            <p className="text-sm text-gray-600 mt-1">
+                              {section.description}
+                            </p>
+                            <div className="flex items-center gap-2 mt-2">
+                              <Globe className="w-4 h-4 text-gray-400" />
+                              <span className="text-xs text-gray-500">
+                                Used on: <span className="font-medium">{section.pageName}</span>
+                              </span>
+                            </div>
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-4">
+                          <div className="text-right">
+                            <div className="text-sm font-semibold text-gray-900">
+                              {section.images.length} {section.images.length === 1 ? "image" : "images"}
+                            </div>
+                            <div className="text-xs text-gray-500">
+                              {section.categories.join(", ")}
+                            </div>
+                          </div>
+                          {isExpanded ? (
+                            <ChevronUp className="w-5 h-5 text-gray-400" />
+                          ) : (
+                            <ChevronDown className="w-5 h-5 text-gray-400" />
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  </CollapsibleTrigger>
+                  <CollapsibleContent>
+                    <div className="px-4 pb-4">
+                      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                        {section.images.map((image) => (
+                          <div
+                            key={image.id}
+                            className="bg-gray-50 rounded-lg overflow-hidden hover:shadow-md transition-shadow border border-gray-200"
+                          >
+                            <div className="aspect-video bg-gray-100 relative">
+                              <img
+                                src={image.blob_url}
+                                alt={image.title || "Image"}
+                                className="w-full h-full object-cover"
+                              />
+                              <div className="absolute top-2 right-2 bg-black/70 text-white text-xs px-2 py-1 rounded">
+                                Order: {image.display_order}
+                              </div>
+                            </div>
+                            <div className="p-3">
+                              <h3 className="font-semibold text-gray-900 mb-1 truncate text-sm">
+                                {image.title || "Untitled"}
+                              </h3>
+                              <p className="text-xs text-gray-600 mb-2">
+                                {image.category && (
+                                  <span className="inline-block bg-blue-100 text-blue-800 text-xs px-2 py-0.5 rounded mr-2">
+                                    {image.category}
+                                  </span>
+                                )}
+                                <span className="text-gray-500">
+                                  {image.width} × {image.height}
+                                </span>
+                              </p>
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                className="w-full"
+                                onClick={() => {
+                                  setEditingImage(image)
+                                  setEditDialogOpen(true)
+                                }}
+                              >
+                                <Edit className="w-3 h-3 mr-1" />
+                                Edit
+                              </Button>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  </CollapsibleContent>
+                </div>
+              </Collapsible>
+            )
+          })}
+
+          {/* Uncategorized Images */}
+          {uncategorizedImages.length > 0 && (
+            <Collapsible
+              open={expandedSections.has("Uncategorized")}
+              onOpenChange={() => toggleSection("Uncategorized")}
+            >
+              <div className="bg-white rounded-lg shadow-md border border-gray-200">
+                <CollapsibleTrigger className="w-full">
+                  <div className="p-4 hover:bg-gray-50 transition-colors cursor-pointer">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-3">
+                        <span className="text-2xl">📁</span>
+                        <div className="text-left">
+                          <h2 className="text-xl font-semibold text-gray-900">
+                            Uncategorized Images
+                          </h2>
+                          <p className="text-sm text-gray-600 mt-1">
+                            Images without a category or not assigned to any section
+                          </p>
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-4">
+                        <div className="text-right">
+                          <div className="text-sm font-semibold text-gray-900">
+                            {uncategorizedImages.length} {uncategorizedImages.length === 1 ? "image" : "images"}
+                          </div>
+                        </div>
+                        {expandedSections.has("Uncategorized") ? (
+                          <ChevronUp className="w-5 h-5 text-gray-400" />
+                        ) : (
+                          <ChevronDown className="w-5 h-5 text-gray-400" />
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                </CollapsibleTrigger>
+                <CollapsibleContent>
+                  <div className="px-4 pb-4">
+                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                      {uncategorizedImages.map((image) => (
+                        <div
+                          key={image.id}
+                          className="bg-gray-50 rounded-lg overflow-hidden hover:shadow-md transition-shadow border border-gray-200"
+                        >
+                          <div className="aspect-video bg-gray-100 relative">
+                            <img
+                              src={image.blob_url}
+                              alt={image.title || "Image"}
+                              className="w-full h-full object-cover"
+                            />
+                          </div>
+                          <div className="p-3">
+                            <h3 className="font-semibold text-gray-900 mb-1 truncate text-sm">
+                              {image.title || "Untitled"}
+                            </h3>
+                            <p className="text-xs text-gray-600 mb-2">
+                              <span className="text-gray-500">
+                                {image.width} × {image.height}
+                              </span>
+                            </p>
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              className="w-full"
+                              onClick={() => {
+                                setEditingImage(image)
+                                setEditDialogOpen(true)
+                              }}
+                            >
+                              <Edit className="w-3 h-3 mr-1" />
+                              Edit
+                            </Button>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                </CollapsibleContent>
+              </div>
+            </Collapsible>
+          )}
         </div>
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
@@ -321,6 +603,9 @@ export default function ImagesPage() {
                   alt={image.title || "Image"}
                   className="w-full h-full object-cover"
                 />
+                <div className="absolute top-2 right-2 bg-black/70 text-white text-xs px-2 py-1 rounded">
+                  Order: {image.display_order}
+                </div>
               </div>
               <div className="p-4">
                 <h3 className="font-semibold text-gray-900 mb-1 truncate">
@@ -385,6 +670,7 @@ export default function ImagesPage() {
                     <SelectItem value="artwork_studio">Artwork Studio</SelectItem>
                     <SelectItem value="building_studio">Building Studio</SelectItem>
                     <SelectItem value="gallery">Gallery</SelectItem>
+                    <SelectItem value="aispace_studio">AI Space Studio</SelectItem>
                     <SelectItem value="event">Event</SelectItem>
                     <SelectItem value="portrait">Portrait</SelectItem>
                     <SelectItem value="poem">Poem</SelectItem>

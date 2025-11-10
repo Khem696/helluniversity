@@ -1,8 +1,9 @@
 "use client"
 
-import { useState } from "react"
+import { useState, useEffect } from "react"
 import { Button } from "@/components/ui/button"
-import { Loader2, Upload, CheckCircle2, XCircle, AlertCircle, Eye } from "lucide-react"
+import { Checkbox } from "@/components/ui/checkbox"
+import { Loader2, Upload, CheckCircle2, XCircle, AlertCircle, Eye, Trash2 } from "lucide-react"
 import {
   Dialog,
   DialogContent,
@@ -13,9 +14,14 @@ import {
 } from "@/components/ui/dialog"
 
 export function MigrateImagesButton() {
+  const [mounted, setMounted] = useState(false)
   const [isMigrating, setIsMigrating] = useState(false)
   const [isChecking, setIsChecking] = useState(false)
   const [isDryRunning, setIsDryRunning] = useState(false)
+  const [isCleaningUp, setIsCleaningUp] = useState(false)
+  const [forceRemigrate, setForceRemigrate] = useState(false)
+  const [dryRunDialogOpen, setDryRunDialogOpen] = useState(false)
+  const [selectedCategories, setSelectedCategories] = useState<Set<string>>(new Set())
   const [status, setStatus] = useState<{
     type: "idle" | "success" | "error" | "checking" | "dryrun"
     message?: string
@@ -32,6 +38,19 @@ export function MigrateImagesButton() {
       stats: { total: number; byCategory: Record<string, number> }
     }
   }>({ type: "idle" })
+
+  // Ensure component is mounted (client-side only)
+  useEffect(() => {
+    setMounted(true)
+  }, [])
+
+  // Auto-select all categories when dry run completes
+  useEffect(() => {
+    if (status.dryRunResults?.stats?.byCategory) {
+      const allCategories = Object.keys(status.dryRunResults.stats.byCategory)
+      setSelectedCategories(new Set(allCategories))
+    }
+  }, [status.dryRunResults])
 
   const checkStatus = async () => {
     setIsChecking(true)
@@ -90,10 +109,58 @@ export function MigrateImagesButton() {
     }
   }
 
+  const cleanupOrphaned = async () => {
+    if (!confirm("This will delete database records where blob files are missing. Continue?")) {
+      return
+    }
+
+    setIsCleaningUp(true)
+    setStatus({ type: "idle" })
+
+    try {
+      const response = await fetch("/api/admin/cleanup-orphaned-images", {
+        method: "POST",
+      })
+
+      const data = await response.json()
+
+      if (data.success) {
+        setStatus({
+          type: "success",
+          message: data.message,
+          stats: data.stats,
+          errors: data.errors,
+        })
+        // Refresh status after cleanup
+        setTimeout(() => checkStatus(), 1000)
+      } else {
+        setStatus({
+          type: "error",
+          message: data.error || "Failed to cleanup orphaned images",
+        })
+      }
+    } catch (error) {
+      setStatus({
+        type: "error",
+        message: error instanceof Error ? error.message : "Failed to cleanup orphaned images",
+      })
+    } finally {
+      setIsCleaningUp(false)
+    }
+  }
+
   const startMigration = async () => {
+    // Check if categories are selected
+    if (selectedCategories.size === 0) {
+      alert("Please select at least one category to migrate.")
+      return
+    }
+
+    const categoriesList = Array.from(selectedCategories).join(", ")
+    const forceMsg = forceRemigrate ? "\n\n⚠️ Force Re-migrate is enabled. This will re-upload images even if they exist in the database." : ""
     if (
       !confirm(
-        "Are you sure you want to migrate all static images to Vercel Blob? This may take several minutes."
+        `Are you sure you want to migrate images from the following categories to Vercel Blob?${forceMsg}\n\n${categoriesList}\n\nThis may take several minutes.`
       )
     ) {
       return
@@ -103,7 +170,10 @@ export function MigrateImagesButton() {
     setStatus({ type: "idle" })
 
     try {
-      const response = await fetch("/api/admin/migrate-images", {
+      // Build URL with selected categories and force remigrate flag
+      const categoriesParam = Array.from(selectedCategories).join(",")
+      const forceParam = forceRemigrate ? "&forceRemigrate=true" : ""
+      const response = await fetch(`/api/admin/migrate-images?categories=${encodeURIComponent(categoriesParam)}${forceParam}`, {
         method: "POST",
       })
 
@@ -132,6 +202,26 @@ export function MigrateImagesButton() {
     } finally {
       setIsMigrating(false)
     }
+  }
+
+  const toggleCategory = (category: string) => {
+    const newSelected = new Set(selectedCategories)
+    if (newSelected.has(category)) {
+      newSelected.delete(category)
+    } else {
+      newSelected.add(category)
+    }
+    setSelectedCategories(newSelected)
+  }
+
+  const selectAllCategories = () => {
+    if (status.dryRunResults?.stats?.byCategory) {
+      setSelectedCategories(new Set(Object.keys(status.dryRunResults.stats.byCategory)))
+    }
+  }
+
+  const deselectAllCategories = () => {
+    setSelectedCategories(new Set())
   }
 
   return (
@@ -206,6 +296,25 @@ export function MigrateImagesButton() {
                 </div>
               )}
 
+              {/* Selected Categories Display */}
+              {status.type === "dryrun" && selectedCategories.size > 0 && (
+                <div className="mt-2 p-2 bg-blue-50 border border-blue-200 rounded text-xs">
+                  <p className="font-semibold text-blue-900 mb-1">
+                    Selected Categories ({selectedCategories.size}):
+                  </p>
+                  <div className="flex flex-wrap gap-1">
+                    {Array.from(selectedCategories).map((cat) => (
+                      <span
+                        key={cat}
+                        className="px-2 py-0.5 bg-blue-100 text-blue-800 rounded"
+                      >
+                        {cat || "uncategorized"}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              )}
+
               {/* Dry Run Results */}
               {status.dryRunResults && status.dryRunResults.images && Array.isArray(status.dryRunResults.images) && (
                 <div className="mt-2 text-xs text-gray-600">
@@ -266,23 +375,24 @@ export function MigrateImagesButton() {
           )}
         </Button>
 
-        <Dialog>
-          <DialogTrigger asChild>
-            <Button
-              variant="outline"
-              size="sm"
-              disabled={isMigrating || isChecking || isDryRunning}
-              className="flex-1 min-w-[120px]"
-            >
-              <Eye className="w-4 h-4 mr-2" />
-              Dry Run
-            </Button>
-          </DialogTrigger>
-          <DialogContent className="max-w-2xl max-h-[80vh] overflow-y-auto">
+        {mounted && (
+          <Dialog open={dryRunDialogOpen} onOpenChange={setDryRunDialogOpen}>
+            <DialogTrigger asChild>
+              <Button
+                variant="outline"
+                size="sm"
+                disabled={isMigrating || isChecking || isDryRunning}
+                className="flex-1 min-w-[120px]"
+              >
+                <Eye className="w-4 h-4 mr-2" />
+                Dry Run
+              </Button>
+            </DialogTrigger>
+            <DialogContent className="max-w-2xl max-h-[80vh] overflow-y-auto">
             <DialogHeader>
               <DialogTitle>Dry Run - Preview Migration</DialogTitle>
               <DialogDescription>
-                This will scan for images without actually migrating them.
+                This will scan for images without actually migrating them. After scanning, select which categories to migrate.
               </DialogDescription>
             </DialogHeader>
             <div className="space-y-4">
@@ -304,30 +414,72 @@ export function MigrateImagesButton() {
                 )}
               </Button>
               {status.dryRunResults && status.dryRunResults.stats && (
-                <div className="space-y-2">
-                  <p className="text-sm font-semibold">
-                    Found {status.dryRunResults.stats.total || 0} images to migrate
-                  </p>
-                  {status.dryRunResults.stats.byCategory && Object.entries(status.dryRunResults.stats.byCategory).length > 0 ? (
-                    Object.entries(status.dryRunResults.stats.byCategory).map(([cat, count]) => (
-                      <p key={cat} className="text-sm">
-                        {cat}: {count}
-                      </p>
-                    ))
-                  ) : (
-                    <p className="text-sm text-gray-500">No images found in categories</p>
-                  )}
+                <div className="space-y-4">
+                  <div className="p-4 bg-blue-50 border border-blue-200 rounded-lg">
+                    <p className="text-sm font-semibold text-blue-900 mb-2">
+                      Found {status.dryRunResults.stats.total || 0} images to migrate
+                    </p>
+                    {status.dryRunResults.stats.byCategory && Object.entries(status.dryRunResults.stats.byCategory).length > 0 ? (
+                      <div className="space-y-3">
+                        <div className="flex gap-2">
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={selectAllCategories}
+                            className="text-xs"
+                          >
+                            Select All
+                          </Button>
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={deselectAllCategories}
+                            className="text-xs"
+                          >
+                            Deselect All
+                          </Button>
+                        </div>
+                        <div className="space-y-2 max-h-60 overflow-y-auto">
+                          {Object.entries(status.dryRunResults.stats.byCategory).map(([cat, count]) => (
+                            <div key={cat} className="flex items-center gap-3 p-2 hover:bg-blue-100 rounded">
+                              <Checkbox
+                                checked={selectedCategories.has(cat)}
+                                onCheckedChange={() => toggleCategory(cat)}
+                                id={`category-${cat}`}
+                              />
+                              <label
+                                htmlFor={`category-${cat}`}
+                                className="flex-1 text-sm cursor-pointer flex items-center justify-between"
+                              >
+                                <span className="font-medium">{cat || "uncategorized"}</span>
+                                <span className="text-gray-600">({count} images)</span>
+                              </label>
+                            </div>
+                          ))}
+                        </div>
+                        <div className="pt-2 border-t border-blue-200">
+                          <p className="text-xs text-blue-700">
+                            Selected: {selectedCategories.size} of {Object.keys(status.dryRunResults.stats.byCategory).length} categories
+                          </p>
+                        </div>
+                      </div>
+                    ) : (
+                      <p className="text-sm text-gray-500">No images found in categories</p>
+                    )}
+                  </div>
                 </div>
               )}
             </div>
           </DialogContent>
         </Dialog>
+        )}
 
         <Button
           onClick={startMigration}
-          disabled={isMigrating || isChecking || isDryRunning}
+          disabled={isMigrating || isChecking || isDryRunning || isCleaningUp || selectedCategories.size === 0}
           size="sm"
           className="flex-1 min-w-[120px] bg-blue-600 hover:bg-blue-700"
+          title={selectedCategories.size === 0 ? "Please run dry run and select categories first" : ""}
         >
           {isMigrating ? (
             <>
@@ -337,11 +489,54 @@ export function MigrateImagesButton() {
           ) : (
             <>
               <Upload className="w-4 h-4 mr-2" />
-              Migrate
+              Migrate {selectedCategories.size > 0 && `(${selectedCategories.size})`}
+            </>
+          )}
+        </Button>
+
+        <Button
+          onClick={cleanupOrphaned}
+          disabled={isMigrating || isChecking || isDryRunning || isCleaningUp}
+          variant="outline"
+          size="sm"
+          className="flex-1 min-w-[120px] text-red-600 border-red-300 hover:bg-red-50"
+          title="Remove database records where blob files are missing"
+        >
+          {isCleaningUp ? (
+            <>
+              <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+              Cleaning...
+            </>
+          ) : (
+            <>
+              <Trash2 className="w-4 h-4 mr-2" />
+              Cleanup Orphaned
             </>
           )}
         </Button>
       </div>
+
+      {/* Force Re-migrate Option */}
+      {selectedCategories.size > 0 && (
+        <div className="mt-4 p-3 bg-yellow-50 border border-yellow-200 rounded-lg">
+          <div className="flex items-center gap-2">
+            <Checkbox
+              checked={forceRemigrate}
+              onCheckedChange={(checked) => setForceRemigrate(checked === true)}
+              id="force-remigrate"
+            />
+            <label
+              htmlFor="force-remigrate"
+              className="text-sm cursor-pointer flex items-center gap-2"
+            >
+              <span className="font-medium text-yellow-900">Force Re-migrate</span>
+              <span className="text-yellow-700 text-xs">
+                (Re-upload images even if database records exist. Use when blob files were deleted.)
+              </span>
+            </label>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

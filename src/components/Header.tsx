@@ -72,6 +72,7 @@ interface FormError {
 export function Header() {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false)
   const headerRef = useRef<HTMLElement | null>(null)
+  const [mounted, setMounted] = useState(false)
   const [bookingOpen, setBookingOpen] = useState(false)
   const [startDate, setStartDate] = useState<Date>()
   const [endDate, setEndDate] = useState<Date>()
@@ -99,6 +100,11 @@ export function Header() {
   const [retryCount, setRetryCount] = useState(0)
   const saveTimeoutRef = useRef<NodeJS.Timeout | null>(null)
   const recaptchaKeyRef = useRef(0) // Force reCAPTCHA re-render
+
+  // Ensure component is mounted (client-side only)
+  useEffect(() => {
+    setMounted(true)
+  }, [])
 
   // Load form data from localStorage on component mount
   useEffect(() => {
@@ -583,8 +589,9 @@ export function Header() {
         </h1>
 
         {/* Booking Button */}
-        <Dialog open={bookingOpen} onOpenChange={handleBookingOpenChange}>
-          <DialogTrigger className="hidden lg:flex items-center gap-3 text-white/80 hover:text-white transition-colors mr-1 sm:mr-2 md:mr-3 lg:mr-0" aria-label="Open Booking">
+        {mounted && (
+          <Dialog open={bookingOpen} onOpenChange={handleBookingOpenChange}>
+            <DialogTrigger className="hidden lg:flex items-center gap-3 text-white/80 hover:text-white transition-colors mr-1 sm:mr-2 md:mr-3 lg:mr-0" aria-label="Open Booking">
             <div className="flex items-center justify-center w-10 h-10 lg:w-12 lg:h-12 3xl:w-14 3xl:h-14 4xl:w-16 4xl:h-16 5xl:w-20 5xl:h-20 rounded-full bg-white border-2 border-[var(--hell-dusty-blue)]">
               <CalendarIcon className="w-5 h-5 lg:w-6 lg:h-6 3xl:w-7 3xl:h-7 4xl:w-8 4xl:h-8 5xl:w-10 5xl:h-10 text-[var(--hell-dusty-blue)]" />
             </div>
@@ -704,7 +711,7 @@ export function Header() {
                               type="text"
                               autoComplete="name"
                               required
-                              value={formData.name}
+                              value={formData.name || ""}
                               onChange={(e) => handleInputChange("name", e.target.value)}
                               placeholder="Your full name"
                               disabled={!isRecaptchaVerified || process.env.NEXT_PUBLIC_USE_STATIC_IMAGES === '1'}
@@ -720,7 +727,7 @@ export function Header() {
                               type="email"
                               autoComplete="email"
                               required
-                              value={formData.email}
+                              value={formData.email || ""}
                               onChange={(e) => handleInputChange("email", e.target.value)}
                               placeholder="your@email.com"
                               disabled={!isRecaptchaVerified || process.env.NEXT_PUBLIC_USE_STATIC_IMAGES === '1'}
@@ -728,8 +735,30 @@ export function Header() {
                               style={{ fontSize: 'clamp(0.75rem, 0.8vw, 0.875rem)', height: 'clamp(2rem, 2.2vw, 2.25rem)' }}
                             />
                           </div>
-                          <div style={{ display: 'flex', flexDirection: 'column', gap: 'clamp(0.25rem, 0.3vw, 0.375rem)' }}>
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: 'clamp(0.25rem, 0.3vw, 0.375rem)', position: 'relative' }}>
                             <Label htmlFor="phone" className="text-[#5a3a2a] font-comfortaa" style={{ fontSize: 'clamp(0.6875rem, 0.7vw, 0.75rem)' }}>Phone Number *</Label>
+                            <input
+                              id="phone"
+                              name="phone"
+                              type="tel"
+                              value={formData.phone || ""}
+                              required
+                              autoComplete="tel"
+                              readOnly
+                              style={{ 
+                                position: 'absolute',
+                                width: '1px',
+                                height: '1px',
+                                padding: 0,
+                                margin: '-1px',
+                                overflow: 'hidden',
+                                clip: 'rect(0, 0, 0, 0)',
+                                whiteSpace: 'nowrap',
+                                borderWidth: 0
+                              }}
+                              tabIndex={-1}
+                              aria-hidden="true"
+                            />
                             <div className={`phone-input-wrapper ${!isRecaptchaVerified ? "opacity-50 pointer-events-none" : ""}`}>
                               <PhoneInput
                                 international
@@ -749,7 +778,7 @@ export function Header() {
                               type="number"
                               min="1"
                               required
-                              value={formData.participants}
+                              value={formData.participants || ""}
                               onChange={(e) => handleInputChange("participants", e.target.value)}
                               placeholder="Enter number of participants"
                               disabled={!isRecaptchaVerified || process.env.NEXT_PUBLIC_USE_STATIC_IMAGES === '1'}
@@ -766,12 +795,14 @@ export function Header() {
                         
                         {/* Date Range Toggle */}
                         <div style={{ display: 'flex', flexDirection: 'column', gap: 'clamp(0.25rem, 0.3vw, 0.375rem)' }}>
-                          <Label className="text-[#5a3a2a] font-comfortaa" style={{ fontSize: 'clamp(0.6875rem, 0.7vw, 0.75rem)' }}>Date Selection *</Label>
-                          <div className="flex gap-4">
+                          <Label id="dateRange-label" className="text-[#5a3a2a] font-comfortaa" style={{ fontSize: 'clamp(0.6875rem, 0.7vw, 0.75rem)' }}>Date Selection *</Label>
+                          <div className="flex gap-4" role="radiogroup" aria-labelledby="dateRange-label">
                             <label className="flex items-center gap-2 cursor-pointer">
                               <input
                                 type="radio"
+                                id="dateRange-single"
                                 name="dateRange"
+                                value="single"
                                 checked={!formData.dateRange}
                                 onChange={() => handleDateRangeToggle(false)}
                                 disabled={!isRecaptchaVerified || process.env.NEXT_PUBLIC_USE_STATIC_IMAGES === '1'}
@@ -782,7 +813,9 @@ export function Header() {
                             <label className="flex items-center gap-2 cursor-pointer">
                               <input
                                 type="radio"
+                                id="dateRange-range"
                                 name="dateRange"
+                                value="range"
                                 checked={formData.dateRange}
                                 onChange={() => handleDateRangeToggle(true)}
                                 disabled={!isRecaptchaVerified || process.env.NEXT_PUBLIC_USE_STATIC_IMAGES === '1'}
@@ -796,7 +829,7 @@ export function Header() {
                         <div className="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3" style={{ gap: 'clamp(0.375rem, 0.5vw, 0.75rem)' }}>
                           {/* Start Date */}
                           <div style={{ display: 'flex', flexDirection: 'column', gap: 'clamp(0.25rem, 0.3vw, 0.375rem)', position: 'relative' }}>
-                            <Label htmlFor="startDate" className="text-[#5a3a2a] font-comfortaa" style={{ fontSize: 'clamp(0.6875rem, 0.7vw, 0.75rem)' }}>
+                            <Label id="startDate-label" htmlFor="startDate" className="text-[#5a3a2a] font-comfortaa" style={{ fontSize: 'clamp(0.6875rem, 0.7vw, 0.75rem)' }}>
                               {formData.dateRange ? "Start Date *" : "Date *"}
                             </Label>
                             <input
@@ -827,10 +860,13 @@ export function Header() {
                               <PopoverTrigger asChild>
                                 <Button
                                   id="startDate-visual"
+                                  type="button"
                                   variant="outline"
                                   disabled={!isRecaptchaVerified || process.env.NEXT_PUBLIC_USE_STATIC_IMAGES === '1'}
                                   className={`w-full justify-start text-left font-normal font-comfortaa ${!isRecaptchaVerified ? "opacity-50 cursor-not-allowed" : ""}`}
                                   style={{ fontSize: 'clamp(0.75rem, 0.8vw, 0.875rem)', height: 'clamp(2rem, 2.2vw, 2.25rem)' }}
+                                  aria-labelledby="startDate-label"
+                                  aria-describedby="startDate"
                                 >
                                   <CalendarIcon className="mr-2" style={{ width: 'clamp(0.75rem, 0.8vw, 1rem)', height: 'clamp(0.75rem, 0.8vw, 1rem)' }} />
                                   {startDate ? format(startDate, "PPP") : "Pick a date"}
@@ -849,7 +885,7 @@ export function Header() {
                           {/* End Date (only shown for date range) */}
                           {formData.dateRange && (
                             <div style={{ display: 'flex', flexDirection: 'column', gap: 'clamp(0.25rem, 0.3vw, 0.375rem)', position: 'relative' }}>
-                              <Label htmlFor="endDate" className="text-[#5a3a2a] font-comfortaa" style={{ fontSize: 'clamp(0.6875rem, 0.7vw, 0.75rem)' }}>End Date *</Label>
+                              <Label id="endDate-label" htmlFor="endDate" className="text-[#5a3a2a] font-comfortaa" style={{ fontSize: 'clamp(0.6875rem, 0.7vw, 0.75rem)' }}>End Date *</Label>
                               <input
                                 id="endDate"
                                 name="endDate"
@@ -878,10 +914,13 @@ export function Header() {
                                 <PopoverTrigger asChild>
                                   <Button
                                     id="endDate-visual"
+                                    type="button"
                                     variant="outline"
                                     disabled={!isRecaptchaVerified || process.env.NEXT_PUBLIC_USE_STATIC_IMAGES === '1'}
                                     className={`w-full justify-start text-left font-normal font-comfortaa ${!isRecaptchaVerified ? "opacity-50 cursor-not-allowed" : ""}`}
                                     style={{ fontSize: 'clamp(0.75rem, 0.8vw, 0.875rem)', height: 'clamp(2rem, 2.2vw, 2.25rem)' }}
+                                    aria-labelledby="endDate-label"
+                                    aria-describedby="endDate"
                                   >
                                     <CalendarIcon className="mr-2" style={{ width: 'clamp(0.75rem, 0.8vw, 1rem)', height: 'clamp(0.75rem, 0.8vw, 1rem)' }} />
                                     {endDate ? format(endDate, "PPP") : "Pick end date"}
@@ -914,7 +953,7 @@ export function Header() {
                             <TimePicker
                               id="startTime"
                               name="startTime"
-                              value={formData.startTime}
+                              value={formData.startTime || ""}
                               onChange={(value) => handleInputChange("startTime", value)}
                               disabled={!isRecaptchaVerified || process.env.NEXT_PUBLIC_USE_STATIC_IMAGES === '1'}
                               required
@@ -928,7 +967,7 @@ export function Header() {
                             <TimePicker
                               id="endTime"
                               name="endTime"
-                              value={formData.endTime}
+                              value={formData.endTime || ""}
                               onChange={(value) => handleInputChange("endTime", value)}
                               disabled={!isRecaptchaVerified || process.env.NEXT_PUBLIC_USE_STATIC_IMAGES === '1'}
                               required
@@ -938,11 +977,11 @@ export function Header() {
 
                           {/* Event Type */}
                           <div style={{ display: 'flex', flexDirection: 'column', gap: 'clamp(0.25rem, 0.3vw, 0.375rem)', position: 'relative' }}>
-                            <Label htmlFor="eventType" className="text-[#5a3a2a] font-comfortaa" style={{ fontSize: 'clamp(0.6875rem, 0.7vw, 0.75rem)' }}>Event Type *</Label>
+                            <Label id="eventType-label" htmlFor="eventType" className="text-[#5a3a2a] font-comfortaa" style={{ fontSize: 'clamp(0.6875rem, 0.7vw, 0.75rem)' }}>Event Type *</Label>
                             <select
                               id="eventType"
                               name="eventType"
-                              value={formData.eventType}
+                              value={formData.eventType || ""}
                               onChange={(e) => handleInputChange("eventType", e.target.value)}
                               disabled={!isRecaptchaVerified || process.env.NEXT_PUBLIC_USE_STATIC_IMAGES === '1'}
                               style={{ 
@@ -957,6 +996,7 @@ export function Header() {
                                 borderWidth: 0
                               }}
                               tabIndex={-1}
+                              aria-labelledby="eventType-label"
                             >
                               <option value="">Select event type</option>
                               <option value="Arts & Design Coaching">Arts & Design Coaching Workshop</option>
@@ -965,8 +1005,14 @@ export function Header() {
                               <option value="Holiday Festive">Holiday Festive</option>
                               <option value="Other">Other</option>
                             </select>
-                            <Select value={formData.eventType} onValueChange={(value) => handleInputChange("eventType", value)} disabled={!isRecaptchaVerified || process.env.NEXT_PUBLIC_USE_STATIC_IMAGES === '1'}>
-                              <SelectTrigger id="eventType-visual" aria-labelledby="eventType-label" className={`font-comfortaa ${!isRecaptchaVerified ? "opacity-50 cursor-not-allowed" : ""}`} style={{ fontSize: 'clamp(0.75rem, 0.8vw, 0.875rem)', height: 'clamp(2rem, 2.2vw, 2.25rem)' }}>
+                            <Select value={formData.eventType || ""} onValueChange={(value) => handleInputChange("eventType", value)} disabled={!isRecaptchaVerified || process.env.NEXT_PUBLIC_USE_STATIC_IMAGES === '1'}>
+                              <SelectTrigger 
+                                id="eventType-visual" 
+                                aria-labelledby="eventType-label" 
+                                aria-describedby="eventType"
+                                className={`font-comfortaa ${!isRecaptchaVerified ? "opacity-50 cursor-not-allowed" : ""}`} 
+                                style={{ fontSize: 'clamp(0.75rem, 0.8vw, 0.875rem)', height: 'clamp(2rem, 2.2vw, 2.25rem)' }}
+                              >
                                 <SelectValue placeholder="Select event type" />
                               </SelectTrigger>
                               <SelectContent>
@@ -989,7 +1035,7 @@ export function Header() {
                               name="otherEventType"
                               type="text"
                               required
-                              value={formData.otherEventType}
+                              value={formData.otherEventType || ""}
                               onChange={(e) => handleInputChange("otherEventType", e.target.value)}
                               placeholder="Please specify your event type"
                               disabled={!isRecaptchaVerified || process.env.NEXT_PUBLIC_USE_STATIC_IMAGES === '1'}
@@ -1001,12 +1047,15 @@ export function Header() {
 
                         {/* Organization Type */}
                         <div style={{ display: 'flex', flexDirection: 'column', gap: 'clamp(0.25rem, 0.3vw, 0.375rem)' }}>
-                          <Label className="text-[#5a3a2a] font-comfortaa" style={{ fontSize: 'clamp(0.6875rem, 0.7vw, 0.75rem)' }}>Organization *</Label>
+                          <Label id="organizationType-label" htmlFor="organizationType" className="text-[#5a3a2a] font-comfortaa" style={{ fontSize: 'clamp(0.6875rem, 0.7vw, 0.75rem)' }}>Organization *</Label>
                           <RadioGroup
-                            value={formData.organizationType}
+                            id="organizationType"
+                            name="organizationType"
+                            value={formData.organizationType || ""}
                             onValueChange={(value) => handleInputChange("organizationType", value)}
                             disabled={!isRecaptchaVerified || process.env.NEXT_PUBLIC_USE_STATIC_IMAGES === '1'}
                             className="flex flex-row gap-6"
+                            aria-labelledby="organizationType-label"
                           >
                             <div className="flex items-center space-x-2">
                               <RadioGroupItem value="Tailor Event" id="tailor-event" disabled={!isRecaptchaVerified || process.env.NEXT_PUBLIC_USE_STATIC_IMAGES === '1'} />
@@ -1040,7 +1089,7 @@ export function Header() {
                               name="introduction"
                               autoComplete="off"
                               required
-                              value={formData.introduction}
+                              value={formData.introduction || ""}
                               onChange={(e) => handleInputChange("introduction", e.target.value)}
                               placeholder={isRecaptchaVerified ? "Tell us a bit about yourself..." : "Please complete CAPTCHA verification first..."}
                               disabled={!isRecaptchaVerified || process.env.NEXT_PUBLIC_USE_STATIC_IMAGES === '1'}
@@ -1055,7 +1104,7 @@ export function Header() {
                               id="biography"
                               name="biography"
                               autoComplete="off"
-                              value={formData.biography}
+                              value={formData.biography || ""}
                               onChange={(e) => handleInputChange("biography", e.target.value)}
                               placeholder={isRecaptchaVerified ? "Share your interests, profession..." : "Please complete CAPTCHA verification first..."}
                               disabled={!isRecaptchaVerified || process.env.NEXT_PUBLIC_USE_STATIC_IMAGES === '1'}
@@ -1070,7 +1119,7 @@ export function Header() {
                               id="specialRequests"
                               name="specialRequests"
                               autoComplete="off"
-                              value={formData.specialRequests}
+                              value={formData.specialRequests || ""}
                               onChange={(e) => handleInputChange("specialRequests", e.target.value)}
                               placeholder={isRecaptchaVerified ? "Describe your vision, special requirements..." : "Please complete CAPTCHA verification first..."}
                               disabled={!isRecaptchaVerified || process.env.NEXT_PUBLIC_USE_STATIC_IMAGES === '1'}
@@ -1151,6 +1200,7 @@ export function Header() {
             </div>
           </DialogContent>
         </Dialog>
+        )}
 
         {/* Mobile Menu Button */}
         <button
