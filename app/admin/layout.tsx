@@ -1,6 +1,7 @@
 import { auth } from "@/lib/auth-config"
 import Link from "next/link"
 import { SignOutButton } from "@/components/SignOutButton"
+import { LoginPageCleanup } from "@/components/LoginPageCleanup"
 
 // Mark as dynamic to prevent static export issues
 export const dynamic = 'force-dynamic'
@@ -25,6 +26,8 @@ export default async function AdminLayout({
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-gray-50 to-gray-100">
+      {/* Cleanup component to remove data-login-page attribute on navigation */}
+      <LoginPageCleanup />
       {/* Admin Header - only show if user is authenticated */}
       {session?.user && (
         <header className="bg-white border-b border-gray-200 shadow-sm">
