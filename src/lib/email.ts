@@ -1,5 +1,6 @@
 import nodemailer, { type Transporter } from 'nodemailer'
 import type { Booking } from './bookings'
+import { addEmailToQueue } from './email-queue'
 
 interface ReservationData {
   name: string
@@ -27,7 +28,7 @@ let transporterVerified = false
  * Get or create the email transporter with connection verification
  * Uses nodemailer v7 compatible configuration
  */
-async function getTransporter(): Promise<Transporter> {
+export async function getTransporter(): Promise<Transporter> {
   if (transporter && transporterVerified) {
     return transporter
   }
@@ -620,11 +621,36 @@ export async function sendAdminNotification(data: ReservationData): Promise<void
     html: generateAdminEmailHTML(data),
   }
 
-  const emailTransporter = await getTransporter()
-  const result = await emailTransporter.sendMail(mailOptions)
-  
-  // Log successful send (nodemailer v7 returns messageId)
-  console.log('Admin notification email sent:', result.messageId)
+  try {
+    const emailTransporter = await getTransporter()
+    const result = await emailTransporter.sendMail(mailOptions)
+    
+    // Log successful send (nodemailer v7 returns messageId)
+    console.log('Admin notification email sent:', result.messageId)
+  } catch (error) {
+    // Queue email for retry
+    const errorMessage = error instanceof Error ? error.message : 'Unknown error'
+    console.error('Failed to send admin notification, queuing for retry:', errorMessage)
+    
+    try {
+      await addEmailToQueue(
+        'admin_notification',
+        recipientEmail,
+        mailOptions.subject as string,
+        mailOptions.html as string,
+        mailOptions.text as string,
+        { bookingData: data, replyTo: data.email }
+      )
+      console.log('Admin notification queued for retry')
+    } catch (queueError) {
+      console.error('Failed to queue admin notification:', queueError)
+      // Re-throw original error if queueing fails
+      throw error
+    }
+    
+    // Re-throw original error
+    throw error
+  }
 }
 
 /**
@@ -640,11 +666,36 @@ export async function sendUserConfirmation(data: ReservationData): Promise<void>
     html: generateUserEmailHTML(data),
   }
 
-  const emailTransporter = await getTransporter()
-  const result = await emailTransporter.sendMail(mailOptions)
-  
-  // Log successful send (nodemailer v7 returns messageId)
-  console.log('User confirmation email sent:', result.messageId)
+  try {
+    const emailTransporter = await getTransporter()
+    const result = await emailTransporter.sendMail(mailOptions)
+    
+    // Log successful send (nodemailer v7 returns messageId)
+    console.log('User confirmation email sent:', result.messageId)
+  } catch (error) {
+    // Queue email for retry
+    const errorMessage = error instanceof Error ? error.message : 'Unknown error'
+    console.error('Failed to send user confirmation, queuing for retry:', errorMessage)
+    
+    try {
+      await addEmailToQueue(
+        'user_confirmation',
+        data.email,
+        mailOptions.subject as string,
+        mailOptions.html as string,
+        mailOptions.text as string,
+        { bookingData: data }
+      )
+      console.log('User confirmation queued for retry')
+    } catch (queueError) {
+      console.error('Failed to queue user confirmation:', queueError)
+      // Re-throw original error if queueing fails
+      throw error
+    }
+    
+    // Re-throw original error
+    throw error
+  }
 }
 
 /**
@@ -817,7 +868,8 @@ function generateStatusChangeEmailHTML(
   status: string,
   changeReason?: string,
   proposedDate?: string | null,
-  responseToken?: string
+  responseToken?: string,
+  proposedEndDate?: string | null
 ): string {
   // Use NEXT_PUBLIC_SITE_URL if set, otherwise try VERCEL_URL (for preview deployments),
   // otherwise fall back to production domain
@@ -839,10 +891,24 @@ function generateStatusChangeEmailHTML(
       message: 'We regret to inform you that your reservation request could not be accommodated at this time.',
       color: '#ef4444',
     },
+    cancelled: {
+      title: 'Reservation Cancelled',
+      message: 'Your reservation has been cancelled. We hope to see you at another opportunity in the future.',
+      color: '#6b7280',
+    },
     postponed: {
       title: 'Reservation Postponed',
-      message: 'Your reservation has been postponed. Please review the proposed new date below and respond.',
+      message: proposedDate 
+        ? 'Your reservation has been postponed. Please review the proposed new date below and respond.'
+        : 'Your reservation has been postponed. Please propose an alternative date or cancel your reservation.',
       color: '#f59e0b',
+    },
+    pending: {
+      title: proposedDate ? 'Proposal Received' : 'Reservation Status Update',
+      message: proposedDate 
+        ? 'Thank you for your proposal. We have received your request for a new date and will review it shortly.'
+        : 'Your reservation status has been updated.',
+      color: '#3b82f6',
     },
   }
 
@@ -910,14 +976,26 @@ function generateStatusChangeEmailHTML(
               
               ${proposedDate ? `
               <div style="background-color: #fef3c7; border-left: 4px solid #f59e0b; padding: 20px; margin: 20px 0; border-radius: 4px;">
-                <h3 style="margin: 0 0 10px 0; color: #92400e; font-size: 18px;">Proposed New Date</h3>
+                <h3 style="margin: 0 0 10px 0; color: #92400e; font-size: 18px;">${status === 'pending' ? 'Your Proposed Date' : 'Proposed New Date'}${proposedEndDate && proposedEndDate !== proposedDate ? 's' : ''}</h3>
                 <p style="margin: 0; color: #78350f; font-size: 16px; font-weight: 500;">
-                  ${sanitizeHTML(new Date(proposedDate).toLocaleDateString('en-US', { 
-                    weekday: 'long', 
-                    year: 'numeric', 
-                    month: 'long', 
-                    day: 'numeric' 
-                  }))}
+                  ${proposedEndDate && proposedEndDate !== proposedDate
+                    ? `${sanitizeHTML(new Date(proposedDate).toLocaleDateString('en-US', { 
+                        weekday: 'long', 
+                        year: 'numeric', 
+                        month: 'long', 
+                        day: 'numeric' 
+                      }))} - ${sanitizeHTML(new Date(proposedEndDate).toLocaleDateString('en-US', { 
+                        weekday: 'long', 
+                        year: 'numeric', 
+                        month: 'long', 
+                        day: 'numeric' 
+                      }))}`
+                    : sanitizeHTML(new Date(proposedDate).toLocaleDateString('en-US', { 
+                        weekday: 'long', 
+                        year: 'numeric', 
+                        month: 'long', 
+                        day: 'numeric' 
+                      }))}
                 </p>
               </div>
               ` : ''}
@@ -929,13 +1007,17 @@ function generateStatusChangeEmailHTML(
               </div>
               ` : ''}
               
-              ${responseUrl && status === 'postponed' ? `
+              ${responseUrl ? `
               <div style="margin: 30px 0; text-align: center;">
                 <p style="margin: 0 0 20px 0; color: #333333; font-size: 16px; line-height: 1.6;">
-                  Please click the button below to respond to this proposal:
+                  ${status === 'postponed' 
+                    ? 'Please click the button below to respond to this proposal:'
+                    : status === 'accepted'
+                    ? 'You can manage your reservation using the link below (view details, cancel if needed):'
+                    : 'You can manage your reservation using the link below (view details, cancel if needed):'}
                 </p>
                 <a href="${responseUrl}" style="display: inline-block; background-color: ${statusInfo.color}; color: #ffffff; text-decoration: none; padding: 14px 28px; border-radius: 6px; font-size: 16px; font-weight: 600;">
-                  Respond to Proposal
+                  ${status === 'postponed' ? 'Respond to Proposal' : 'Manage Reservation'}
                 </a>
                 <p style="margin: 20px 0 0 0; color: #6b7280; font-size: 12px; line-height: 1.6;">
                   Or copy and paste this link into your browser:<br>
@@ -944,9 +1026,15 @@ function generateStatusChangeEmailHTML(
               </div>
               ` : ''}
               
+              ${status === 'cancelled' ? `
+              <p style="margin: 30px 0 0 0; color: #6b7280; font-size: 14px; line-height: 1.6;">
+                We hope to see you at another opportunity in the future. Thank you for your interest in Hell University.
+              </p>
+              ` : `
               <p style="margin: 30px 0 0 0; color: #6b7280; font-size: 14px; line-height: 1.6;">
                 If you have any questions, please don't hesitate to contact us.
               </p>
+              `}
               
               <p style="margin: 20px 0 0 0; color: #6b7280; font-size: 14px; line-height: 1.6;">
                 Best regards,<br>
@@ -976,7 +1064,12 @@ function generateStatusChangeEmailText(
   const statusMessages: Record<string, string> = {
     accepted: 'Great news! Your reservation request has been accepted.',
     rejected: 'We regret to inform you that your reservation request could not be accommodated at this time.',
-    postponed: 'Your reservation has been postponed. Please review the proposed new date below and respond.',
+    postponed: proposedDate 
+      ? 'Your reservation has been postponed. Please review the proposed new date below and respond.'
+      : 'Your reservation has been postponed. Please propose an alternative date or cancel your reservation.',
+    pending: proposedDate 
+      ? 'Thank you for your proposal. We have received your request for a new date and will review it shortly.'
+      : 'Your reservation status has been updated.',
   }
 
   const message = statusMessages[status] || 'Your reservation status has been updated.'
@@ -996,7 +1089,7 @@ function generateStatusChangeEmailText(
   text += `Date & Time: ${formattedDateRange}\n\n`
 
   if (proposedDate) {
-    text += `PROPOSED NEW DATE:\n`
+    text += `${status === 'pending' ? 'YOUR PROPOSED DATE' : 'PROPOSED NEW DATE'}:\n`
     text += `${new Date(proposedDate).toLocaleDateString('en-US', { 
       weekday: 'long', 
       year: 'numeric', 
@@ -1013,7 +1106,11 @@ function generateStatusChangeEmailText(
     text += `Please visit the following link to respond:\n${responseUrl}\n\n`
   }
 
-  text += `If you have any questions, please don't hesitate to contact us.\n\n`
+  if (status === 'cancelled') {
+    text += `\nWe hope to see you at another opportunity in the future. Thank you for your interest in Hell University.\n\n`
+  } else {
+    text += `If you have any questions, please don't hesitate to contact us.\n\n`
+  }
   text += `Best regards,\nHell University Team`
 
   return text
@@ -1028,9 +1125,26 @@ export async function sendBookingStatusNotification(
   options?: {
     changeReason?: string
     proposedDate?: string | null
+    proposedEndDate?: string | null
     responseToken?: string
+    skipDuplicateCheck?: boolean // Allow override for retries
   }
 ): Promise<void> {
+  // Fix #7: Check for duplicate email before sending
+  if (!options?.skipDuplicateCheck) {
+    const { hasEmailBeenSent, logEmailSent } = await import("./email-tracking")
+    const emailAlreadySent = await hasEmailBeenSent(
+      booking.id,
+      "status_change",
+      status,
+      booking.email
+    )
+    
+    if (emailAlreadySent) {
+      console.log(`Email already sent recently for booking ${booking.id}, status: ${status}, skipping duplicate`)
+      return
+    }
+  }
   // Use NEXT_PUBLIC_SITE_URL if set, otherwise try VERCEL_URL (for preview deployments),
   // otherwise fall back to production domain
   const siteUrl = process.env.NEXT_PUBLIC_SITE_URL 
@@ -1056,13 +1170,1066 @@ export async function sendBookingStatusNotification(
       status,
       options?.changeReason,
       options?.proposedDate,
-      options?.responseToken
+      options?.responseToken,
+      options?.proposedEndDate || booking.proposedEndDate || undefined
     ),
   }
 
-  const emailTransporter = await getTransporter()
-  const result = await emailTransporter.sendMail(mailOptions)
-  
-  console.log('Booking status notification email sent:', result.messageId)
+  try {
+    const emailTransporter = await getTransporter()
+    const result = await emailTransporter.sendMail(mailOptions)
+    
+    // Fix #7: Log email sent after successful send
+    if (!options?.skipDuplicateCheck) {
+      const { logEmailSent } = await import("./email-tracking")
+      await logEmailSent(booking.id, "status_change", status, booking.email)
+    }
+    
+    console.log('Booking status notification email sent:', result.messageId)
+  } catch (error) {
+    // Queue email for retry
+    const errorMessage = error instanceof Error ? error.message : 'Unknown error'
+    console.error('Failed to send status change notification, queuing for retry:', errorMessage)
+    
+    try {
+      await addEmailToQueue(
+        'status_change',
+        booking.email,
+        mailOptions.subject as string,
+        mailOptions.html as string,
+        mailOptions.text as string,
+        { bookingId: booking.id, status, options }
+      )
+      console.log('Status change notification queued for retry')
+    } catch (queueError) {
+      console.error('Failed to queue status change notification:', queueError)
+      // Re-throw original error if queueing fails
+      throw error
+    }
+    
+    // Re-throw original error
+    throw error
+  }
+}
+
+/**
+ * Send admin notification when user responds to booking
+ */
+export async function sendAdminUserResponseNotification(
+  booking: Booking,
+  response: "accept" | "propose" | "cancel",
+  options?: {
+    proposedDate?: string | null
+    proposedEndDate?: string | null
+    proposedStartTime?: string | null
+    proposedEndTime?: string | null
+    message?: string
+  }
+): Promise<void> {
+  const recipientEmail = process.env.RESERVATION_EMAIL || process.env.SMTP_USER
+
+  if (!recipientEmail) {
+    throw new Error('RESERVATION_EMAIL or SMTP_USER not configured')
+  }
+
+  const responseMessages: Record<string, { title: string; message: string; color: string }> = {
+    accept: {
+      title: 'User Accepted Proposed Date',
+      message: 'The user has accepted the proposed date for their reservation.',
+      color: '#10b981',
+    },
+    propose: {
+      title: 'User Proposed Alternative Date',
+      message: 'The user has proposed an alternative date for their reservation.',
+      color: '#f59e0b',
+    },
+    cancel: {
+      title: 'User Cancelled Reservation',
+      message: 'The user has cancelled their reservation.',
+      color: '#ef4444',
+    },
+  }
+
+  const responseInfo = responseMessages[response] || {
+    title: 'User Response Received',
+    message: 'The user has responded to their reservation.',
+    color: '#3b82f6',
+  }
+
+  const formattedEventType = formatEventType(booking.eventType, booking.otherEventType)
+  const formattedDateRange = formatDateRange({
+    dateRange: booking.dateRange,
+    startDate: booking.startDate,
+    endDate: booking.endDate || undefined,
+    startTime: booking.startTime,
+    endTime: booking.endTime,
+  } as ReservationData)
+
+  let proposedDateText = ''
+  if (options?.proposedDate) {
+    const timeInfo: string[] = []
+    if (options?.proposedStartTime) {
+      timeInfo.push(options.proposedStartTime)
+    }
+    if (options?.proposedEndTime) {
+      timeInfo.push(options.proposedEndTime)
+    }
+    const timeText = timeInfo.length > 0 ? ` (${timeInfo.join(' - ')})` : ''
+    
+    if (options?.proposedEndDate && options.proposedEndDate !== options.proposedDate) {
+      // Multiple days
+      proposedDateText = `${new Date(options.proposedDate).toLocaleDateString('en-US', { 
+        weekday: 'long', 
+        year: 'numeric', 
+        month: 'long', 
+        day: 'numeric' 
+      })} - ${new Date(options.proposedEndDate).toLocaleDateString('en-US', { 
+        weekday: 'long', 
+        year: 'numeric', 
+        month: 'long', 
+        day: 'numeric' 
+      })}${timeText}`
+    } else {
+      // Single day
+      proposedDateText = `${new Date(options.proposedDate).toLocaleDateString('en-US', { 
+        weekday: 'long', 
+        year: 'numeric', 
+        month: 'long', 
+        day: 'numeric' 
+      })}${timeText}`
+    }
+  }
+
+  const htmlContent = `
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>${responseInfo.title}</title>
+</head>
+<body style="margin: 0; padding: 0; font-family: Arial, sans-serif; background-color: #f5f5f5;">
+  <table width="100%" cellpadding="0" cellspacing="0" style="background-color: #f5f5f5; padding: 20px;">
+    <tr>
+      <td align="center">
+        <table width="600" cellpadding="0" cellspacing="0" style="background-color: #ffffff; border-radius: 8px; overflow: hidden; box-shadow: 0 2px 4px rgba(0,0,0,0.1);">
+          <!-- Header -->
+          <tr>
+            <td style="background-color: ${responseInfo.color}; padding: 30px; text-align: center;">
+              <h1 style="margin: 0; color: #ffffff; font-size: 24px; font-weight: bold;">
+                ${responseInfo.title}
+              </h1>
+            </td>
+          </tr>
+          
+          <!-- Content -->
+          <tr>
+            <td style="padding: 30px;">
+              <p style="margin: 0 0 20px 0; color: #333333; font-size: 16px; line-height: 1.6;">
+                ${responseInfo.message}
+              </p>
+              
+              <div style="background-color: #f9fafb; border-left: 4px solid ${responseInfo.color}; padding: 20px; margin: 20px 0; border-radius: 4px;">
+                <h3 style="margin: 0 0 15px 0; color: #111827; font-size: 18px;">Reservation Details</h3>
+                <table width="100%" cellpadding="5" cellspacing="0">
+                  <tr>
+                    <td style="color: #6b7280; font-size: 14px; width: 120px;">Name:</td>
+                    <td style="color: #111827; font-size: 14px; font-weight: 500;">${sanitizeHTML(booking.name)}</td>
+                  </tr>
+                  <tr>
+                    <td style="color: #6b7280; font-size: 14px;">Email:</td>
+                    <td style="color: #111827; font-size: 14px; font-weight: 500;">${sanitizeHTML(booking.email)}</td>
+                  </tr>
+                  <tr>
+                    <td style="color: #6b7280; font-size: 14px;">Phone:</td>
+                    <td style="color: #111827; font-size: 14px; font-weight: 500;">${sanitizeHTML(booking.phone || 'N/A')}</td>
+                  </tr>
+                  <tr>
+                    <td style="color: #6b7280; font-size: 14px;">Event Type:</td>
+                    <td style="color: #111827; font-size: 14px; font-weight: 500;">${sanitizeHTML(formattedEventType)}</td>
+                  </tr>
+                  <tr>
+                    <td style="color: #6b7280; font-size: 14px;">Date & Time:</td>
+                    <td style="color: #111827; font-size: 14px; font-weight: 500;">${sanitizeHTML(formattedDateRange)}</td>
+                  </tr>
+                  <tr>
+                    <td style="color: #6b7280; font-size: 14px;">Status:</td>
+                    <td style="color: #111827; font-size: 14px; font-weight: 500;">${sanitizeHTML(booking.status)}</td>
+                  </tr>
+                </table>
+              </div>
+              
+              ${proposedDateText ? `
+              <div style="background-color: #fef3c7; border-left: 4px solid #f59e0b; padding: 20px; margin: 20px 0; border-radius: 4px;">
+                <h3 style="margin: 0 0 10px 0; color: #92400e; font-size: 18px;">Proposed Date${options?.proposedEndDate && options.proposedEndDate !== options.proposedDate ? 's' : ''}</h3>
+                <p style="margin: 0; color: #78350f; font-size: 16px; font-weight: 500;">
+                  ${sanitizeHTML(proposedDateText)}
+                </p>
+              </div>
+              ` : ''}
+              
+              ${options?.message ? `
+              <div style="margin: 20px 0;">
+                <p style="margin: 0 0 10px 0; color: #6b7280; font-size: 14px; font-weight: 500;">User Message:</p>
+                <p style="margin: 0; color: #333333; font-size: 14px; line-height: 1.6; white-space: pre-wrap;">${sanitizeHTML(options.message)}</p>
+              </div>
+              ` : ''}
+              
+              <p style="margin: 30px 0 0 0; color: #6b7280; font-size: 14px; line-height: 1.6;">
+                Please review this response in the admin dashboard.
+              </p>
+              
+              <p style="margin: 20px 0 0 0; color: #6b7280; font-size: 14px; line-height: 1.6;">
+                Best regards,<br>
+                <strong>Hell University Reservation System</strong>
+              </p>
+            </td>
+          </tr>
+        </table>
+      </td>
+    </tr>
+  </table>
+</body>
+</html>
+  `
+
+  const textContent = `
+${responseInfo.title}
+
+${responseInfo.message}
+
+RESERVATION DETAILS:
+Name: ${booking.name}
+Email: ${booking.email}
+Phone: ${booking.phone || 'N/A'}
+Event Type: ${formattedEventType}
+Date & Time: ${formattedDateRange}
+Status: ${booking.status}
+
+${proposedDateText ? `PROPOSED DATE${options?.proposedEndDate && options.proposedEndDate !== options.proposedDate ? 'S' : ''}:\n${proposedDateText}\n\n` : ''}
+${options?.proposedStartTime || options?.proposedEndTime ? `PROPOSED TIME${options?.proposedStartTime && options?.proposedEndTime ? 'S' : ''}:\n${options?.proposedStartTime ? `Start: ${options.proposedStartTime}` : ''}${options?.proposedStartTime && options?.proposedEndTime ? '\n' : ''}${options?.proposedEndTime ? `End: ${options.proposedEndTime}` : ''}\n\n` : ''}
+${options?.message ? `USER MESSAGE:\n${options.message}\n\n` : ''}
+Please review this response in the admin dashboard.
+
+Best regards,
+Hell University Reservation System
+  `.trim()
+
+  const mailOptions: nodemailer.SendMailOptions = {
+    from: `"Hell University Reservation System" <${process.env.SMTP_USER}>`,
+    to: recipientEmail,
+    replyTo: booking.email,
+    subject: `${responseInfo.title} - ${formattedEventType}`,
+    text: textContent,
+    html: htmlContent,
+  }
+
+  try {
+    const emailTransporter = await getTransporter()
+    const result = await emailTransporter.sendMail(mailOptions)
+    
+    console.log('Admin user response notification email sent:', result.messageId)
+  } catch (error) {
+    // Queue email for retry
+    const errorMessage = error instanceof Error ? error.message : 'Unknown error'
+    console.error('Failed to send admin user response notification, queuing for retry:', errorMessage)
+    
+    try {
+      await addEmailToQueue(
+        'user_response',
+        recipientEmail,
+        mailOptions.subject as string,
+        mailOptions.html as string,
+        mailOptions.text as string,
+        { bookingId: booking.id, response, options, replyTo: booking.email }
+      )
+      console.log('Admin user response notification queued for retry')
+    } catch (queueError) {
+      console.error('Failed to queue admin user response notification:', queueError)
+      // Re-throw original error if queueing fails
+      throw error
+    }
+    
+    // Re-throw original error
+    throw error
+  }
+}
+
+/**
+ * Send admin notification for automatic booking status updates
+ */
+export async function sendAdminAutoUpdateNotification(
+  bookings: Array<{
+    booking: Booking
+    oldStatus: string
+    newStatus: string
+    reason: string
+  }>
+): Promise<void> {
+  const recipientEmail = process.env.RESERVATION_EMAIL || process.env.SMTP_USER
+
+  if (!recipientEmail) {
+    throw new Error('RESERVATION_EMAIL or SMTP_USER not configured')
+  }
+
+  if (bookings.length === 0) {
+    return // No updates to notify about
+  }
+
+  const finishedBookings = bookings.filter(b => b.newStatus === 'finished')
+  const cancelledBookings = bookings.filter(b => b.newStatus === 'cancelled')
+
+  let summaryText = ''
+  if (finishedBookings.length > 0) {
+    summaryText += `${finishedBookings.length} booking${finishedBookings.length > 1 ? 's' : ''} automatically marked as finished.\n\n`
+  }
+  if (cancelledBookings.length > 0) {
+    summaryText += `${cancelledBookings.length} booking${cancelledBookings.length > 1 ? 's' : ''} automatically cancelled (expired without response).\n\n`
+  }
+
+  const htmlContent = `
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Automatic Booking Status Updates</title>
+</head>
+<body style="margin: 0; padding: 0; font-family: Arial, sans-serif; background-color: #f5f5f5;">
+  <table width="100%" cellpadding="0" cellspacing="0" style="background-color: #f5f5f5; padding: 20px;">
+    <tr>
+      <td align="center">
+        <table width="600" cellpadding="0" cellspacing="0" style="background-color: #ffffff; border-radius: 8px; overflow: hidden; box-shadow: 0 2px 4px rgba(0,0,0,0.1);">
+          <!-- Header -->
+          <tr>
+            <td style="background-color: #3b82f6; padding: 30px; text-align: center;">
+              <h1 style="margin: 0; color: #ffffff; font-size: 24px; font-weight: bold;">
+                Automatic Booking Status Updates
+              </h1>
+            </td>
+          </tr>
+          
+          <!-- Content -->
+          <tr>
+            <td style="padding: 30px;">
+              <p style="margin: 0 0 20px 0; color: #333333; font-size: 16px; line-height: 1.6;">
+                The following booking${bookings.length > 1 ? 's have' : ' has'} been automatically updated:
+              </p>
+              
+              ${finishedBookings.length > 0 ? `
+              <div style="background-color: #d1fae5; border-left: 4px solid #10b981; padding: 20px; margin: 20px 0; border-radius: 4px;">
+                <h3 style="margin: 0 0 15px 0; color: #065f46; font-size: 18px;">
+                  Finished Bookings (${finishedBookings.length})
+                </h3>
+                <p style="margin: 0 0 15px 0; color: #047857; font-size: 14px;">
+                  These reservations have passed their end date/time and have been marked as finished.
+                </p>
+                ${finishedBookings.map(({ booking }) => {
+                  const formattedEventType = formatEventType(booking.eventType, booking.otherEventType)
+                  const formattedDateRange = formatDateRange({
+                    dateRange: booking.dateRange,
+                    startDate: booking.startDate,
+                    endDate: booking.endDate || undefined,
+                    startTime: booking.startTime,
+                    endTime: booking.endTime,
+                  } as ReservationData)
+                  return `
+                  <div style="background-color: #ffffff; padding: 15px; margin: 10px 0; border-radius: 4px; border: 1px solid #a7f3d0;">
+                    <p style="margin: 0 0 5px 0; color: #111827; font-size: 14px; font-weight: 500;">
+                      ${sanitizeHTML(booking.name)} - ${sanitizeHTML(formattedEventType)}
+                    </p>
+                    <p style="margin: 0; color: #6b7280; font-size: 12px;">
+                      ${sanitizeHTML(formattedDateRange)}
+                    </p>
+                  </div>
+                  `
+                }).join('')}
+              </div>
+              ` : ''}
+              
+              ${cancelledBookings.length > 0 ? `
+              <div style="background-color: #fee2e2; border-left: 4px solid #ef4444; padding: 20px; margin: 20px 0; border-radius: 4px;">
+                <h3 style="margin: 0 0 15px 0; color: #991b1b; font-size: 18px;">
+                  Cancelled Bookings (${cancelledBookings.length})
+                </h3>
+                <p style="margin: 0 0 15px 0; color: #b91c1c; font-size: 14px;">
+                  These reservations have passed their date/time without a response and have been automatically cancelled.
+                </p>
+                ${cancelledBookings.map(({ booking }) => {
+                  const formattedEventType = formatEventType(booking.eventType, booking.otherEventType)
+                  const formattedDateRange = formatDateRange({
+                    dateRange: booking.dateRange,
+                    startDate: booking.startDate,
+                    endDate: booking.endDate || undefined,
+                    startTime: booking.startTime,
+                    endTime: booking.endTime,
+                  } as ReservationData)
+                  return `
+                  <div style="background-color: #ffffff; padding: 15px; margin: 10px 0; border-radius: 4px; border: 1px solid #fecaca;">
+                    <p style="margin: 0 0 5px 0; color: #111827; font-size: 14px; font-weight: 500;">
+                      ${sanitizeHTML(booking.name)} - ${sanitizeHTML(formattedEventType)}
+                    </p>
+                    <p style="margin: 0; color: #6b7280; font-size: 12px;">
+                      ${sanitizeHTML(formattedDateRange)}
+                    </p>
+                  </div>
+                  `
+                }).join('')}
+              </div>
+              ` : ''}
+              
+              <p style="margin: 30px 0 0 0; color: #6b7280; font-size: 14px; line-height: 1.6;">
+                All updated bookings have been moved to the archive and are no longer visible in the main bookings list.
+              </p>
+              
+              <p style="margin: 20px 0 0 0; color: #6b7280; font-size: 14px; line-height: 1.6;">
+                Best regards,<br>
+                <strong>Hell University Reservation System</strong>
+              </p>
+            </td>
+          </tr>
+        </table>
+      </td>
+    </tr>
+  </table>
+</body>
+</html>
+  `
+
+  const textContent = `
+Automatic Booking Status Updates
+
+The following booking${bookings.length > 1 ? 's have' : ' has'} been automatically updated:
+
+${summaryText}
+
+${finishedBookings.length > 0 ? `FINISHED BOOKINGS (${finishedBookings.length}):\n${finishedBookings.map(({ booking }) => {
+  const formattedEventType = formatEventType(booking.eventType, booking.otherEventType)
+  const formattedDateRange = formatDateRange({
+    dateRange: booking.dateRange,
+    startDate: booking.startDate,
+    endDate: booking.endDate || undefined,
+    startTime: booking.startTime,
+    endTime: booking.endTime,
+  } as ReservationData)
+  return `- ${booking.name} - ${formattedEventType} (${formattedDateRange})`
+}).join('\n')}\n\n` : ''}
+
+${cancelledBookings.length > 0 ? `CANCELLED BOOKINGS (${cancelledBookings.length}):\n${cancelledBookings.map(({ booking }) => {
+  const formattedEventType = formatEventType(booking.eventType, booking.otherEventType)
+  const formattedDateRange = formatDateRange({
+    dateRange: booking.dateRange,
+    startDate: booking.startDate,
+    endDate: booking.endDate || undefined,
+    startTime: booking.startTime,
+    endTime: booking.endTime,
+  } as ReservationData)
+  return `- ${booking.name} - ${formattedEventType} (${formattedDateRange})`
+}).join('\n')}\n\n` : ''}
+
+All updated bookings have been moved to the archive and are no longer visible in the main bookings list.
+
+Best regards,
+Hell University Reservation System
+  `.trim()
+
+  const mailOptions: nodemailer.SendMailOptions = {
+    from: `"Hell University Reservation System" <${process.env.SMTP_USER}>`,
+    to: recipientEmail,
+    subject: `Automatic Booking Updates - ${bookings.length} booking${bookings.length > 1 ? 's' : ''} updated`,
+    text: textContent,
+    html: htmlContent,
+  }
+
+  try {
+    const emailTransporter = await getTransporter()
+    const result = await emailTransporter.sendMail(mailOptions)
+    
+    console.log('Admin auto-update notification email sent:', result.messageId)
+  } catch (error) {
+    // Queue email for retry
+    const errorMessage = error instanceof Error ? error.message : 'Unknown error'
+    console.error('Failed to send admin auto-update notification, queuing for retry:', errorMessage)
+    
+    try {
+      await addEmailToQueue(
+        'auto_update',
+        recipientEmail,
+        mailOptions.subject as string,
+        mailOptions.html as string,
+        mailOptions.text as string,
+        { bookings: bookings.map(b => ({ id: b.booking.id, oldStatus: b.oldStatus, newStatus: b.newStatus })) }
+      )
+      console.log('Admin auto-update notification queued for retry')
+    } catch (queueError) {
+      console.error('Failed to queue admin auto-update notification:', queueError)
+      // Re-throw original error if queueing fails
+      throw error
+    }
+    
+    // Re-throw original error
+    throw error
+  }
+}
+
+/**
+ * Send admin notification when booking status is changed
+ */
+export async function sendAdminStatusChangeNotification(
+  booking: Booking,
+  oldStatus: string,
+  newStatus: string,
+  changeReason?: string,
+  changedBy?: string
+): Promise<void> {
+  const recipientEmail = process.env.RESERVATION_EMAIL || process.env.SMTP_USER
+
+  if (!recipientEmail) {
+    throw new Error('RESERVATION_EMAIL or SMTP_USER not configured')
+  }
+
+  const formattedEventType = formatEventType(booking.eventType, booking.otherEventType)
+  const formattedDateRange = formatDateRange({
+    dateRange: booking.dateRange,
+    startDate: booking.startDate,
+    endDate: booking.endDate || undefined,
+    startTime: booking.startTime,
+    endTime: booking.endTime,
+  } as ReservationData)
+
+  const statusMessages: Record<string, { title: string; message: string; color: string }> = {
+    accepted: {
+      title: 'Booking Accepted',
+      message: 'A booking has been accepted.',
+      color: '#10b981',
+    },
+    rejected: {
+      title: 'Booking Rejected',
+      message: 'A booking has been rejected.',
+      color: '#ef4444',
+    },
+    postponed: {
+      title: 'Booking Postponed',
+      message: 'A booking has been postponed.',
+      color: '#f59e0b',
+    },
+    cancelled: {
+      title: 'Booking Cancelled',
+      message: 'A booking has been cancelled.',
+      color: '#6b7280',
+    },
+    finished: {
+      title: 'Booking Finished',
+      message: 'A booking has been marked as finished.',
+      color: '#3b82f6',
+    },
+  }
+
+  const statusInfo = statusMessages[newStatus] || {
+    title: 'Booking Status Changed',
+    message: `Booking status has been changed from ${oldStatus} to ${newStatus}.`,
+    color: '#3b82f6',
+  }
+
+  let proposedDateText = ''
+  if (booking.proposedDate) {
+    if (booking.proposedEndDate && booking.proposedEndDate !== booking.proposedDate) {
+      proposedDateText = `${new Date(booking.proposedDate).toLocaleDateString('en-US', { 
+        weekday: 'long', 
+        year: 'numeric', 
+        month: 'long', 
+        day: 'numeric' 
+      })} - ${new Date(booking.proposedEndDate).toLocaleDateString('en-US', { 
+        weekday: 'long', 
+        year: 'numeric', 
+        month: 'long', 
+        day: 'numeric' 
+      })}`
+    } else {
+      proposedDateText = new Date(booking.proposedDate).toLocaleDateString('en-US', { 
+        weekday: 'long', 
+        year: 'numeric', 
+        month: 'long', 
+        day: 'numeric' 
+      })
+    }
+  }
+
+  const htmlContent = `
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>${statusInfo.title}</title>
+</head>
+<body style="margin: 0; padding: 0; font-family: Arial, sans-serif; background-color: #f5f5f5;">
+  <table width="100%" cellpadding="0" cellspacing="0" style="background-color: #f5f5f5; padding: 20px;">
+    <tr>
+      <td align="center">
+        <table width="600" cellpadding="0" cellspacing="0" style="background-color: #ffffff; border-radius: 8px; overflow: hidden; box-shadow: 0 2px 4px rgba(0,0,0,0.1);">
+          <!-- Header -->
+          <tr>
+            <td style="background-color: ${statusInfo.color}; padding: 30px; text-align: center;">
+              <h1 style="margin: 0; color: #ffffff; font-size: 24px; font-weight: bold;">
+                ${statusInfo.title}
+              </h1>
+            </td>
+          </tr>
+          
+          <!-- Content -->
+          <tr>
+            <td style="padding: 30px;">
+              <p style="margin: 0 0 20px 0; color: #333333; font-size: 16px; line-height: 1.6;">
+                ${statusInfo.message}
+              </p>
+              
+              <div style="background-color: #f9fafb; border-left: 4px solid ${statusInfo.color}; padding: 20px; margin: 20px 0; border-radius: 4px;">
+                <h3 style="margin: 0 0 15px 0; color: #111827; font-size: 18px;">Booking Details</h3>
+                <table width="100%" cellpadding="5" cellspacing="0">
+                  <tr>
+                    <td style="color: #6b7280; font-size: 14px; width: 120px;">Name:</td>
+                    <td style="color: #111827; font-size: 14px; font-weight: 500;">${sanitizeHTML(booking.name)}</td>
+                  </tr>
+                  <tr>
+                    <td style="color: #6b7280; font-size: 14px;">Email:</td>
+                    <td style="color: #111827; font-size: 14px; font-weight: 500;">${sanitizeHTML(booking.email)}</td>
+                  </tr>
+                  <tr>
+                    <td style="color: #6b7280; font-size: 14px;">Phone:</td>
+                    <td style="color: #111827; font-size: 14px; font-weight: 500;">${sanitizeHTML(booking.phone || 'N/A')}</td>
+                  </tr>
+                  <tr>
+                    <td style="color: #6b7280; font-size: 14px;">Event Type:</td>
+                    <td style="color: #111827; font-size: 14px; font-weight: 500;">${sanitizeHTML(formattedEventType)}</td>
+                  </tr>
+                  <tr>
+                    <td style="color: #6b7280; font-size: 14px;">Date & Time:</td>
+                    <td style="color: #111827; font-size: 14px; font-weight: 500;">${sanitizeHTML(formattedDateRange)}</td>
+                  </tr>
+                  <tr>
+                    <td style="color: #6b7280; font-size: 14px;">Previous Status:</td>
+                    <td style="color: #111827; font-size: 14px; font-weight: 500;">${sanitizeHTML(oldStatus)}</td>
+                  </tr>
+                  <tr>
+                    <td style="color: #6b7280; font-size: 14px;">New Status:</td>
+                    <td style="color: #111827; font-size: 14px; font-weight: 500;">${sanitizeHTML(newStatus)}</td>
+                  </tr>
+                  ${proposedDateText ? `
+                  <tr>
+                    <td style="color: #6b7280; font-size: 14px;">Proposed Date:</td>
+                    <td style="color: #111827; font-size: 14px; font-weight: 500;">${sanitizeHTML(proposedDateText)}</td>
+                  </tr>
+                  ` : ''}
+                  ${changedBy ? `
+                  <tr>
+                    <td style="color: #6b7280; font-size: 14px;">Changed By:</td>
+                    <td style="color: #111827; font-size: 14px; font-weight: 500;">${sanitizeHTML(changedBy)}</td>
+                  </tr>
+                  ` : ''}
+                </table>
+              </div>
+              
+              ${changeReason ? `
+              <div style="background-color: #fef3c7; border-left: 4px solid #f59e0b; padding: 20px; margin: 20px 0; border-radius: 4px;">
+                <h3 style="margin: 0 0 10px 0; color: #92400e; font-size: 18px;">Change Reason</h3>
+                <p style="margin: 0; color: #78350f; font-size: 14px; line-height: 1.6; white-space: pre-wrap;">${sanitizeHTML(changeReason)}</p>
+              </div>
+              ` : ''}
+              
+              <p style="margin: 30px 0 0 0; color: #6b7280; font-size: 14px; line-height: 1.6;">
+                This is an automated notification of a booking status change.
+              </p>
+              
+              <p style="margin: 20px 0 0 0; color: #6b7280; font-size: 14px; line-height: 1.6;">
+                Best regards,<br>
+                <strong>Hell University Reservation System</strong>
+              </p>
+            </td>
+          </tr>
+        </table>
+      </td>
+    </tr>
+  </table>
+</body>
+</html>
+  `.trim()
+
+  const textContent = `${statusInfo.title}
+
+${statusInfo.message}
+
+BOOKING DETAILS:
+Name: ${booking.name}
+Email: ${booking.email}
+Phone: ${booking.phone || 'N/A'}
+Event Type: ${formattedEventType}
+Date & Time: ${formattedDateRange}
+Previous Status: ${oldStatus}
+New Status: ${newStatus}
+${proposedDateText ? `Proposed Date: ${proposedDateText}\n` : ''}${changedBy ? `Changed By: ${changedBy}\n` : ''}
+${changeReason ? `\nCHANGE REASON:\n${changeReason}\n` : ''}
+This is an automated notification of a booking status change.
+
+Best regards,
+Hell University Reservation System
+  `.trim()
+
+  const mailOptions: nodemailer.SendMailOptions = {
+    from: `"Hell University Reservation System" <${process.env.SMTP_USER}>`,
+    to: recipientEmail,
+    replyTo: booking.email,
+    subject: `${statusInfo.title} - ${formattedEventType} - ${booking.name}`,
+    text: textContent,
+    html: htmlContent,
+  }
+
+  try {
+    const emailTransporter = await getTransporter()
+    const result = await emailTransporter.sendMail(mailOptions)
+    
+    console.log('Admin status change notification email sent:', result.messageId)
+  } catch (error) {
+    // Queue email for retry
+    const errorMessage = error instanceof Error ? error.message : 'Unknown error'
+    console.error('Failed to send admin status change notification, queuing for retry:', errorMessage)
+    
+    try {
+      await addEmailToQueue(
+        'admin_notification',
+        recipientEmail,
+        mailOptions.subject as string,
+        mailOptions.html as string,
+        mailOptions.text as string,
+        { bookingId: booking.id, oldStatus, newStatus, changeReason, changedBy, replyTo: booking.email }
+      )
+      console.log('Admin status change notification queued for retry')
+    } catch (queueError) {
+      console.error('Failed to queue admin status change notification:', queueError)
+      // Re-throw original error if queueing fails
+      throw error
+    }
+    
+    // Re-throw original error
+    throw error
+  }
+}
+
+/**
+ * Send admin notification when user confirms check-in
+ */
+export async function sendAdminCheckInNotification(booking: Booking): Promise<void> {
+  const recipientEmail = process.env.RESERVATION_EMAIL || process.env.SMTP_USER
+
+  if (!recipientEmail) {
+    throw new Error('RESERVATION_EMAIL or SMTP_USER not configured')
+  }
+
+  const formattedEventType = formatEventType(booking.eventType, booking.otherEventType)
+  const formattedDateRange = formatDateRange({
+    dateRange: booking.dateRange,
+    startDate: booking.startDate,
+    endDate: booking.endDate || undefined,
+    startTime: booking.startTime,
+    endTime: booking.endTime,
+  } as ReservationData)
+
+  const htmlContent = `
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>User Checked In</title>
+</head>
+<body style="margin: 0; padding: 0; font-family: Arial, sans-serif; background-color: #f5f5f5;">
+  <table width="100%" cellpadding="0" cellspacing="0" style="background-color: #f5f5f5; padding: 20px;">
+    <tr>
+      <td align="center">
+        <table width="600" cellpadding="0" cellspacing="0" style="background-color: #ffffff; border-radius: 8px; overflow: hidden; box-shadow: 0 2px 4px rgba(0,0,0,0.1);">
+          <!-- Header -->
+          <tr>
+            <td style="background-color: #10b981; padding: 30px; text-align: center;">
+              <h1 style="margin: 0; color: #ffffff; font-size: 24px; font-weight: bold;">
+                User Checked In
+              </h1>
+            </td>
+          </tr>
+          
+          <!-- Content -->
+          <tr>
+            <td style="padding: 30px;">
+              <p style="margin: 0 0 20px 0; color: #333333; font-size: 16px; line-height: 1.6;">
+                A user has confirmed their check-in for their reservation.
+              </p>
+              
+              <div style="background-color: #f9fafb; border-left: 4px solid #10b981; padding: 20px; margin: 20px 0; border-radius: 4px;">
+                <h3 style="margin: 0 0 15px 0; color: #111827; font-size: 18px;">Booking Details</h3>
+                <table width="100%" cellpadding="5" cellspacing="0">
+                  <tr>
+                    <td style="color: #6b7280; font-size: 14px; width: 120px;">Name:</td>
+                    <td style="color: #111827; font-size: 14px; font-weight: 500;">${sanitizeHTML(booking.name)}</td>
+                  </tr>
+                  <tr>
+                    <td style="color: #6b7280; font-size: 14px;">Email:</td>
+                    <td style="color: #111827; font-size: 14px; font-weight: 500;">${sanitizeHTML(booking.email)}</td>
+                  </tr>
+                  <tr>
+                    <td style="color: #6b7280; font-size: 14px;">Phone:</td>
+                    <td style="color: #111827; font-size: 14px; font-weight: 500;">${sanitizeHTML(booking.phone || 'N/A')}</td>
+                  </tr>
+                  <tr>
+                    <td style="color: #6b7280; font-size: 14px;">Event Type:</td>
+                    <td style="color: #111827; font-size: 14px; font-weight: 500;">${sanitizeHTML(formattedEventType)}</td>
+                  </tr>
+                  <tr>
+                    <td style="color: #6b7280; font-size: 14px;">Date & Time:</td>
+                    <td style="color: #111827; font-size: 14px; font-weight: 500;">${sanitizeHTML(formattedDateRange)}</td>
+                  </tr>
+                  <tr>
+                    <td style="color: #6b7280; font-size: 14px;">Status:</td>
+                    <td style="color: #111827; font-size: 14px; font-weight: 500;">Checked In</td>
+                  </tr>
+                </table>
+              </div>
+              
+              <p style="margin: 30px 0 0 0; color: #6b7280; font-size: 14px; line-height: 1.6;">
+                The booking status has been automatically updated to "checked-in" and can no longer be modified (except for deletion in edge cases).
+              </p>
+              
+              <p style="margin: 20px 0 0 0; color: #6b7280; font-size: 14px; line-height: 1.6;">
+                Best regards,<br>
+                <strong>Hell University Reservation System</strong>
+              </p>
+            </td>
+          </tr>
+        </table>
+      </td>
+    </tr>
+  </table>
+</body>
+</html>
+  `.trim()
+
+  const textContent = `User Checked In
+
+A user has confirmed their check-in for their reservation.
+
+BOOKING DETAILS:
+Name: ${booking.name}
+Email: ${booking.email}
+Phone: ${booking.phone || 'N/A'}
+Event Type: ${formattedEventType}
+Date & Time: ${formattedDateRange}
+Status: Checked In
+
+The booking status has been automatically updated to "checked-in" and can no longer be modified (except for deletion in edge cases).
+
+Best regards,
+Hell University Reservation System
+  `.trim()
+
+  const mailOptions: nodemailer.SendMailOptions = {
+    from: `"Hell University Reservation System" <${process.env.SMTP_USER}>`,
+    to: recipientEmail,
+    replyTo: booking.email,
+    subject: `User Checked In - ${formattedEventType} - ${booking.name}`,
+    text: textContent,
+    html: htmlContent,
+  }
+
+  try {
+    const emailTransporter = await getTransporter()
+    const result = await emailTransporter.sendMail(mailOptions)
+    
+    console.log('Admin check-in notification email sent:', result.messageId)
+  } catch (error) {
+    // Queue email for retry
+    const errorMessage = error instanceof Error ? error.message : 'Unknown error'
+    console.error('Failed to send admin check-in notification, queuing for retry:', errorMessage)
+    
+    try {
+      await addEmailToQueue(
+        'admin_notification',
+        recipientEmail,
+        mailOptions.subject as string,
+        mailOptions.html as string,
+        mailOptions.text as string,
+        { bookingId: booking.id, action: 'check-in', replyTo: booking.email }
+      )
+      console.log('Admin check-in notification queued for retry')
+    } catch (queueError) {
+      console.error('Failed to queue admin check-in notification:', queueError)
+      // Re-throw original error if queueing fails
+      throw error
+    }
+    
+    // Re-throw original error
+    throw error
+  }
+}
+
+/**
+ * Send admin notification when a booking is deleted
+ */
+export async function sendAdminBookingDeletionNotification(
+  booking: Booking,
+  deletedBy?: string
+): Promise<void> {
+  const recipientEmail = process.env.RESERVATION_EMAIL || process.env.SMTP_USER
+
+  if (!recipientEmail) {
+    throw new Error('RESERVATION_EMAIL or SMTP_USER not configured')
+  }
+
+  const formattedEventType = formatEventType(booking.eventType, booking.otherEventType)
+  const formattedDateRange = formatDateRange({
+    dateRange: booking.dateRange,
+    startDate: booking.startDate,
+    endDate: booking.endDate || undefined,
+    startTime: booking.startTime,
+    endTime: booking.endTime,
+  } as ReservationData)
+
+  const htmlContent = `
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Booking Deleted</title>
+</head>
+<body style="margin: 0; padding: 0; font-family: Arial, sans-serif; background-color: #f5f5f5;">
+  <table width="100%" cellpadding="0" cellspacing="0" style="background-color: #f5f5f5; padding: 20px;">
+    <tr>
+      <td align="center">
+        <table width="600" cellpadding="0" cellspacing="0" style="background-color: #ffffff; border-radius: 8px; overflow: hidden; box-shadow: 0 2px 4px rgba(0,0,0,0.1);">
+          <!-- Header -->
+          <tr>
+            <td style="background-color: #ef4444; padding: 30px; text-align: center;">
+              <h1 style="margin: 0; color: #ffffff; font-size: 24px; font-weight: bold;">
+                Booking Deleted
+              </h1>
+            </td>
+          </tr>
+          
+          <!-- Content -->
+          <tr>
+            <td style="padding: 30px;">
+              <p style="margin: 0 0 20px 0; color: #333333; font-size: 16px; line-height: 1.6;">
+                A booking has been deleted from the system.
+              </p>
+              
+              <div style="background-color: #f9fafb; border-left: 4px solid #ef4444; padding: 20px; margin: 20px 0; border-radius: 4px;">
+                <h3 style="margin: 0 0 15px 0; color: #111827; font-size: 18px;">Deleted Booking Details</h3>
+                <table width="100%" cellpadding="5" cellspacing="0">
+                  <tr>
+                    <td style="color: #6b7280; font-size: 14px; width: 120px;">Name:</td>
+                    <td style="color: #111827; font-size: 14px; font-weight: 500;">${sanitizeHTML(booking.name)}</td>
+                  </tr>
+                  <tr>
+                    <td style="color: #6b7280; font-size: 14px;">Email:</td>
+                    <td style="color: #111827; font-size: 14px; font-weight: 500;">${sanitizeHTML(booking.email)}</td>
+                  </tr>
+                  <tr>
+                    <td style="color: #6b7280; font-size: 14px;">Phone:</td>
+                    <td style="color: #111827; font-size: 14px; font-weight: 500;">${sanitizeHTML(booking.phone || 'N/A')}</td>
+                  </tr>
+                  <tr>
+                    <td style="color: #6b7280; font-size: 14px;">Event Type:</td>
+                    <td style="color: #111827; font-size: 14px; font-weight: 500;">${sanitizeHTML(formattedEventType)}</td>
+                  </tr>
+                  <tr>
+                    <td style="color: #6b7280; font-size: 14px;">Date & Time:</td>
+                    <td style="color: #111827; font-size: 14px; font-weight: 500;">${sanitizeHTML(formattedDateRange)}</td>
+                  </tr>
+                  <tr>
+                    <td style="color: #6b7280; font-size: 14px;">Previous Status:</td>
+                    <td style="color: #111827; font-size: 14px; font-weight: 500;">${sanitizeHTML(booking.status)}</td>
+                  </tr>
+                  ${deletedBy ? `
+                  <tr>
+                    <td style="color: #6b7280; font-size: 14px;">Deleted By:</td>
+                    <td style="color: #111827; font-size: 14px; font-weight: 500;">${sanitizeHTML(deletedBy)}</td>
+                  </tr>
+                  ` : ''}
+                </table>
+              </div>
+              
+              <p style="margin: 30px 0 0 0; color: #6b7280; font-size: 14px; line-height: 1.6;">
+                This booking has been permanently removed from the system. ${booking.status !== "rejected" && booking.status !== "cancelled" && booking.status !== "finished" ? (booking.status === "accepted" || booking.status === "checked-in" ? "A cancellation notification has been sent to the user." : "A rejection notification has been sent to the user.") : booking.status === "finished" ? "No user notification was sent as the booking was already finished (event has passed)." : "No user notification was sent as the booking was already rejected or cancelled."}
+              </p>
+              
+              <p style="margin: 20px 0 0 0; color: #6b7280; font-size: 14px; line-height: 1.6;">
+                Best regards,<br>
+                <strong>Hell University Reservation System</strong>
+              </p>
+            </td>
+          </tr>
+        </table>
+      </td>
+    </tr>
+  </table>
+</body>
+</html>
+  `.trim()
+
+  const textContent = `Booking Deleted
+
+A booking has been deleted from the system.
+
+DELETED BOOKING DETAILS:
+Name: ${booking.name}
+Email: ${booking.email}
+Phone: ${booking.phone || 'N/A'}
+Event Type: ${formattedEventType}
+Date & Time: ${formattedDateRange}
+Previous Status: ${booking.status}
+${deletedBy ? `Deleted By: ${deletedBy}\n` : ''}
+
+This booking has been permanently removed from the system. ${booking.status !== "rejected" && booking.status !== "cancelled" && booking.status !== "finished" ? (booking.status === "accepted" || booking.status === "checked-in" ? "A cancellation notification has been sent to the user." : "A rejection notification has been sent to the user.") : booking.status === "finished" ? "No user notification was sent as the booking was already finished (event has passed)." : "No user notification was sent as the booking was already rejected or cancelled."}
+
+Best regards,
+Hell University Reservation System
+  `.trim()
+
+  const mailOptions: nodemailer.SendMailOptions = {
+    from: `"Hell University Reservation System" <${process.env.SMTP_USER}>`,
+    to: recipientEmail,
+    replyTo: booking.email,
+    subject: `Booking Deleted - ${formattedEventType} - ${booking.name}`,
+    text: textContent,
+    html: htmlContent,
+  }
+
+  try {
+    const emailTransporter = await getTransporter()
+    const result = await emailTransporter.sendMail(mailOptions)
+    
+    console.log('Admin booking deletion notification email sent:', result.messageId)
+  } catch (error) {
+    // Queue email for retry
+    const errorMessage = error instanceof Error ? error.message : 'Unknown error'
+    console.error('Failed to send admin booking deletion notification, queuing for retry:', errorMessage)
+    
+    try {
+      await addEmailToQueue(
+        'admin_notification',
+        recipientEmail,
+        mailOptions.subject as string,
+        mailOptions.html as string,
+        mailOptions.text as string,
+        { bookingId: booking.id, action: 'deletion', deletedBy, replyTo: booking.email }
+      )
+      console.log('Admin booking deletion notification queued for retry')
+    } catch (queueError) {
+      console.error('Failed to queue admin booking deletion notification:', queueError)
+      // Re-throw original error if queueing fails
+      throw error
+    }
+    
+    // Re-throw original error
+    throw error
+  }
 }
 

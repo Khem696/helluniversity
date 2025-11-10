@@ -49,22 +49,28 @@ export default async function AdminLayout({
                 Dashboard
               </Link>
               <Link
-                href="/admin/images"
+                href="/admin/bookings"
                 className="text-sm font-medium text-gray-700 hover:text-gray-900 transition-colors"
               >
-                Images
+                Reservation
               </Link>
               <Link
                 href="/admin/events"
                 className="text-sm font-medium text-gray-700 hover:text-gray-900 transition-colors"
               >
-                Events
+                Event
               </Link>
               <Link
-                href="/admin/bookings"
+                href="/admin/images"
                 className="text-sm font-medium text-gray-700 hover:text-gray-900 transition-colors"
               >
-                Reservations
+                Image
+              </Link>
+              <Link
+                href="/admin/email-queue"
+                className="text-sm font-medium text-gray-700 hover:text-gray-900 transition-colors"
+              >
+                Email Queue
               </Link>
             </nav>
 
