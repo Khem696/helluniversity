@@ -105,10 +105,12 @@ export default function EmailQueuePage() {
         setEmails(data.items || [])
         setStats(data.stats || stats)
       } else {
-        toast.error(data.error || "Failed to load email queue")
+        const errorMsg = typeof data.error === 'string' ? data.error : JSON.stringify(data.error) || "Failed to load email queue"
+        toast.error(errorMsg)
       }
     } catch (error) {
-      toast.error("Failed to load email queue")
+      const errorMsg = error instanceof Error ? error.message : "Failed to load email queue"
+      toast.error(errorMsg)
       console.error(error)
     } finally {
       setLoading(false)
@@ -135,10 +137,12 @@ export default function EmailQueuePage() {
         toast.success(`Processed: ${data.result.sent} sent, ${data.result.failed} failed`)
         fetchEmails()
       } else {
-        toast.error(data.error || "Failed to process queue")
+        const errorMsg = typeof data.error === 'string' ? data.error : JSON.stringify(data.error) || "Failed to process queue"
+        toast.error(errorMsg)
       }
     } catch (error) {
-      toast.error("Failed to process queue")
+      const errorMsg = error instanceof Error ? error.message : "Failed to process queue"
+      toast.error(errorMsg)
       console.error(error)
     } finally {
       setProcessing(false)
@@ -153,16 +157,32 @@ export default function EmailQueuePage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ action: "retry" }),
       })
+      
+      if (!response.ok) {
+        const errorText = await response.text()
+        let errorData
+        try {
+          errorData = JSON.parse(errorText)
+        } catch {
+          errorData = { error: `HTTP ${response.status}: ${response.statusText}` }
+        }
+        const errorMsg = typeof errorData.error === 'string' ? errorData.error : JSON.stringify(errorData.error) || "Failed to retry email"
+        toast.error(errorMsg)
+        return
+      }
+      
       const data = await response.json()
       if (data.success) {
         toast.success("Email retried successfully")
         fetchEmails()
       } else {
-        toast.error(data.error || "Failed to retry email")
+        const errorMsg = typeof data.error === 'string' ? data.error : JSON.stringify(data.error) || "Failed to retry email"
+        toast.error(errorMsg)
       }
     } catch (error) {
-      toast.error("Failed to retry email")
-      console.error(error)
+      const errorMsg = error instanceof Error ? error.message : "Failed to retry email"
+      toast.error(errorMsg)
+      console.error("Retry email error:", error)
     }
   }
 
@@ -181,10 +201,12 @@ export default function EmailQueuePage() {
         toast.success("Email deleted successfully")
         fetchEmails()
       } else {
-        toast.error(data.error || "Failed to delete email")
+        const errorMsg = typeof data.error === 'string' ? data.error : JSON.stringify(data.error) || "Failed to delete email"
+        toast.error(errorMsg)
       }
     } catch (error) {
-      toast.error("Failed to delete email")
+      const errorMsg = error instanceof Error ? error.message : "Failed to delete email"
+      toast.error(errorMsg)
       console.error(error)
     }
   }
@@ -206,10 +228,12 @@ export default function EmailQueuePage() {
         toast.success(`Cleaned up ${data.deletedCount} old emails`)
         fetchEmails()
       } else {
-        toast.error(data.error || "Failed to cleanup")
+        const errorMsg = typeof data.error === 'string' ? data.error : JSON.stringify(data.error) || "Failed to cleanup"
+        toast.error(errorMsg)
       }
     } catch (error) {
-      toast.error("Failed to cleanup")
+      const errorMsg = error instanceof Error ? error.message : "Failed to cleanup"
+      toast.error(errorMsg)
       console.error(error)
     }
   }

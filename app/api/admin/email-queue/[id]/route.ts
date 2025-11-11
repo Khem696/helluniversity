@@ -144,7 +144,16 @@ export async function PATCH(
     if (authError) return authError
 
     const { id } = await params
-    const body = await request.json()
+    let body: { action?: string } = {}
+    try {
+      body = await request.json()
+    } catch (jsonError) {
+      return NextResponse.json(
+        { success: false, error: "Invalid request body" },
+        { status: 400 }
+      )
+    }
+    
     const { action } = body
 
     if (action === "cancel") {
@@ -157,7 +166,7 @@ export async function PATCH(
       const result = await retryEmail(id)
       if (!result.success) {
         return NextResponse.json(
-          { success: false, error: result.error },
+          { success: false, error: result.error || "Failed to retry email" },
           { status: 400 }
         )
       }
@@ -168,15 +177,16 @@ export async function PATCH(
     }
 
     return NextResponse.json(
-      { success: false, error: "Invalid action" },
+      { success: false, error: "Invalid action. Expected 'cancel' or 'retry'" },
       { status: 400 }
     )
   } catch (error) {
     console.error("Update email error:", error)
+    const errorMessage = error instanceof Error ? error.message : "Failed to update email"
     return NextResponse.json(
       {
         success: false,
-        error: error instanceof Error ? error.message : "Failed to update email",
+        error: errorMessage,
       },
       { status: 500 }
     )
