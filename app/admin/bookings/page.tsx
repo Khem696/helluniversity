@@ -492,7 +492,7 @@ export default function BookingsPage() {
               </div>
             )}
           </div>
-          <Link href="/admin/bookings/archive">
+          <Link href="/admin/bookings/archive" prefetch={false}>
             <Button variant="outline">
               <Archive className="w-4 h-4 mr-2" />
               View Archive

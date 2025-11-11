@@ -576,7 +576,7 @@ export function Header() {
       {/* Top Row */}
       <div className="flex items-center justify-between max-w-none mx-auto mb-0 lg:mb-0 min-w-0 relative">
         {/* Logo (hidden ≤425px) */}
-        <Link href="/" aria-label="Hell University Home" className="hidden lg:flex items-center justify-center ml-1 md:ml-0">
+        <Link href="/" prefetch={false} aria-label="Hell University Home" className="hidden lg:flex items-center justify-center ml-1 md:ml-0">
           <div className="flex items-center justify-center w-12 h-12 sm:w-14 sm:h-14 md:w-16 md:h-16 lg:w-20 lg:h-20 3xl:w-24 3xl:h-24 4xl:w-28 4xl:h-28 5xl:w-32 5xl:h-32 rounded-full bg-white border-2 lg:border-4 3xl:border-[6px] 4xl:border-8 border-[var(--hell-dusty-blue)]">
             <img src={withBasePath('/assets/icons/icon_helluniversity.svg')} alt="Hell University" width={62} height={62} className="w-10 h-10 sm:w-11 sm:h-11 md:w-12 md:h-12 lg:w-16 lg:h-16 3xl:w-[4.5rem] 3xl:h-[4.5rem] 4xl:w-[5rem] 4xl:h-[5rem] 5xl:w-[6rem] 5xl:h-[6rem]" />
           </div>
@@ -1215,10 +1215,10 @@ export function Header() {
 
       {/* Bottom Row: Desktop Nav */}
       <nav className="hidden lg:flex items-center justify-center gap-8 lg:gap-14 xl:gap-16 max-w-none mx-auto mb-0 lg:mb-0">
-        <Link href="/" className="transition-colors text-white hover:text-white font-comfortaa text-[clamp(18px,1.2vw,28px)] font-normal">Home</Link>
-        <Link href="/about" className="transition-colors hover:opacity-80 font-comfortaa text-[clamp(18px,1.2vw,28px)] font-normal" style={{ color: '#FFD700' }}>HUStory</Link>
-        <Link href="/studio-gallery" className="transition-colors text-white hover:text-white font-comfortaa text-[clamp(18px,1.2vw,28px)] font-normal">Studio/Gallery</Link>
-        <Link href="/contact" className="transition-colors text-white hover:text-white font-comfortaa text-[clamp(18px,1.2vw,28px)] font-normal">Contact</Link>
+        <Link href="/" prefetch={false} className="transition-colors text-white hover:text-white font-comfortaa text-[clamp(18px,1.2vw,28px)] font-normal">Home</Link>
+        <Link href="/about" prefetch={false} className="transition-colors hover:opacity-80 font-comfortaa text-[clamp(18px,1.2vw,28px)] font-normal" style={{ color: '#FFD700' }}>HUStory</Link>
+        <Link href="/studio-gallery" prefetch={false} className="transition-colors text-white hover:text-white font-comfortaa text-[clamp(18px,1.2vw,28px)] font-normal">Studio/Gallery</Link>
+        <Link href="/contact" prefetch={false} className="transition-colors text-white hover:text-white font-comfortaa text-[clamp(18px,1.2vw,28px)] font-normal">Contact</Link>
       </nav>
 
       {/* Mobile Menu Overlay */}
@@ -1231,10 +1231,10 @@ export function Header() {
                 <img src={withBasePath('/assets/icons/icon_helluniversity.svg')} alt="Hell University" width={56} height={56} className="w-[56px] h-[56px]" />
               </div>
             </div>
-            <Link href="/" onClick={() => setMobileMenuOpen(false)} className="transition-colors text-white/80 hover:text-white font-comfortaa" style={{ fontSize: '22px', fontWeight: '400' }}>Home</Link>
-            <Link href="/about" onClick={() => setMobileMenuOpen(false)} className="transition-colors hover:opacity-80 font-comfortaa" style={{ fontSize: '22px', fontWeight: '400', color: '#FFD700' }}>HUStory</Link>
-            <Link href="/studio-gallery" onClick={() => setMobileMenuOpen(false)} className="transition-colors text-white/80 hover:text-white font-comfortaa" style={{ fontSize: '22px', fontWeight: '400' }}>Studio/Gallery</Link>
-            <Link href="/contact" onClick={() => setMobileMenuOpen(false)} className="transition-colors text-white/80 hover:text-white font-comfortaa" style={{ fontSize: '22px', fontWeight: '400' }}>Contact</Link>
+            <Link href="/" prefetch={false} onClick={() => setMobileMenuOpen(false)} className="transition-colors text-white/80 hover:text-white font-comfortaa" style={{ fontSize: '22px', fontWeight: '400' }}>Home</Link>
+            <Link href="/about" prefetch={false} onClick={() => setMobileMenuOpen(false)} className="transition-colors hover:opacity-80 font-comfortaa" style={{ fontSize: '22px', fontWeight: '400', color: '#FFD700' }}>HUStory</Link>
+            <Link href="/studio-gallery" prefetch={false} onClick={() => setMobileMenuOpen(false)} className="transition-colors text-white/80 hover:text-white font-comfortaa" style={{ fontSize: '22px', fontWeight: '400' }}>Studio/Gallery</Link>
+            <Link href="/contact" prefetch={false} onClick={() => setMobileMenuOpen(false)} className="transition-colors text-white/80 hover:text-white font-comfortaa" style={{ fontSize: '22px', fontWeight: '400' }}>Contact</Link>
           </nav>
         </div>
       )}
