@@ -503,7 +503,9 @@ export default function EmailQueuePage() {
                 <div>
                   <div className="text-sm font-medium text-gray-600 mb-2">Error Message</div>
                   <div className="bg-red-50 p-3 rounded text-sm text-red-900">
-                    {selectedEmail.errorMessage}
+                    {typeof selectedEmail.errorMessage === 'string' 
+                      ? selectedEmail.errorMessage 
+                      : JSON.stringify(selectedEmail.errorMessage, null, 2)}
                   </div>
                 </div>
               )}
@@ -517,7 +519,25 @@ export default function EmailQueuePage() {
                 <div>
                   <div className="text-sm font-medium text-gray-600 mb-2">Metadata</div>
                   <div className="bg-gray-50 p-3 rounded text-sm text-gray-900">
-                    <pre className="whitespace-pre-wrap">{JSON.stringify(selectedEmail.metadata, null, 2)}</pre>
+                    <pre className="whitespace-pre-wrap">
+                      {(() => {
+                        try {
+                          // If metadata is already a string, try to parse and re-stringify for formatting
+                          if (typeof selectedEmail.metadata === 'string') {
+                            try {
+                              const parsed = JSON.parse(selectedEmail.metadata)
+                              return JSON.stringify(parsed, null, 2)
+                            } catch {
+                              return selectedEmail.metadata
+                            }
+                          }
+                          // If it's an object, stringify it
+                          return JSON.stringify(selectedEmail.metadata, null, 2)
+                        } catch (error) {
+                          return `Error displaying metadata: ${error instanceof Error ? error.message : 'Unknown error'}`
+                        }
+                      })()}
+                    </pre>
                   </div>
                 </div>
               )}
