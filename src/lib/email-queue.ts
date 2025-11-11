@@ -16,7 +16,7 @@ export interface EmailQueueItem {
   subject: string
   htmlContent: string
   textContent: string
-  metadata?: string
+  metadata?: Record<string, any> | string // Can be object (parsed) or string (raw from DB)
   retryCount: number
   maxRetries: number
   status: "pending" | "processing" | "sent" | "failed" | "cancelled"
@@ -234,7 +234,9 @@ export async function processEmailQueue(limit: number = 10): Promise<{
 
       // Send email
       const transporter = await getTransporter()
-      const metadata = email.metadata ? JSON.parse(email.metadata) : {}
+      const metadata = typeof email.metadata === 'object' 
+        ? email.metadata 
+        : (email.metadata ? safeParseMetadata(email.metadata) || {} : {})
       
       const mailOptions: nodemailer.SendMailOptions = {
         from: `"Hell University Reservation System" <${process.env.SMTP_USER}>`,
@@ -253,7 +255,27 @@ export async function processEmailQueue(limit: number = 10): Promise<{
       
       console.log(`Email queue item ${email.id} sent successfully: ${result.messageId}`)
     } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : "Unknown error"
+      // Safely extract error message
+      let errorMessage = "Unknown error"
+      if (error instanceof Error) {
+        errorMessage = error.message || error.toString()
+      } else if (typeof error === 'string') {
+        errorMessage = error
+      } else if (error && typeof error === 'object') {
+        // Try to extract meaningful error information
+        try {
+          if ('message' in error && typeof error.message === 'string') {
+            errorMessage = error.message
+          } else if ('code' in error) {
+            errorMessage = `Error code: ${error.code}`
+          } else {
+            errorMessage = JSON.stringify(error)
+          }
+        } catch {
+          errorMessage = String(error)
+        }
+      }
+      
       results.errors.push(`Email ${email.id}: ${errorMessage}`)
       
       // Schedule next retry or mark as failed
@@ -359,7 +381,9 @@ export async function retryEmail(id: string): Promise<{ success: boolean; error?
     
     // Send email
     const transporter = await getTransporter()
-    const metadata = email.metadata ? JSON.parse(email.metadata) : {}
+    const metadata = typeof email.metadata === 'object' 
+      ? email.metadata 
+      : (email.metadata ? safeParseMetadata(email.metadata) || {} : {})
     
     const mailOptions: nodemailer.SendMailOptions = {
       from: `"Hell University Reservation System" <${process.env.SMTP_USER}>`,
@@ -378,7 +402,27 @@ export async function retryEmail(id: string): Promise<{ success: boolean; error?
     console.log(`Email ${id} manually retried successfully: ${result.messageId}`)
     return { success: true }
   } catch (error) {
-    const errorMessage = error instanceof Error ? error.message : "Unknown error"
+    // Safely extract error message
+    let errorMessage = "Unknown error"
+    if (error instanceof Error) {
+      errorMessage = error.message || error.toString()
+    } else if (typeof error === 'string') {
+      errorMessage = error
+    } else if (error && typeof error === 'object') {
+      // Try to extract meaningful error information
+      try {
+        if ('message' in error && typeof error.message === 'string') {
+          errorMessage = error.message
+        } else if ('code' in error) {
+          errorMessage = `Error code: ${error.code}`
+        } else {
+          errorMessage = JSON.stringify(error)
+        }
+      } catch {
+        errorMessage = String(error)
+      }
+    }
+    
     await scheduleNextRetry(id, errorMessage)
     return { success: false, error: errorMessage }
   }
@@ -474,6 +518,32 @@ export async function getEmailQueueStats(): Promise<{
 }
 
 /**
+ * Safely parse JSON metadata
+ */
+function safeParseMetadata(metadata: string | null | undefined): Record<string, any> | undefined {
+  if (!metadata) return undefined
+  
+  // If already an object, return as-is
+  if (typeof metadata === 'object' && !Array.isArray(metadata)) {
+    return metadata
+  }
+  
+  // If it's a string, try to parse it
+  if (typeof metadata === 'string') {
+    try {
+      return JSON.parse(metadata)
+    } catch (error) {
+      console.error('Failed to parse metadata JSON:', error)
+      console.error('Metadata value:', metadata)
+      // Return a safe fallback object with the raw string
+      return { _parseError: true, _rawValue: metadata }
+    }
+  }
+  
+  return undefined
+}
+
+/**
  * Format email queue item from database row
  */
 function formatEmailQueueItem(row: any): EmailQueueItem {
@@ -484,7 +554,7 @@ function formatEmailQueueItem(row: any): EmailQueueItem {
     subject: row.subject,
     htmlContent: row.html_content,
     textContent: row.text_content,
-    metadata: row.metadata ? JSON.parse(row.metadata) : undefined,
+    metadata: safeParseMetadata(row.metadata),
     retryCount: row.retry_count,
     maxRetries: row.max_retries,
     status: row.status,
