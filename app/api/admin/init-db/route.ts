@@ -58,7 +58,10 @@ export async function GET() {
       'bookings',
       'booking_status_history',
       'admin_actions',
-      'event_images'
+      'event_images',
+      'email_queue',
+      'email_sent_log',
+      'email_event_log'
     ]
     
     // SQLite IN clause with string literals
