@@ -125,7 +125,7 @@ export async function initializeDatabase(): Promise<void> {
       SELECT name FROM sqlite_master 
       WHERE type='table' AND name IN (
         'images', 'events', 'rate_limits', 'bookings', 
-        'booking_status_history', 'admin_actions', 'event_images', 'email_queue', 'email_sent_log'
+        'booking_status_history', 'admin_actions', 'event_images', 'email_queue', 'email_sent_log', 'email_event_log'
       )
     `)
 
