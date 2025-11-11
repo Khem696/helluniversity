@@ -2,7 +2,6 @@ import { redirect } from "next/navigation"
 import { auth } from "@/lib/auth-config"
 import { LoginButton } from "@/components/LoginButton"
 import { SignOutMessage } from "@/components/SignOutMessage"
-import Script from "next/script"
 import Link from "next/link"
 
 // Mark as dynamic to prevent static export issues
@@ -40,18 +39,6 @@ export default async function LoginPage({
   if (session?.user && !params?.signout) {
     return (
       <>
-        <Script id="hide-header" strategy="beforeInteractive">
-          {`
-            (function() {
-              const header = document.querySelector('header');
-              if (header) {
-                header.style.display = 'none';
-                header.style.visibility = 'hidden';
-              }
-              document.documentElement.setAttribute('data-login-page', 'true');
-            })();
-          `}
-        </Script>
         <div data-login-page className="flex min-h-screen items-center justify-center bg-gradient-to-br from-gray-50 to-gray-100">
           <div className="w-full max-w-md p-8 bg-white rounded-lg shadow-xl text-center">
             <div className="mb-6">
@@ -67,6 +54,7 @@ export default async function LoginPage({
             </div>
             <Link
               href="/admin"
+              prefetch={false}
               className="inline-block w-full px-6 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors font-medium text-center"
             >
               Go to Dashboard
@@ -79,18 +67,6 @@ export default async function LoginPage({
 
   return (
     <>
-      <Script id="hide-header" strategy="beforeInteractive">
-        {`
-          (function() {
-            const header = document.querySelector('header');
-            if (header) {
-              header.style.display = 'none';
-              header.style.visibility = 'hidden';
-            }
-            document.documentElement.setAttribute('data-login-page', 'true');
-          })();
-        `}
-      </Script>
       <div data-login-page className="flex min-h-screen items-center justify-center bg-gradient-to-br from-gray-50 to-gray-100">
         <div className="w-full max-w-md p-8 bg-white rounded-lg shadow-xl">
           <div className="text-center mb-8">

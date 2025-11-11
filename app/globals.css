@@ -1274,10 +1274,11 @@ html {
   transition: opacity 0.3s ease-in-out;
 }
 
-/* Hide header on admin login page */
-html[data-login-page="true"] header,
-html[data-login-page="true"] > body > header,
-body:has([data-login-page]) > header {
+/* Hide admin header on admin login page */
+/* Only target header within admin layout, not main site header */
+html[data-login-page="true"] .min-h-screen > header,
+html[data-login-page="true"] header.bg-white.border-b,
+body:has([data-login-page]) .min-h-screen > header {
   display: none !important;
   visibility: hidden !important;
   opacity: 0 !important;

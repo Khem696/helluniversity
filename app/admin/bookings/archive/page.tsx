@@ -303,7 +303,7 @@ export default function BookingsArchivePage() {
     <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-12">
       <div className="mb-8">
         <div className="flex items-center gap-4 mb-4">
-          <Link href="/admin/bookings">
+          <Link href="/admin/bookings" prefetch={false}>
             <Button variant="outline" size="sm">
               <ArrowLeft className="w-4 h-4 mr-2" />
               Back to Bookings

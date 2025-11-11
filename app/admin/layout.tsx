@@ -37,6 +37,7 @@ export default async function AdminLayout({
             <div className="flex items-center gap-4">
               <Link
                 href="/admin"
+                prefetch={false}
                 className="text-xl font-bold text-gray-900 hover:text-gray-700 transition-colors"
               >
                 Admin Panel
@@ -47,30 +48,35 @@ export default async function AdminLayout({
             <nav className="hidden md:flex items-center gap-6">
               <Link
                 href="/admin"
+                prefetch={false}
                 className="text-sm font-medium text-gray-700 hover:text-gray-900 transition-colors"
               >
                 Dashboard
               </Link>
               <Link
                 href="/admin/bookings"
+                prefetch={false}
                 className="text-sm font-medium text-gray-700 hover:text-gray-900 transition-colors"
               >
                 Reservation
               </Link>
               <Link
                 href="/admin/events"
+                prefetch={false}
                 className="text-sm font-medium text-gray-700 hover:text-gray-900 transition-colors"
               >
                 Event
               </Link>
               <Link
                 href="/admin/images"
+                prefetch={false}
                 className="text-sm font-medium text-gray-700 hover:text-gray-900 transition-colors"
               >
                 Image
               </Link>
               <Link
                 href="/admin/email-queue"
+                prefetch={false}
                 className="text-sm font-medium text-gray-700 hover:text-gray-900 transition-colors"
               >
                 Email Queue
