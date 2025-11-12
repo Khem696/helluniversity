@@ -2,6 +2,8 @@ import { NextResponse } from "next/server"
 import { getTursoClient } from "@/lib/turso"
 import { imageExists } from "@/lib/blob"
 import { requireAuthorizedDomain, unauthorizedResponse, forbiddenResponse } from "@/lib/auth"
+import { createRequestLogger } from "@/lib/logger"
+import { withErrorHandling, successResponse, errorResponse, ErrorCodes } from "@/lib/api-response"
 
 /**
  * Cleanup Orphaned Image Records
@@ -16,14 +18,21 @@ import { requireAuthorizedDomain, unauthorizedResponse, forbiddenResponse } from
  */
 
 export async function POST() {
-  try {
+  return withErrorHandling(async () => {
+    const requestId = crypto.randomUUID()
+    const logger = createRequestLogger(requestId, '/api/admin/cleanup-orphaned-images')
+    
+    await logger.info('Cleanup orphaned images request received')
+    
     // Check authentication and authorization
     try {
       await requireAuthorizedDomain()
     } catch (error) {
       if (error instanceof Error && error.message.includes("Unauthorized")) {
+        await logger.warn('Cleanup orphaned images rejected: authentication failed')
         return unauthorizedResponse("Authentication required")
       }
+      await logger.warn('Cleanup orphaned images rejected: authorization failed')
       return forbiddenResponse("Access denied: Must be from authorized Google Workspace domain")
     }
 
@@ -55,7 +64,7 @@ export async function POST() {
           })
           results.orphaned++
           results.deleted++
-          console.log(`Deleted record with no blob_url: ${img.original_filename || img.id}`)
+          await logger.debug(`Deleted record with no blob_url: ${img.original_filename || img.id}`)
         } catch (error) {
           results.errors.push(`Failed to delete ${img.id}: ${error instanceof Error ? error.message : "Unknown error"}`)
         }
@@ -74,7 +83,7 @@ export async function POST() {
             })
             results.orphaned++
             results.deleted++
-            console.log(`Deleted orphaned record: ${img.original_filename || img.id} (blob_url: ${blobUrl})`)
+            await logger.debug(`Deleted orphaned record: ${img.original_filename || img.id} (blob_url: ${blobUrl})`)
           } catch (error) {
             results.errors.push(`Failed to delete ${img.id}: ${error instanceof Error ? error.message : "Unknown error"}`)
           }
@@ -88,33 +97,33 @@ export async function POST() {
           })
           results.orphaned++
           results.deleted++
-          console.log(`Deleted record (blob check failed): ${img.original_filename || img.id}`)
+          await logger.debug(`Deleted record (blob check failed): ${img.original_filename || img.id}`)
         } catch (deleteError) {
           results.errors.push(`Failed to delete ${img.id}: ${error instanceof Error ? error.message : "Unknown error"}`)
         }
       }
     }
 
-    return NextResponse.json({
-      success: true,
-      message: `Cleanup completed: ${results.deleted} orphaned records deleted out of ${results.checked} checked`,
-      stats: {
-        checked: results.checked,
-        orphaned: results.orphaned,
-        deleted: results.deleted,
-        errors: results.errors.length,
-      },
-      errors: results.errors.length > 0 ? results.errors : undefined,
+    await logger.info('Cleanup orphaned images completed', {
+      checked: results.checked,
+      orphaned: results.orphaned,
+      deleted: results.deleted,
+      errorsCount: results.errors.length
     })
-  } catch (error) {
-    console.error("Cleanup orphaned images error:", error)
-    return NextResponse.json(
+    
+    return successResponse(
       {
-        success: false,
-        error: error instanceof Error ? error.message : "Failed to cleanup orphaned images",
+        message: `Cleanup completed: ${results.deleted} orphaned records deleted out of ${results.checked} checked`,
+        stats: {
+          checked: results.checked,
+          orphaned: results.orphaned,
+          deleted: results.deleted,
+          errors: results.errors.length,
+        },
+        errors: results.errors.length > 0 ? results.errors : undefined,
       },
-      { status: 500 }
+      { requestId }
     )
-  }
+  }, { endpoint: '/api/admin/cleanup-orphaned-images' })
 }
 

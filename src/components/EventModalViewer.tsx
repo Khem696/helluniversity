@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from "react"
 import { X, ChevronLeft, ChevronRight } from "lucide-react"
-import { Dialog, DialogContent } from "./ui/dialog"
+import { Dialog, DialogContent, DialogTitle, DialogHeader } from "./ui/dialog"
 import {
   Carousel,
   CarouselContent,
@@ -56,9 +56,15 @@ export function EventModalViewer({ eventId, isOpen, onClose }: EventModalViewerP
           throw new Error("Failed to fetch event details")
         }
 
-        const data = await response.json()
-        if (data.success && data.event) {
-          setEventData(data.event)
+        const json = await response.json()
+        if (json.success) {
+          // API returns { success: true, data: { event: {...} } }
+          const event = json.data?.event || json.event
+          if (event) {
+            setEventData(event)
+          } else {
+            throw new Error("Event not found")
+          }
         } else {
           throw new Error("Event not found")
         }
@@ -98,6 +104,13 @@ export function EventModalViewer({ eventId, isOpen, onClose }: EventModalViewerP
   return (
     <Dialog open={isOpen} onOpenChange={onClose}>
       <DialogContent className="max-w-[95vw] sm:max-w-[90vw] lg:max-w-[85vw] xl:max-w-[80vw] max-h-[95vh] p-0 gap-0 overflow-hidden bg-[#1a1a1a] border-0">
+        {/* DialogTitle for accessibility (visually hidden since we have custom header) */}
+        <DialogHeader className="sr-only">
+          <DialogTitle>
+            {eventData ? `${eventData.title} - Event Details` : "Event Details"}
+          </DialogTitle>
+        </DialogHeader>
+        
         {/* Close Button */}
         <button
           onClick={onClose}

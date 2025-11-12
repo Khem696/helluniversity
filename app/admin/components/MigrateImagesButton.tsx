@@ -57,22 +57,56 @@ export function MigrateImagesButton() {
     setStatus({ type: "checking" })
     try {
       const response = await fetch("/api/admin/migrate-images")
-      const data = await response.json()
+      
+      // Check if response is ok
+      if (!response.ok) {
+        // If unauthorized, redirect to login
+        if (response.status === 401 || response.status === 403) {
+          setStatus({
+            type: "error",
+            message: "Authentication required. Please log in again.",
+          })
+          // Redirect to login after a short delay
+          setTimeout(() => {
+            window.location.href = "/admin/login"
+          }, 2000)
+          return
+        }
+        throw new Error(`HTTP error! status: ${response.status}`)
+      }
+      
+      const responseData = await response.json()
 
-      if (data.success) {
+      if (responseData.success && responseData.data) {
+        const stats = responseData.data.stats || {}
         setStatus({
           type: "success",
-          message: `Total images in database: ${data.stats.total}`,
-          stats: data.stats,
+          message: `Total images in database: ${stats.total || 0}`,
+          stats: stats,
         })
       } else {
-        setStatus({ type: "error", message: data.error || "Failed to check status" })
+        const errorMessage = responseData.error?.message || responseData.error || "Failed to check status"
+        setStatus({ type: "error", message: errorMessage })
       }
     } catch (error) {
-      setStatus({
-        type: "error",
-        message: error instanceof Error ? error.message : "Failed to check migration status",
-      })
+      // Handle network errors and authentication errors
+      const errorMessage = error instanceof Error ? error.message : "Failed to check migration status"
+      
+      // Check if it's an authentication error
+      if (errorMessage.includes("auth") || errorMessage.includes("session") || errorMessage.includes("Unauthorized")) {
+        setStatus({
+          type: "error",
+          message: "Authentication error. Please refresh the page and log in again.",
+        })
+        setTimeout(() => {
+          window.location.href = "/admin/login"
+        }, 2000)
+      } else {
+        setStatus({
+          type: "error",
+          message: errorMessage,
+        })
+      }
     } finally {
       setIsChecking(false)
     }
@@ -85,19 +119,26 @@ export function MigrateImagesButton() {
       const response = await fetch("/api/admin/migrate-images?dryRun=true", {
         method: "POST",
       })
-      const data = await response.json()
+      
+      if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`)
+      }
+      
+      const responseData = await response.json()
 
-      if (data.success) {
+      if (responseData.success && responseData.data) {
+        const dryRunData = responseData.data
         setStatus({
           type: "dryrun",
-          message: data.message,
+          message: dryRunData.message || "Dry run completed",
           dryRunResults: {
-            images: Array.isArray(data.images) ? data.images : [],
-            stats: data.stats || { total: 0, byCategory: {} },
+            images: Array.isArray(dryRunData.images) ? dryRunData.images : [],
+            stats: dryRunData.stats || { total: 0, byCategory: {} },
           },
         })
       } else {
-        setStatus({ type: "error", message: data.error || "Failed to run dry run" })
+        const errorMessage = responseData.error?.message || responseData.error || "Failed to run dry run"
+        setStatus({ type: "error", message: errorMessage })
       }
     } catch (error) {
       setStatus({
@@ -122,21 +163,27 @@ export function MigrateImagesButton() {
         method: "POST",
       })
 
-      const data = await response.json()
+      if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`)
+      }
 
-      if (data.success) {
+      const responseData = await response.json()
+
+      if (responseData.success && responseData.data) {
+        const cleanupData = responseData.data
         setStatus({
           type: "success",
-          message: data.message,
-          stats: data.stats,
-          errors: data.errors,
+          message: cleanupData.message || "Cleanup completed",
+          stats: cleanupData.stats,
+          errors: cleanupData.errors,
         })
         // Refresh status after cleanup
         setTimeout(() => checkStatus(), 1000)
       } else {
+        const errorMessage = responseData.error?.message || responseData.error || "Failed to cleanup orphaned images"
         setStatus({
           type: "error",
-          message: data.error || "Failed to cleanup orphaned images",
+          message: errorMessage,
         })
       }
     } catch (error) {
@@ -177,21 +224,27 @@ export function MigrateImagesButton() {
         method: "POST",
       })
 
-      const data = await response.json()
+      if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`)
+      }
 
-      if (data.success) {
+      const responseData = await response.json()
+
+      if (responseData.success && responseData.data) {
+        const migrationData = responseData.data
         setStatus({
           type: "success",
-          message: data.message,
-          stats: data.stats,
-          errors: data.errors,
+          message: migrationData.message || "Migration completed",
+          stats: migrationData.stats,
+          errors: migrationData.errors,
         })
         // Refresh status after migration
         setTimeout(() => checkStatus(), 1000)
       } else {
+        const errorMessage = responseData.error?.message || responseData.error || "Failed to migrate images"
         setStatus({
           type: "error",
-          message: data.error || "Failed to migrate images",
+          message: errorMessage,
         })
       }
     } catch (error) {

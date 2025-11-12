@@ -2,6 +2,8 @@ import { NextResponse } from "next/server"
 import { getTursoClient } from "@/lib/turso"
 import { requireAuthorizedDomain, unauthorizedResponse, forbiddenResponse } from "@/lib/auth"
 import { randomUUID } from "crypto"
+import { createRequestLogger } from "@/lib/logger"
+import { withErrorHandling, successResponse, errorResponse, notFoundResponse, ErrorCodes } from "@/lib/api-response"
 
 /**
  * Admin Event Images Management API
@@ -27,26 +29,44 @@ export async function POST(
   request: Request,
   { params }: { params: Promise<{ id: string }> }
 ) {
-  try {
-    const authError = await checkAuth()
-    if (authError) return authError
-
+  return withErrorHandling(async () => {
     const { id: eventId } = await params
+    const requestId = crypto.randomUUID()
+    const logger = createRequestLogger(requestId, '/api/admin/events/[id]/images')
+    
+    await logger.info('Admin add event image request', { eventId })
+    
+    const authError = await checkAuth()
+    if (authError) {
+      await logger.warn('Admin add event image rejected: authentication failed', { eventId })
+      return authError
+    }
+
     const body = await request.json()
     const { image_id, image_type = "in_event", display_order } = body
+    
+    await logger.debug('Add event image data', { eventId, image_id, image_type, display_order })
 
     if (!image_id) {
-      return NextResponse.json(
-        { success: false, error: "image_id is required" },
-        { status: 400 }
+      await logger.warn('Add event image rejected: missing image_id', { eventId })
+      return errorResponse(
+        ErrorCodes.VALIDATION_ERROR,
+        "image_id is required",
+        undefined,
+        400,
+        { requestId }
       )
     }
 
     // Validate image_type
     if (image_type !== "poster" && image_type !== "in_event") {
-      return NextResponse.json(
-        { success: false, error: "image_type must be 'poster' or 'in_event'" },
-        { status: 400 }
+      await logger.warn('Add event image rejected: invalid image_type', { eventId, image_type })
+      return errorResponse(
+        ErrorCodes.VALIDATION_ERROR,
+        "image_type must be 'poster' or 'in_event'",
+        undefined,
+        400,
+        { requestId }
       )
     }
 
@@ -86,33 +106,42 @@ export async function POST(
       args: [eventImageId],
     })
 
-    return NextResponse.json({
-      success: true,
-      event_image: result.rows[0],
+    await logger.info('Event image added successfully', {
+      eventId,
+      eventImageId: eventImageId,
+      image_type
     })
-  } catch (error) {
-    console.error("Add event image error:", error)
-    return NextResponse.json(
+    
+    return successResponse(
       {
-        success: false,
-        error: error instanceof Error ? error.message : "Failed to add event image",
+        event_image: result.rows[0],
       },
-      { status: 500 }
+      { requestId }
     )
-  }
+  }, { endpoint: '/api/admin/events/[id]/images' })
 }
 
 export async function GET(
   request: Request,
   { params }: { params: Promise<{ id: string }> }
 ) {
-  try {
-    const authError = await checkAuth()
-    if (authError) return authError
-
+  return withErrorHandling(async () => {
     const { id: eventId } = await params
+    const requestId = crypto.randomUUID()
+    const logger = createRequestLogger(requestId, '/api/admin/events/[id]/images')
+    
+    await logger.info('Admin get event images request', { eventId })
+    
+    const authError = await checkAuth()
+    if (authError) {
+      await logger.warn('Admin get event images rejected: authentication failed', { eventId })
+      return authError
+    }
+
     const { searchParams } = new URL(request.url)
     const imageType = searchParams.get("image_type") || null
+    
+    await logger.debug('Get event images parameters', { eventId, imageType: imageType || undefined })
 
     const db = getTursoClient()
 
@@ -136,21 +165,20 @@ export async function GET(
       `,
       args,
     })
-
-    return NextResponse.json({
-      success: true,
-      event_images: result.rows,
-      count: result.rows.length,
+    
+    await logger.info('Event images retrieved', {
+      eventId,
+      imagesCount: result.rows.length,
+      imageType: imageType || undefined
     })
-  } catch (error) {
-    console.error("List event images error:", error)
-    return NextResponse.json(
+
+    return successResponse(
       {
-        success: false,
-        error: error instanceof Error ? error.message : "Failed to list event images",
+        event_images: result.rows,
+        count: result.rows.length,
       },
-      { status: 500 }
+      { requestId }
     )
-  }
+  }, { endpoint: '/api/admin/events/[id]/images' })
 }
 

@@ -3,6 +3,8 @@ import { getTursoClient } from "@/lib/turso"
 import { processAndUploadImage, validateImageFile } from "@/lib/image-processor"
 import { requireAuthorizedDomain, unauthorizedResponse, forbiddenResponse } from "@/lib/auth"
 import { randomUUID } from "crypto"
+import { createRequestLogger } from "@/lib/logger"
+import { withErrorHandling, successResponse, errorResponse, ErrorCodes } from "@/lib/api-response"
 
 /**
  * Admin Image Upload API
@@ -18,16 +20,24 @@ import { randomUUID } from "crypto"
  */
 
 export async function POST(request: Request) {
-  try {
+  return withErrorHandling(async () => {
+    const requestId = crypto.randomUUID()
+    const logger = createRequestLogger(requestId, '/api/admin/images')
+    
+    await logger.info('Admin image upload request received')
+    
     // Check authentication and authorization
     try {
       await requireAuthorizedDomain()
     } catch (error) {
       if (error instanceof Error && error.message.includes("Unauthorized")) {
+        await logger.warn('Admin image upload rejected: authentication failed')
         return unauthorizedResponse("Authentication required")
       }
+      await logger.warn('Admin image upload rejected: authorization failed')
       return forbiddenResponse("Access denied: Must be from authorized Google Workspace domain")
     }
+    
     const formData = await request.formData()
     const file = formData.get("file") as File | null
     const title = formData.get("title") as string | null
@@ -36,22 +46,38 @@ export async function POST(request: Request) {
     const displayOrder = formData.get("display_order") as string | null
 
     if (!file) {
-      return NextResponse.json(
-        { success: false, error: "No file provided" },
-        { status: 400 }
+      await logger.warn('Admin image upload rejected: no file provided')
+      return errorResponse(
+        ErrorCodes.VALIDATION_ERROR,
+        "No file provided",
+        undefined,
+        400,
+        { requestId }
       )
     }
+    
+    await logger.info('Image file received', {
+      fileName: file.name,
+      fileSize: file.size,
+      fileType: file.type,
+      category: category || undefined
+    })
 
     // Validate image file
     const validation = validateImageFile(file)
     if (!validation.valid) {
-      return NextResponse.json(
-        { success: false, error: validation.error },
-        { status: 400 }
+      await logger.warn('Admin image upload rejected: invalid file', { error: validation.error })
+      return errorResponse(
+        ErrorCodes.VALIDATION_ERROR,
+        validation.error || "Invalid image file",
+        undefined,
+        400,
+        { requestId }
       )
     }
 
     // Process and upload image (converts to WebP)
+    await logger.info('Processing and uploading image')
     const processed = await processAndUploadImage(
       file,
       file.name,
@@ -62,6 +88,13 @@ export async function POST(request: Request) {
         format: "webp",
       }
     )
+    
+    await logger.info('Image processed and uploaded', {
+      imageUrl: processed.url,
+      width: processed.width,
+      height: processed.height,
+      format: processed.format
+    })
 
     // Save metadata to database
     const db = getTursoClient()
@@ -104,34 +137,29 @@ export async function POST(request: Request) {
         now,
       ],
     })
+    
+    await logger.info('Image metadata saved to database', { imageId, category: category || undefined })
 
-    return NextResponse.json({
-      success: true,
-      image: {
-        id: imageId,
-        url: processed.url,
-        pathname: processed.pathname,
-        title: title || null,
-        event_info: eventInfo || null,
-        category: category || null,
-        display_order: finalDisplayOrder,
-        width: processed.width,
-        height: processed.height,
-        file_size: processed.fileSize,
-        format: processed.format,
-        created_at: now,
-      },
-    })
-  } catch (error) {
-    console.error("Image upload error:", error)
-    return NextResponse.json(
+    return successResponse(
       {
-        success: false,
-        error: error instanceof Error ? error.message : "Failed to upload image",
+        image: {
+          id: imageId,
+          url: processed.url,
+          pathname: processed.pathname,
+          title: title || null,
+          event_info: eventInfo || null,
+          category: category || null,
+          display_order: finalDisplayOrder,
+          width: processed.width,
+          height: processed.height,
+          file_size: processed.fileSize,
+          format: processed.format,
+          created_at: now,
+        },
       },
-      { status: 500 }
+      { requestId }
     )
-  }
+  }, { endpoint: '/api/admin/images' })
 }
 
 /**
@@ -143,20 +171,30 @@ export async function POST(request: Request) {
  * - offset: Offset for pagination (default: 0)
  */
 export async function GET(request: Request) {
-  try {
+  return withErrorHandling(async () => {
+    const requestId = crypto.randomUUID()
+    const logger = createRequestLogger(requestId, '/api/admin/images')
+    
+    await logger.info('Admin images list request received')
+    
     // Check authentication and authorization
     try {
       await requireAuthorizedDomain()
     } catch (error) {
       if (error instanceof Error && error.message.includes("Unauthorized")) {
+        await logger.warn('Admin images list rejected: authentication failed')
         return unauthorizedResponse("Authentication required")
       }
+      await logger.warn('Admin images list rejected: authorization failed')
       return forbiddenResponse("Access denied: Must be from authorized Google Workspace domain")
     }
+    
     const { searchParams } = new URL(request.url)
     const limit = parseInt(searchParams.get("limit") || "50")
     const offset = parseInt(searchParams.get("offset") || "0")
     const category = searchParams.get("category") || null
+    
+    await logger.debug('List images parameters', { limit, offset, category: category || undefined })
 
     const db = getTursoClient()
 
@@ -175,7 +213,7 @@ export async function GET(request: Request) {
     const result = await db.execute({
       sql: `
         SELECT 
-          id, blob_url, title, event_info, category, display_order, format,
+          id, blob_url, title, event_info, category, display_order, ai_selected, ai_order, format,
           width, height, file_size, original_filename,
           created_at, updated_at
         FROM images
@@ -185,26 +223,25 @@ export async function GET(request: Request) {
       `,
       args: [...countArgs, limit, offset],
     })
-
-    return NextResponse.json({
-      success: true,
-      images: result.rows,
-      pagination: {
-        total,
-        limit,
-        offset,
-        hasMore: offset + limit < total,
-      },
+    
+    await logger.info('Images list retrieved', {
+      count: result.rows.length,
+      total,
+      category: category || undefined
     })
-  } catch (error) {
-    console.error("List images error:", error)
-    return NextResponse.json(
+
+    return successResponse(
       {
-        success: false,
-        error: error instanceof Error ? error.message : "Failed to list images",
+        images: result.rows,
+        pagination: {
+          total,
+          limit,
+          offset,
+          hasMore: offset + limit < total,
+        },
       },
-      { status: 500 }
+      { requestId }
     )
-  }
+  }, { endpoint: '/api/admin/images' })
 }
 

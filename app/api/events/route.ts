@@ -1,5 +1,7 @@
 import { NextResponse } from "next/server"
 import { getTursoClient } from "@/lib/turso"
+import { createRequestLogger } from "@/lib/logger"
+import { withErrorHandling, successResponse, errorResponse, ErrorCodes } from "@/lib/api-response"
 
 /**
  * Public Events API
@@ -15,11 +17,18 @@ import { getTursoClient } from "@/lib/turso"
  */
 
 export async function GET(request: Request) {
-  try {
+  return withErrorHandling(async () => {
+    const requestId = crypto.randomUUID()
+    const logger = createRequestLogger(requestId, '/api/events')
+    
+    await logger.info('Public events list request received')
+    
     const { searchParams } = new URL(request.url)
     const pastOnly = searchParams.get("past") === "true"
     const currentOnly = searchParams.get("current") === "true"
     const now = Math.floor(Date.now() / 1000)
+    
+    await logger.debug('Events list parameters', { pastOnly, currentOnly })
 
     const db = getTursoClient()
 
@@ -74,32 +83,35 @@ export async function GET(request: Request) {
         return dateB - dateA
       })
 
-      return NextResponse.json({
-        success: true,
-        pastEvents,
-        currentEvents,
-        count: {
-          past: pastEvents.length,
-          current: currentEvents.length,
-          total: events.length,
-        },
+      await logger.info('Events retrieved (split)', {
+        pastCount: pastEvents.length,
+        currentCount: currentEvents.length,
+        total: events.length
       })
+      
+      return successResponse(
+        {
+          pastEvents,
+          currentEvents,
+          count: {
+            past: pastEvents.length,
+            current: currentEvents.length,
+            total: events.length,
+          },
+        },
+        { requestId }
+      )
     }
 
-    return NextResponse.json({
-      success: true,
-      events,
-      count: events.length,
-    })
-  } catch (error) {
-    console.error("Get events error:", error)
-    return NextResponse.json(
+    await logger.info('Events retrieved', { count: events.length })
+    
+    return successResponse(
       {
-        success: false,
-        error: error instanceof Error ? error.message : "Failed to get events",
+        events,
+        count: events.length,
       },
-      { status: 500 }
+      { requestId }
     )
-  }
+  }, { endpoint: '/api/events' })
 }
 

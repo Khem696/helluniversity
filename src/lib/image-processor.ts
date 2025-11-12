@@ -50,7 +50,10 @@ export async function processAndUploadImage(
     const metadata = await sharp(buffer).metadata()
 
     // Process image with Sharp
+    // .rotate() auto-rotates based on EXIF orientation tag and strips orientation metadata
+    // This ensures images are displayed correctly regardless of how they were captured
     const processedBuffer = await sharp(buffer)
+      .rotate() // Auto-rotate based on EXIF orientation tag
       .resize(maxWidth, maxHeight, {
         fit: "inside",
         withoutEnlargement: true,
@@ -114,6 +117,7 @@ export async function generateThumbnail(
     : file
 
   const thumbnailBuffer = await sharp(buffer)
+    .rotate() // Auto-rotate based on EXIF orientation tag
     .resize(width, height, {
       fit: "cover",
       position: "center",

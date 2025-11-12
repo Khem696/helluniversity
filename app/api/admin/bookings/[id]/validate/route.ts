@@ -1,0 +1,105 @@
+import { NextResponse } from "next/server"
+import { validateAction, type Booking } from "@/lib/booking-action-validation"
+import {
+  requireAuthorizedDomain,
+  unauthorizedResponse,
+  forbiddenResponse,
+} from "@/lib/auth"
+import { getBookingById } from "@/lib/bookings"
+import { withErrorHandling, successResponse, errorResponse, notFoundResponse, ErrorCodes } from "@/lib/api-response"
+import { createRequestLogger } from "@/lib/logger"
+
+/**
+ * Validate booking action before execution
+ * POST /api/admin/bookings/[id]/validate
+ */
+export async function POST(
+  request: Request,
+  { params }: { params: Promise<{ id: string }> }
+) {
+  return withErrorHandling(async () => {
+    const { id } = await params
+    const requestId = crypto.randomUUID()
+    const logger = createRequestLogger(requestId, '/api/admin/bookings/[id]/validate')
+    
+    await logger.info('Booking action validation request', { bookingId: id })
+    
+    const authError = await checkAuth()
+    if (authError) {
+      await logger.warn('Validation request rejected: authentication failed', { bookingId: id })
+      return authError
+    }
+
+    try {
+      const body = await request.json()
+      const { action, targetStatus } = body
+
+      if (!action || !targetStatus) {
+        return errorResponse(
+          ErrorCodes.INVALID_INPUT,
+          "Missing required fields: action and targetStatus",
+          {},
+          400,
+          { requestId }
+        )
+      }
+
+      // Get booking from database
+      const booking = await getBookingById(id)
+      if (!booking) {
+        await logger.warn('Validation failed: booking not found', { bookingId: id })
+        return notFoundResponse('Booking', { requestId })
+      }
+
+      // Transform booking to match validation interface
+      // Note: responseDate and depositVerifiedAt are already Unix timestamps (numbers)
+      const validationBooking: Booking = {
+        id: booking.id,
+        status: booking.status,
+        start_date: booking.startDate ? Math.floor(new Date(booking.startDate).getTime() / 1000) : 0,
+        end_date: booking.endDate ? Math.floor(new Date(booking.endDate).getTime() / 1000) : null,
+        start_time: booking.startTime || null,
+        end_time: booking.endTime || null,
+        proposed_date: booking.proposedDate ? Math.floor(new Date(booking.proposedDate).getTime() / 1000) : null,
+        proposed_end_date: booking.proposedEndDate ? Math.floor(new Date(booking.proposedEndDate).getTime() / 1000) : null,
+        response_date: booking.responseDate || null,
+        deposit_evidence_url: booking.depositEvidenceUrl || null,
+        deposit_verified_at: booking.depositVerifiedAt || null,
+      }
+
+      // Run validation
+      const validationResult = await validateAction(action, validationBooking, targetStatus)
+
+      await logger.info('Validation completed', {
+        bookingId: id,
+        action,
+        valid: validationResult.valid,
+        errors: validationResult.errors.length,
+        warnings: validationResult.warnings.length,
+      })
+
+      return successResponse(validationResult, { requestId })
+    } catch (error) {
+      await logger.error('Validation error', error instanceof Error ? error : new Error(String(error)))
+      return errorResponse(
+        ErrorCodes.INTERNAL_ERROR,
+        "Failed to validate action",
+        { error: error instanceof Error ? error.message : String(error) },
+        500,
+        { requestId }
+      )
+    }
+  })
+}
+
+async function checkAuth() {
+  try {
+    await requireAuthorizedDomain()
+  } catch (error) {
+    if (error instanceof Error && error.message.includes("Unauthorized")) {
+      return unauthorizedResponse("Authentication required")
+    }
+    return forbiddenResponse("Access denied: Must be from authorized Google Workspace domain")
+  }
+  return null
+}

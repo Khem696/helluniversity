@@ -74,7 +74,7 @@ export function ContactPage() {
                 className="inline-flex items-center gap-2 text-white hover:text-[#87CEEB] transition-colors"
               >
                 <Facebook size={20} className="flex-shrink-0" />
-                <span className="text-[clamp(0.95rem,1vw,1.125rem)]">Kade Javanalikikorn</span>
+                <span className="text-[clamp(0.95rem,1vw,1.125rem)]">Kade Javanalikhikara</span>
               </a>
             </div>
 

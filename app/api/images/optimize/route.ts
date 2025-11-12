@@ -3,6 +3,8 @@ import sharp from "sharp"
 import { readFile } from "fs/promises"
 import { join } from "path"
 import { existsSync } from "fs"
+import { createRequestLogger } from "@/lib/logger"
+import { withErrorHandling, errorResponse, ErrorCodes } from "@/lib/api-response"
 
 /**
  * Image Optimization API Route
@@ -22,31 +24,66 @@ const CACHE_MAX_AGE = 31536000 // 1 year in seconds
 const MAX_DIMENSION = 1000 // Maximum dimension to prevent abuse
 
 export async function GET(request: Request) {
-  try {
+  return withErrorHandling(async () => {
+    const requestId = crypto.randomUUID()
+    const logger = createRequestLogger(requestId, '/api/images/optimize')
+    
+    await logger.info('Image optimization request received')
+    
     const { searchParams } = new URL(request.url)
     const imagePath = searchParams.get("path")
     const width = parseInt(searchParams.get("w") || "280")
     const height = parseInt(searchParams.get("h") || "280")
     const quality = parseInt(searchParams.get("q") || "80")
     const format = (searchParams.get("format") || "webp") as "webp" | "jpeg" | "png"
+    
+    await logger.debug('Image optimization parameters', { imagePath, width, height, quality, format })
 
     // Validate inputs
     if (!imagePath) {
-      return NextResponse.json({ error: "Image path parameter is required" }, { status: 400 })
+      await logger.warn('Image optimization rejected: missing path parameter')
+      return errorResponse(
+        ErrorCodes.VALIDATION_ERROR,
+        "Image path parameter is required",
+        undefined,
+        400,
+        { requestId }
+      )
     }
 
     // Security: Only allow images from public directory
     if (!imagePath.startsWith("/") || imagePath.includes("..")) {
-      return NextResponse.json({ error: "Invalid image path" }, { status: 400 })
+      await logger.warn('Image optimization rejected: invalid path', { imagePath })
+      return errorResponse(
+        ErrorCodes.VALIDATION_ERROR,
+        "Invalid image path",
+        undefined,
+        400,
+        { requestId }
+      )
     }
 
     // Validate dimensions
     if (width > MAX_DIMENSION || height > MAX_DIMENSION || width < 1 || height < 1) {
-      return NextResponse.json({ error: "Invalid dimensions" }, { status: 400 })
+      await logger.warn('Image optimization rejected: invalid dimensions', { width, height })
+      return errorResponse(
+        ErrorCodes.VALIDATION_ERROR,
+        "Invalid dimensions",
+        undefined,
+        400,
+        { requestId }
+      )
     }
 
     if (quality < 1 || quality > 100) {
-      return NextResponse.json({ error: "Invalid quality" }, { status: 400 })
+      await logger.warn('Image optimization rejected: invalid quality', { quality })
+      return errorResponse(
+        ErrorCodes.VALIDATION_ERROR,
+        "Invalid quality",
+        undefined,
+        400,
+        { requestId }
+      )
     }
 
     // Resolve file path
@@ -54,8 +91,17 @@ export async function GET(request: Request) {
     
     // Check if file exists
     if (!existsSync(publicPath)) {
-      return NextResponse.json({ error: "Image not found" }, { status: 404 })
+      await logger.warn('Image not found', { imagePath })
+      return errorResponse(
+        ErrorCodes.NOT_FOUND,
+        "Image not found",
+        undefined,
+        404,
+        { requestId }
+      )
     }
+
+    await logger.debug('Processing image', { imagePath, width, height, format, quality })
 
     // Read and process image
     const imageBuffer = await readFile(publicPath)
@@ -76,21 +122,25 @@ export async function GET(request: Request) {
         ...(format === "jpeg" && { mozjpeg: true }), // Better JPEG compression
       })
       .toBuffer()
+    
+    await logger.info('Image optimized successfully', {
+      imagePath,
+      originalSize: imageBuffer.length,
+      optimizedSize: optimizedBuffer.length,
+      format
+    })
 
     // Return optimized image with caching headers
+    // Note: This returns binary data, not JSON, so we use NextResponse directly
+    // but we still log the request for tracking
     return new NextResponse(new Uint8Array(optimizedBuffer), {
       headers: {
         "Content-Type": contentType,
         "Cache-Control": `public, max-age=${CACHE_MAX_AGE}, immutable`,
         "Content-Length": optimizedBuffer.length.toString(),
+        "X-Request-ID": requestId, // Include request ID in headers for tracking
       },
     })
-  } catch (error) {
-    console.error("Image optimization error:", error)
-    return NextResponse.json(
-      { error: "Failed to optimize image" },
-      { status: 500 }
-    )
-  }
+  }, { endpoint: '/api/images/optimize' })
 }
 

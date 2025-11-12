@@ -14,14 +14,14 @@ import {
 } from "./ui/carousel"
 import { Progress } from "./ui/progress"
 import { Checkbox } from "./ui/checkbox"
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "./ui/select"
 
 const STORAGE_KEY = "helluniversity_ai_generated_images"
 
 interface StoredGeneratedImages {
   images: string[]
   timestamp: number
-  prompt: string
-  selectedImages: string[]
+  eventType: string
 }
 
 // Static style object - created once
@@ -243,9 +243,7 @@ function isBFLDeliveryUrl(url: string): boolean {
 }
 
 export function AISpaceGenerator() {
-  const [prompt, setPrompt] = useState("")
-  const [studioImages, setStudioImages] = useState<string[]>([])
-  const [selectedImages, setSelectedImages] = useState<string[]>([])
+  const [selectedEventType, setSelectedEventType] = useState<string>("")
   const [isLoading, setIsLoading] = useState(false)
   const [results, setResults] = useState<string[]>([])
   const [error, setError] = useState<string>("")
@@ -255,9 +253,16 @@ export function AISpaceGenerator() {
   const [carouselApi, setCarouselApi] = useState<CarouselApi>()
   const [currentImageIndex, setCurrentImageIndex] = useState(0)
   const [loadingProgress, setLoadingProgress] = useState(0)
-  const [isLoadingImages, setIsLoadingImages] = useState(true)
   const [imageLoadErrors, setImageLoadErrors] = useState<Set<number>>(new Set())
   const recaptchaKeyRef = useRef(0) // Force reCAPTCHA re-render
+
+  // Event types available for selection (excluding "Other")
+  const eventTypes = [
+    { value: "Arts & Design Coaching", label: "Arts & Design Coaching Workshop" },
+    { value: "Seminar & Workshop", label: "Seminar & Workshop" },
+    { value: "Family Gathering", label: "Family Gathering" },
+    { value: "Holiday Festive", label: "Holiday Festive" },
+  ]
 
   // Load generated images from localStorage on component mount
   useEffect(() => {
@@ -270,9 +275,9 @@ export function AISpaceGenerator() {
           const hoursSinceSave = (Date.now() - parsed.timestamp) / (1000 * 60 * 60)
           if (hoursSinceSave < 24 && parsed.images && parsed.images.length > 0) {
             setResults(parsed.images)
-            // Optionally restore prompt and selected images for reference
-            // setPrompt(parsed.prompt || "")
-            // setSelectedImages(parsed.selectedImages || [])
+            if (parsed.eventType) {
+              setSelectedEventType(parsed.eventType)
+            }
           } else {
             // Clear old data
             localStorage.removeItem(STORAGE_KEY)
@@ -324,8 +329,7 @@ export function AISpaceGenerator() {
     recaptchaKeyRef.current += 1
     // Clear previous results
     setResults([])
-    setPrompt("")
-    setSelectedImages([])
+    setSelectedEventType("")
     setImageLoadErrors(new Set())
     setCurrentImageIndex(0)
     // Clear localStorage
@@ -340,13 +344,8 @@ export function AISpaceGenerator() {
       return
     }
 
-    if (selectedImages.length === 0) {
-      setError("Please select at least one image.")
-      return
-    }
-
-    if (prompt.trim().length === 0) {
-      setError("Please provide a prompt.")
+    if (!selectedEventType) {
+      setError("Please select an event type.")
       return
     }
 
@@ -369,8 +368,7 @@ export function AISpaceGenerator() {
         },
         body: JSON.stringify({
           token: recaptchaToken,
-          selectedImages,
-          prompt,
+          eventType: selectedEventType,
         }),
         signal: abortController.signal,
         // Prevent browser extensions from interfering
@@ -387,16 +385,58 @@ export function AISpaceGenerator() {
         } catch {
           errorData = { error: errorText || response.statusText }
         }
-        throw new Error(errorData.error || `Request failed with status ${response.status}`)
+        
+        // Helper function to extract error message from API response
+        const getErrorMessage = (error: any, defaultMsg: string): string => {
+          if (!error) return defaultMsg
+          if (typeof error === 'string') return error
+          if (typeof error === 'object') {
+            if (error.message) return error.message
+            if (Array.isArray(error.errors)) {
+              return error.errors.join(', ')
+            }
+            if (error.details) {
+              if (typeof error.details === 'string') return error.details
+              if (Array.isArray(error.details.errors)) {
+                return error.details.errors.join(', ')
+              }
+            }
+            return JSON.stringify(error)
+          }
+          return defaultMsg
+        }
+        
+        throw new Error(getErrorMessage(errorData.error, `Request failed with status ${response.status}`))
       }
 
-      const data = await response.json()
+      const json = await response.json()
 
-      if (!data.success) {
-        throw new Error(data.error || "Failed to generate images")
+      if (!json.success) {
+        // Helper function to extract error message from API response
+        const getErrorMessage = (error: any, defaultMsg: string): string => {
+          if (!error) return defaultMsg
+          if (typeof error === 'string') return error
+          if (typeof error === 'object') {
+            if (error.message) return error.message
+            if (Array.isArray(error.errors)) {
+              return error.errors.join(', ')
+            }
+            if (error.details) {
+              if (typeof error.details === 'string') return error.details
+              if (Array.isArray(error.details.errors)) {
+                return error.details.errors.join(', ')
+              }
+            }
+            return JSON.stringify(error)
+          }
+          return defaultMsg
+        }
+        throw new Error(getErrorMessage(json.error, "Failed to generate images"))
       }
 
-      let generatedImages = data.images || []
+      // API returns { success: true, data: { images: [...] } }
+      const responseData = json.data || json
+      let generatedImages = responseData.images || []
       
       // Proxy BFL delivery URLs through our API route for local development
       // This handles CORS and expiration issues
@@ -422,8 +462,7 @@ export function AISpaceGenerator() {
             const dataToSave: StoredGeneratedImages = {
               images: generatedImages,
               timestamp: Date.now(),
-              prompt: prompt,
-              selectedImages: selectedImages,
+              eventType: selectedEventType,
             }
             localStorage.setItem(STORAGE_KEY, JSON.stringify(dataToSave))
           } catch (e) {
@@ -433,8 +472,8 @@ export function AISpaceGenerator() {
       }
       
       // Log batch information if available
-      if (data.totalImages) {
-        console.log(`Successfully generated ${data.totalImages} image(s)`)
+      if (responseData.totalImages) {
+        console.log(`Successfully generated ${responseData.totalImages} image(s)`)
       }
       
       // Reset CAPTCHA after successful generation (user needs to verify again to generate more)
@@ -469,151 +508,6 @@ export function AISpaceGenerator() {
     }
   }
 
-  // Memoize selected images set for O(1) lookup
-  const selectedImagesSet = useMemo(() => new Set(selectedImages), [selectedImages])
-
-  // Stable toggle handler - O(1) operations using Set
-  const handleToggleImage = useCallback((url: string) => {
-    if (!isRecaptchaVerified) return
-    
-    setSelectedImages((prev) => {
-      const prevSet = new Set(prev)
-      if (prevSet.has(url)) {
-        setError("")
-        prevSet.delete(url)
-        return Array.from(prevSet)
-      } else {
-        setError("")
-        prevSet.add(url)
-        return Array.from(prevSet)
-      }
-    })
-  }, [isRecaptchaVerified])
-
-  // Fetch studio images dynamically on component mount
-  // Priority: New API endpoint -> Old API -> Manifest -> Error
-  useEffect(() => {
-    async function fetchStudioImages() {
-      try {
-        setIsLoadingImages(true)
-        
-        // Preload thumbnail manifest in static mode
-        const isStaticMode = process.env.NEXT_PUBLIC_USE_STATIC_IMAGES === '1'
-        if (isStaticMode) {
-          await loadThumbnailManifest()
-        }
-        
-        // Try new database API first (with display_order)
-        try {
-          const dbApiResponse = await fetch("/api/images?category=aispace_studio&limit=100", {
-            cache: 'no-store'
-          })
-          
-          if (dbApiResponse.ok) {
-            const dbData = await dbApiResponse.json()
-            if (dbData.success && dbData.images?.length > 0) {
-              // Use blob_url from database
-              const images = dbData.images.map((img: any) => img.blob_url)
-              setStudioImages(images)
-              
-              // Prefetch first 5 images for instant display
-              const prefetchCount = Math.min(5, images.length)
-              for (let i = 0; i < prefetchCount; i++) {
-                const link = document.createElement('link')
-                link.rel = 'preload'
-                link.as = 'image'
-                link.href = images[i]
-                document.head.appendChild(link)
-              }
-              
-              setIsLoadingImages(false)
-              return
-            }
-          }
-        } catch (dbApiError) {
-          console.warn("New database API not available, trying fallbacks:", dbApiError)
-        }
-        
-        // Fallback to old API route
-        try {
-          const apiResponse = await fetch("/api/ai-space/images", {
-            cache: 'no-store'
-          })
-          
-          if (apiResponse.ok) {
-            const data = await apiResponse.json()
-            if (data.success && data.images) {
-              const imagesWithBasePath = data.images.map((path: string) => withBasePath(path))
-              setStudioImages(imagesWithBasePath)
-              
-              // Prefetch first 5 optimized thumbnails
-              const prefetchCount = Math.min(5, imagesWithBasePath.length)
-              for (let i = 0; i < prefetchCount; i++) {
-                const originalPath = data.images[i]
-                const optimizedUrl = getThumbnailUrl(originalPath, 280, 280, 80)
-                const link = document.createElement('link')
-                link.rel = 'preload'
-                link.as = 'image'
-                link.href = optimizedUrl.startsWith('/') ? optimizedUrl : withBasePath(optimizedUrl)
-                document.head.appendChild(link)
-              }
-              
-              setIsLoadingImages(false)
-              return
-            }
-          }
-        } catch (apiError) {
-          console.warn("Old API also failed, trying manifest:", apiError)
-        }
-        
-        // Fallback to manifest
-        try {
-          const manifestResponse = await fetch(withBasePath("/aispaces/studio-images.json"), {
-            cache: 'force-cache',
-            headers: {
-              'Cache-Control': 'max-age=3600'
-            }
-          })
-          
-          if (manifestResponse.ok) {
-            const data = await manifestResponse.json()
-            if (data.success && data.images) {
-              const imagesWithBasePath = data.images.map((path: string) => withBasePath(path))
-              setStudioImages(imagesWithBasePath)
-              
-              // Prefetch first 5 optimized thumbnails
-              const prefetchCount = Math.min(5, imagesWithBasePath.length)
-              for (let i = 0; i < prefetchCount; i++) {
-                const originalPath = data.images[i]
-                const optimizedUrl = getThumbnailUrl(originalPath, 280, 280, 80)
-                const link = document.createElement('link')
-                link.rel = 'preload'
-                link.as = 'image'
-                link.href = optimizedUrl.startsWith('/') ? optimizedUrl : withBasePath(optimizedUrl)
-                document.head.appendChild(link)
-              }
-              
-              setIsLoadingImages(false)
-              return
-            }
-          }
-        } catch (manifestError) {
-          console.warn("Manifest also failed:", manifestError)
-        }
-        
-        // If all failed
-        console.warn("Failed to load studio images from all sources")
-        setError("Failed to load studio images. Please refresh the page.")
-      } catch (error) {
-        console.error("Error fetching studio images:", error)
-        setError("Failed to load studio images. Please refresh the page.")
-      } finally {
-        setIsLoadingImages(false)
-      }
-    }
-
-    fetchStudioImages()
-  }, [])
 
   // Handle carousel navigation
   useEffect(() => {
@@ -679,84 +573,37 @@ export function AISpaceGenerator() {
         )}
       </div>
 
-      <div className="flex flex-col" style={{ gap: 'clamp(0.375rem, 0.5vw, 0.5rem)' }}>
-        <div className="flex items-center justify-between flex-wrap" style={{ gap: 'clamp(0.25rem, 0.3vw, 0.375rem)' }}>
-          <p className="text-[#5a3a2a]/70 font-comfortaa" style={{ fontSize: 'clamp(0.625rem, 0.7vw, 0.75rem)' }}>
-            Select images (each image processed separately):
-          </p>
-          <span className="text-[#5a3a2a]/50 font-comfortaa" style={{ fontSize: 'clamp(0.625rem, 0.7vw, 0.75rem)' }}>
-            {selectedImages.length} selected
-            {selectedImages.length > 0 && (
-              <span className="ml-1 text-[#5a3a2a]/40">
-                ({selectedImages.length} request{selectedImages.length > 1 ? 's' : ''})
-              </span>
-            )}
-          </span>
-        </div>
-        {isLoadingImages ? (
-          <p className="text-[#5a3a2a]/60 font-comfortaa italic" style={{ fontSize: 'clamp(0.625rem, 0.7vw, 0.75rem)' }}>
-            Loading images...
-          </p>
-        ) : studioImages.length === 0 ? (
-          <p className="text-[#5a3a2a]/60 font-comfortaa italic" style={{ fontSize: 'clamp(0.625rem, 0.7vw, 0.75rem)' }}>
-            No images available. Please add images to public/aispaces/studio/
-          </p>
-        ) : (
-          <div className="relative w-full" style={{ willChange: 'scroll-position' }}>
-            <Carousel
-              opts={{
-                align: "start",
-                loop: false,
-                containScroll: "trimSnaps", // Optimize scrolling performance
-              }}
-              className="w-full"
-            >
-              <CarouselContent className="-ml-2 md:-ml-4">
-                {studioImages.map((url, index) => (
-                  <ImageSlideItem
-                    key={url}
-                    url={url}
-                    isSelected={selectedImagesSet.has(url)}
-                    isRecaptchaVerified={isRecaptchaVerified}
-                    onToggle={handleToggleImage}
-                    index={index}
-                    shouldPreload={index < 5} // Preload first 5 images
-                  />
-                ))}
-              </CarouselContent>
-              <CarouselPrevious className="left-2 md:left-4 bg-white/95 hover:bg-white border border-gray-300 shadow-md disabled:opacity-50" />
-              <CarouselNext className="right-2 md:right-4 bg-white/95 hover:bg-white border border-gray-300 shadow-md disabled:opacity-50" />
-            </Carousel>
-          </div>
-        )}
-      </div>
-
       <div style={{ display: 'flex', flexDirection: 'column', gap: 'clamp(0.25rem, 0.3vw, 0.375rem)' }}>
-        <label htmlFor="prompt" className="text-[#5a3a2a]/70 font-comfortaa" style={{ fontSize: 'clamp(0.625rem, 0.7vw, 0.75rem)' }}>
-          Describe the decoration style you want
+        <label htmlFor="event-type-select" className="text-[#5a3a2a]/70 font-comfortaa" style={{ fontSize: 'clamp(0.625rem, 0.7vw, 0.75rem)' }}>
+          Select event type to generate AI space design
         </label>
-        <textarea
-          id="prompt"
-          name="prompt"
-          autoComplete="off"
-          value={prompt}
-          onChange={(e) => setPrompt(e.target.value)}
-          placeholder={isRecaptchaVerified ? "Describe the decoration style you want..." : "Please complete CAPTCHA verification first..."}
+        <Select 
+          value={selectedEventType} 
+          onValueChange={setSelectedEventType}
           disabled={!isRecaptchaVerified}
-          className={`w-full border rounded resize-none font-comfortaa ${!isRecaptchaVerified ? "opacity-50 cursor-not-allowed bg-gray-100" : ""}`}
-          style={{ 
-            minHeight: 'clamp(3rem, 3.5vw, 4rem)',
-            padding: 'clamp(0.5rem, 0.6vw, 0.75rem)',
-            fontSize: 'clamp(0.75rem, 0.8vw, 0.875rem)'
-          }}
-        />
+        >
+          <SelectTrigger 
+            id="event-type-select"
+            className={`font-comfortaa ${!isRecaptchaVerified ? "opacity-50 cursor-not-allowed" : ""}`}
+            style={{ fontSize: 'clamp(0.75rem, 0.8vw, 0.875rem)', height: 'clamp(2.5rem, 3vw, 3rem)' }}
+          >
+            <SelectValue placeholder={isRecaptchaVerified ? "Select event type..." : "Please complete CAPTCHA verification first..."} />
+          </SelectTrigger>
+          <SelectContent>
+            {eventTypes.map((eventType) => (
+              <SelectItem key={eventType.value} value={eventType.value}>
+                {eventType.label}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
       </div>
 
       <div className="flex items-center" style={{ gap: 'clamp(0.5rem, 0.6vw, 0.75rem)' }}>
         <button
           type="button"
           onClick={onGenerate}
-          disabled={isLoading || selectedImages.length === 0 || prompt.trim().length === 0 || !isRecaptchaVerified || results.length > 0}
+          disabled={isLoading || !selectedEventType || !isRecaptchaVerified || results.length > 0}
           className="rounded bg-black text-white disabled:opacity-50 disabled:cursor-not-allowed"
           style={{ 
             padding: 'clamp(0.5rem, 0.6vw, 0.75rem) clamp(0.75rem, 0.9vw, 1rem)',
@@ -765,9 +612,6 @@ export function AISpaceGenerator() {
         >
           {isLoading ? "Generating…" : "Generate"}
         </button>
-        <span className="text-gray-500 font-comfortaa" style={{ fontSize: 'clamp(0.625rem, 0.7vw, 0.75rem)' }}>
-          {selectedImages.length} selected
-        </span>
       </div>
 
       {error && (
@@ -781,7 +625,7 @@ export function AISpaceGenerator() {
         <div className="flex flex-col gap-2 mt-2">
           <div className="flex items-center justify-between text-[#5a3a2a]/70 font-comfortaa" style={{ fontSize: 'clamp(0.625rem, 0.7vw, 0.75rem)' }}>
             <span>
-              Processing {selectedImages.length} image{selectedImages.length > 1 ? 's' : ''}...
+              Generating AI space design...
             </span>
             <span>{Math.round(loadingProgress)}%</span>
           </div>
@@ -908,7 +752,7 @@ export function AISpaceGenerator() {
                           ) : (
                             <img
                               src={url}
-                              alt={`AI generated space design ${idx + 1} of ${results.length}${prompt ? `: ${prompt.substring(0, 50)}${prompt.length > 50 ? '...' : ''}` : ''}`}
+                              alt={`AI generated space design ${idx + 1} of ${results.length}`}
                               className="object-contain w-auto h-auto"
                               style={{ maxWidth: 'calc(100vw - 6rem)', maxHeight: 'calc(100vh - 6rem)' }}
                               loading={idx === 0 ? "eager" : "lazy"}

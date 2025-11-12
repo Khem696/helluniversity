@@ -14,10 +14,27 @@ interface TimePickerProps {
   className?: string
 }
 
-// Convert 24-hour format to 12-hour format
-function convert24To12(time24: string): { hour: number; minute: number; period: "AM" | "PM" } {
+// Get AM/PM from 24-hour format (for display only)
+function getAMPM(time24: string): "AM" | "PM" {
   if (!time24 || !time24.includes(':')) {
-    return { hour: 12, minute: 0, period: "AM" }
+    return "AM"
+  }
+  
+  const [hours] = time24.split(':')
+  const hour24 = parseInt(hours, 10)
+  
+  if (isNaN(hour24)) {
+    return "AM"
+  }
+  
+  return hour24 < 12 ? "AM" : "PM"
+}
+
+// Format 24-hour time with AM/PM for display (keeps 24-hour format)
+// Converts "13:00" -> "13:00 PM", "09:30" -> "09:30 AM", "00:00" -> "00:00 AM"
+function formatTimeDisplay(time24: string): string {
+  if (!time24 || !time24.includes(':')) {
+    return "00:00 AM"
   }
   
   const [hours, minutes] = time24.split(':')
@@ -25,34 +42,38 @@ function convert24To12(time24: string): { hour: number; minute: number; period: 
   const minute = parseInt(minutes || '00', 10)
   
   if (isNaN(hour24) || isNaN(minute)) {
-    return { hour: 12, minute: 0, period: "AM" }
+    return "00:00 AM"
   }
   
-  let hour12 = hour24 % 12
-  if (hour12 === 0) hour12 = 12
-  const period: "AM" | "PM" = hour24 < 12 ? "AM" : "PM"
-  
-  return { hour: hour12, minute, period }
-}
-
-// Convert 12-hour format to 24-hour format
-function convert12To24(hour: number, minute: number, period: "AM" | "PM"): string {
-  let hour24 = hour
-  if (period === "PM" && hour !== 12) {
-    hour24 = hour + 12
-  } else if (period === "AM" && hour === 12) {
-    hour24 = 0
-  }
-  
-  return `${hour24.toString().padStart(2, '0')}:${minute.toString().padStart(2, '0')}`
+  // Keep 24-hour format, just add AM/PM
+  const period = hour24 < 12 ? 'AM' : 'PM'
+  return `${hour24.toString().padStart(2, '0')}:${minute.toString().padStart(2, '0')} ${period}`
 }
 
 export function TimePicker({ value, onChange, disabled, id, name, required, className }: TimePickerProps) {
   const [mounted, setMounted] = useState(false)
-  const { hour, minute, period } = convert24To12(value)
+  
+  // Parse 24-hour format
+  const parseTime24 = (time24: string): { hour: number; minute: number } => {
+    if (!time24 || !time24.includes(':')) {
+      return { hour: 0, minute: 0 }
+    }
+    
+    const [hours, minutes] = time24.split(':')
+    const hour24 = parseInt(hours, 10)
+    const minute = parseInt(minutes || '00', 10)
+    
+    if (isNaN(hour24) || isNaN(minute)) {
+      return { hour: 0, minute: 0 }
+    }
+    
+    return { hour: hour24, minute }
+  }
+  
+  const { hour, minute } = parseTime24(value)
   const [selectedHour, setSelectedHour] = useState<number>(hour)
   const [selectedMinute, setSelectedMinute] = useState<number>(minute)
-  const [selectedPeriod, setSelectedPeriod] = useState<"AM" | "PM">(period)
+  const period = getAMPM(value) // Auto-determined, not selectable
 
   // Ensure component is mounted before rendering Select components to prevent hydration mismatches
   useEffect(() => {
@@ -62,15 +83,14 @@ export function TimePicker({ value, onChange, disabled, id, name, required, clas
   // Update local state when value prop changes
   useEffect(() => {
     if (mounted) {
-      const { hour: h, minute: m, period: p } = convert24To12(value)
+      const { hour: h, minute: m } = parseTime24(value)
       setSelectedHour(h)
       setSelectedMinute(m)
-      setSelectedPeriod(p)
     }
   }, [value, mounted])
 
-  // Generate hour options (1-12)
-  const hourOptions = Array.from({ length: 12 }, (_, i) => i + 1)
+  // Generate hour options (0-23) for 24-hour format
+  const hourOptions = Array.from({ length: 24 }, (_, i) => i)
   
   // Generate minute options (00-59)
   const minuteOptions = Array.from({ length: 60 }, (_, i) => i)
@@ -81,18 +101,15 @@ export function TimePicker({ value, onChange, disabled, id, name, required, clas
   const handleHourChange = (newHour: string) => {
     const h = parseInt(newHour, 10)
     setSelectedHour(h)
-    onChange(convert12To24(h, selectedMinute, selectedPeriod))
+    const newTime24 = `${h.toString().padStart(2, '0')}:${selectedMinute.toString().padStart(2, '0')}`
+    onChange(newTime24)
   }
 
   const handleMinuteChange = (newMinute: string) => {
     const m = parseInt(newMinute, 10)
     setSelectedMinute(m)
-    onChange(convert12To24(selectedHour, m, selectedPeriod))
-  }
-
-  const handlePeriodChange = (newPeriod: "AM" | "PM") => {
-    setSelectedPeriod(newPeriod)
-    onChange(convert12To24(selectedHour, selectedMinute, newPeriod))
+    const newTime24 = `${selectedHour.toString().padStart(2, '0')}:${m.toString().padStart(2, '0')}`
+    onChange(newTime24)
   }
 
   // Render a placeholder during SSR to prevent hydration mismatches
@@ -174,25 +191,14 @@ export function TimePicker({ value, onChange, disabled, id, name, required, clas
           </SelectContent>
         </Select>
         
-        <Select
-          value={selectedPeriod}
-          onValueChange={handlePeriodChange}
-          disabled={disabled}
-          aria-labelledby={labelId}
+        {/* Display AM/PM (read-only, auto-determined from 24-hour format) */}
+        <div 
+          className="w-14 font-comfortaa ml-1 text-gray-600 flex items-center justify-center"
+          style={{ fontSize: 'clamp(0.75rem, 0.8vw, 0.875rem)' }}
           aria-label={id ? `${id} period` : "AM/PM"}
         >
-          <SelectTrigger 
-            className="h-auto border-0 p-0 focus:ring-0 w-14 font-comfortaa ml-1 shadow-none" 
-            style={{ fontSize: 'clamp(0.75rem, 0.8vw, 0.875rem)' }}
-            aria-label="AM/PM"
-          >
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="AM">AM</SelectItem>
-            <SelectItem value="PM">PM</SelectItem>
-          </SelectContent>
-        </Select>
+          {period}
+        </div>
         
         <Clock className="ml-auto w-4 h-4 text-gray-400 pointer-events-none flex-shrink-0" />
       </div>
@@ -206,4 +212,3 @@ export function TimePicker({ value, onChange, disabled, id, name, required, clas
     </div>
   )
 }
-

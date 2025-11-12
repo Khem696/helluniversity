@@ -1,6 +1,8 @@
 import { NextResponse } from "next/server"
 import { getTursoClient } from "@/lib/turso"
 import { requireAuthorizedDomain, unauthorizedResponse, forbiddenResponse } from "@/lib/auth"
+import { createRequestLogger } from "@/lib/logger"
+import { withErrorHandling, successResponse, errorResponse, notFoundResponse, ErrorCodes } from "@/lib/api-response"
 
 /**
  * Admin Event Management API
@@ -27,10 +29,19 @@ export async function GET(
   request: Request,
   { params }: { params: Promise<{ id: string }> }
 ) {
-  try {
-    const authError = await checkAuth()
-    if (authError) return authError
+  return withErrorHandling(async () => {
     const { id } = await params
+    const requestId = crypto.randomUUID()
+    const logger = createRequestLogger(requestId, '/api/admin/events/[id]')
+    
+    await logger.info('Admin get event request', { eventId: id })
+    
+    const authError = await checkAuth()
+    if (authError) {
+      await logger.warn('Admin get event rejected: authentication failed', { eventId: id })
+      return authError
+    }
+    
     const db = getTursoClient()
 
     // Get event with poster image
@@ -48,10 +59,8 @@ export async function GET(
     })
 
     if (eventResult.rows.length === 0) {
-      return NextResponse.json(
-        { success: false, error: "Event not found" },
-        { status: 404 }
-      )
+      await logger.warn('Event not found', { eventId: id })
+      return notFoundResponse('Event', { requestId })
     }
 
     // Get in-event photos
@@ -67,36 +76,51 @@ export async function GET(
       `,
       args: [id],
     })
-
-    return NextResponse.json({
-      success: true,
-      event: {
-        ...eventResult.rows[0],
-        in_event_photos: inEventPhotos.rows,
-      },
+    
+    await logger.info('Event retrieved', {
+      eventId: id,
+      inEventPhotosCount: inEventPhotos.rows.length
     })
-  } catch (error) {
-    console.error("Get event error:", error)
-    return NextResponse.json(
+
+    return successResponse(
       {
-        success: false,
-        error: error instanceof Error ? error.message : "Failed to get event",
+        event: {
+          ...eventResult.rows[0],
+          in_event_photos: inEventPhotos.rows,
+        },
       },
-      { status: 500 }
+      { requestId }
     )
-  }
+  }, { endpoint: '/api/admin/events/[id]' })
 }
 
 export async function PATCH(
   request: Request,
   { params }: { params: Promise<{ id: string }> }
 ) {
-  try {
-    const authError = await checkAuth()
-    if (authError) return authError
+  return withErrorHandling(async () => {
     const { id } = await params
+    const requestId = crypto.randomUUID()
+    const logger = createRequestLogger(requestId, '/api/admin/events/[id]')
+    
+    await logger.info('Admin update event request', { eventId: id })
+    
+    const authError = await checkAuth()
+    if (authError) {
+      await logger.warn('Admin update event rejected: authentication failed', { eventId: id })
+      return authError
+    }
+    
     const body = await request.json()
     const { title, description, image_id, event_date, start_date, end_date, location } = body
+    
+    await logger.debug('Event update data', {
+      eventId: id,
+      hasTitle: title !== undefined,
+      hasDescription: description !== undefined,
+      hasImageId: image_id !== undefined,
+      hasLocation: location !== undefined
+    })
 
     const db = getTursoClient()
     const now = Math.floor(Date.now() / 1000)
@@ -148,9 +172,13 @@ export async function PATCH(
     }
 
     if (updates.length === 0) {
-      return NextResponse.json(
-        { success: false, error: "No fields to update" },
-        { status: 400 }
+      await logger.warn('Event update rejected: no fields to update', { eventId: id })
+      return errorResponse(
+        ErrorCodes.VALIDATION_ERROR,
+        "No fields to update",
+        undefined,
+        400,
+        { requestId }
       )
     }
 
@@ -162,6 +190,8 @@ export async function PATCH(
       sql: `UPDATE events SET ${updates.join(", ")} WHERE id = ?`,
       args,
     })
+    
+    await logger.info('Event updated in database', { eventId: id })
 
     // Fetch updated event with poster image
     const eventResult = await db.execute({
@@ -190,54 +220,55 @@ export async function PATCH(
       `,
       args: [id],
     })
-
-    return NextResponse.json({
-      success: true,
-      event: {
-        ...eventResult.rows[0],
-        in_event_photos: inEventPhotos.rows,
-      },
+    
+    await logger.info('Event update completed successfully', {
+      eventId: id,
+      inEventPhotosCount: inEventPhotos.rows.length
     })
-  } catch (error) {
-    console.error("Update event error:", error)
-    return NextResponse.json(
+
+    return successResponse(
       {
-        success: false,
-        error: error instanceof Error ? error.message : "Failed to update event",
+        event: {
+          ...eventResult.rows[0],
+          in_event_photos: inEventPhotos.rows,
+        },
       },
-      { status: 500 }
+      { requestId }
     )
-  }
+  }, { endpoint: '/api/admin/events/[id]' })
 }
 
 export async function DELETE(
   request: Request,
   { params }: { params: Promise<{ id: string }> }
 ) {
-  try {
-    const authError = await checkAuth()
-    if (authError) return authError
+  return withErrorHandling(async () => {
     const { id } = await params
+    const requestId = crypto.randomUUID()
+    const logger = createRequestLogger(requestId, '/api/admin/events/[id]')
+    
+    await logger.info('Admin delete event request', { eventId: id })
+    
+    const authError = await checkAuth()
+    if (authError) {
+      await logger.warn('Admin delete event rejected: authentication failed', { eventId: id })
+      return authError
+    }
     const db = getTursoClient()
 
     await db.execute({
       sql: "DELETE FROM events WHERE id = ?",
       args: [id],
     })
+    
+    await logger.info('Event deleted successfully', { eventId: id })
 
-    return NextResponse.json({
-      success: true,
-      message: "Event deleted successfully",
-    })
-  } catch (error) {
-    console.error("Delete event error:", error)
-    return NextResponse.json(
+    return successResponse(
       {
-        success: false,
-        error: error instanceof Error ? error.message : "Failed to delete event",
+        message: "Event deleted successfully",
       },
-      { status: 500 }
+      { requestId }
     )
-  }
+  }, { endpoint: '/api/admin/events/[id]' })
 }
 

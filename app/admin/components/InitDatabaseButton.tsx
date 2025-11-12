@@ -17,25 +17,59 @@ export function InitDatabaseButton() {
     setStatus({ type: "checking" })
     try {
       const response = await fetch("/api/admin/init-db")
-      const data = await response.json()
       
-      if (data.success) {
+      // Check if response is ok
+      if (!response.ok) {
+        // If unauthorized, redirect to login
+        if (response.status === 401 || response.status === 403) {
+          setStatus({
+            type: "error",
+            message: "Authentication required. Please log in again.",
+          })
+          // Redirect to login after a short delay
+          setTimeout(() => {
+            window.location.href = "/admin/login"
+          }, 2000)
+          return
+        }
+        throw new Error(`HTTP error! status: ${response.status}`)
+      }
+      
+      const responseData = await response.json()
+      
+      if (responseData.success && responseData.data) {
+        const dbData = responseData.data
         setStatus({
-          type: data.allTablesExist ? "success" : "idle",
-          message: data.allTablesExist 
+          type: dbData.allTablesExist ? "success" : "idle",
+          message: dbData.allTablesExist 
             ? "All tables exist" 
-            : `${data.missingTables?.length || 0} tables missing`,
-          tables: data.tables,
-          missingTables: data.missingTables,
+            : `${dbData.missingTables?.length || 0} tables missing`,
+          tables: dbData.tables || {},
+          missingTables: dbData.missingTables || [],
         })
       } else {
-        setStatus({ type: "error", message: data.error || "Failed to check status" })
+        const errorMessage = responseData.error?.message || responseData.error || "Failed to check status"
+        setStatus({ type: "error", message: errorMessage })
       }
     } catch (error) {
-      setStatus({ 
-        type: "error", 
-        message: error instanceof Error ? error.message : "Failed to check database status" 
-      })
+      // Handle network errors and authentication errors
+      const errorMessage = error instanceof Error ? error.message : "Failed to check database status"
+      
+      // Check if it's an authentication error
+      if (errorMessage.includes("auth") || errorMessage.includes("session") || errorMessage.includes("Unauthorized")) {
+        setStatus({
+          type: "error",
+          message: "Authentication error. Please refresh the page and log in again.",
+        })
+        setTimeout(() => {
+          window.location.href = "/admin/login"
+        }, 2000)
+      } else {
+        setStatus({ 
+          type: "error", 
+          message: errorMessage
+        })
+      }
     }
   }
 
@@ -48,19 +82,25 @@ export function InitDatabaseButton() {
         method: "POST",
       })
       
-      const data = await response.json()
+      if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`)
+      }
       
-      if (data.success) {
+      const responseData = await response.json()
+      
+      if (responseData.success && responseData.data) {
+        const initData = responseData.data
         setStatus({ 
           type: "success", 
-          message: data.message || "Database initialized successfully" 
+          message: initData.message || "Database initialized successfully" 
         })
         // Check status again to show updated table status
         setTimeout(() => checkStatus(), 1000)
       } else {
+        const errorMessage = responseData.error?.message || responseData.error || "Failed to initialize database"
         setStatus({ 
           type: "error", 
-          message: data.error || "Failed to initialize database" 
+          message: errorMessage
         })
       }
     } catch (error) {

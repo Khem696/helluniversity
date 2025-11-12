@@ -100,12 +100,14 @@ export default function EmailQueuePage() {
       params.append("limit", "50")
 
       const response = await fetch(`/api/admin/email-queue?${params.toString()}`)
-      const data = await response.json()
-      if (data.success) {
-        setEmails(data.items || [])
-        setStats(data.stats || stats)
+      const json = await response.json()
+      if (json.success) {
+        // API returns { success: true, data: { items: [...], stats: {...} } }
+        const responseData = json.data || json
+        setEmails(responseData.items || [])
+        setStats(responseData.stats || stats)
       } else {
-        const errorMsg = typeof data.error === 'string' ? data.error : JSON.stringify(data.error) || "Failed to load email queue"
+        const errorMsg = typeof json.error === 'string' ? json.error : json.error?.message || JSON.stringify(json.error) || "Failed to load email queue"
         toast.error(errorMsg)
       }
     } catch (error) {
@@ -132,12 +134,15 @@ export default function EmailQueuePage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ action: "process", limit: 10 }),
       })
-      const data = await response.json()
-      if (data.success) {
-        toast.success(`Processed: ${data.result.sent} sent, ${data.result.failed} failed`)
+      const json = await response.json()
+      if (json.success) {
+        // API returns { success: true, data: { result: {...} } }
+        const responseData = json.data || json
+        const result = responseData.result || responseData
+        toast.success(`Processed: ${result.sent} sent, ${result.failed} failed`)
         fetchEmails()
       } else {
-        const errorMsg = typeof data.error === 'string' ? data.error : JSON.stringify(data.error) || "Failed to process queue"
+        const errorMsg = typeof json.error === 'string' ? json.error : json.error?.message || JSON.stringify(json.error) || "Failed to process queue"
         toast.error(errorMsg)
       }
     } catch (error) {
@@ -171,12 +176,12 @@ export default function EmailQueuePage() {
         return
       }
       
-      const data = await response.json()
-      if (data.success) {
+      const json = await response.json()
+      if (json.success) {
         toast.success("Email retried successfully")
         fetchEmails()
       } else {
-        const errorMsg = typeof data.error === 'string' ? data.error : JSON.stringify(data.error) || "Failed to retry email"
+        const errorMsg = typeof json.error === 'string' ? json.error : json.error?.message || JSON.stringify(json.error) || "Failed to retry email"
         toast.error(errorMsg)
       }
     } catch (error) {
@@ -196,12 +201,12 @@ export default function EmailQueuePage() {
       const response = await fetch(`/api/admin/email-queue/${id}`, {
         method: "DELETE",
       })
-      const data = await response.json()
-      if (data.success) {
+      const json = await response.json()
+      if (json.success) {
         toast.success("Email deleted successfully")
         fetchEmails()
       } else {
-        const errorMsg = typeof data.error === 'string' ? data.error : JSON.stringify(data.error) || "Failed to delete email"
+        const errorMsg = typeof json.error === 'string' ? json.error : json.error?.message || JSON.stringify(json.error) || "Failed to delete email"
         toast.error(errorMsg)
       }
     } catch (error) {
@@ -223,12 +228,14 @@ export default function EmailQueuePage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ action: "cleanup", daysOld: 30 }),
       })
-      const data = await response.json()
-      if (data.success) {
-        toast.success(`Cleaned up ${data.deletedCount} old emails`)
+      const json = await response.json()
+      if (json.success) {
+        // API returns { success: true, data: { deletedCount: ... } }
+        const responseData = json.data || json
+        toast.success(`Cleaned up ${responseData.deletedCount || 0} old emails`)
         fetchEmails()
       } else {
-        const errorMsg = typeof data.error === 'string' ? data.error : JSON.stringify(data.error) || "Failed to cleanup"
+        const errorMsg = typeof json.error === 'string' ? json.error : json.error?.message || JSON.stringify(json.error) || "Failed to cleanup"
         toast.error(errorMsg)
       }
     } catch (error) {

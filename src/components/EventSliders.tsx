@@ -2,6 +2,7 @@
 import { useState, useEffect } from "react"
 import { EventSlider } from "./EventSlider"
 import { mockEvents, splitEventsByDate, type EventSlide } from "@/data/events"
+import { dateToBangkokDateString } from "@/lib/timezone-client"
 
 /**
  * EventSliders Component
@@ -25,8 +26,8 @@ export function EventSliders() {
           throw new Error("Failed to fetch events")
         }
 
-        const data = await response.json()
-        if (data.success) {
+        const json = await response.json()
+        if (json.success) {
           // Convert API events to EventSlide format
           const convertToEventSlide = (event: any): EventSlide => {
             // Use end_date if available, otherwise start_date or event_date
@@ -38,8 +39,9 @@ export function EventSliders() {
               ? new Date(event.event_date * 1000)
               : new Date()
 
-            // Format date as YYYY-MM-DD
-            const dateStr = eventDate.toISOString().split("T")[0]
+            // Format date as YYYY-MM-DD in Bangkok timezone
+            // CRITICAL: Use Bangkok timezone to avoid timezone conversion issues
+            const dateStr = dateToBangkokDateString(eventDate)
             
             // Extract time from description or use default
             const timeMatch = event.description?.match(/(\d{1,2}\.\d{2})\s*-\s*(\d{1,2}\.\d{2})/)
@@ -55,17 +57,21 @@ export function EventSliders() {
             }
           }
 
+          // API returns { success: true, data: { pastEvents: [...], currentEvents: [...] } }
+          // or { success: true, data: { events: [...] } }
+          const responseData = json.data || json
+
           // Use API data if available
-          if (data.pastEvents && data.currentEvents) {
-            setPastEvents(data.pastEvents.map(convertToEventSlide))
-            setCurrentEvents(data.currentEvents.map(convertToEventSlide))
-          } else if (data.events) {
+          if (responseData.pastEvents && responseData.currentEvents) {
+            setPastEvents(responseData.pastEvents.map(convertToEventSlide))
+            setCurrentEvents(responseData.currentEvents.map(convertToEventSlide))
+          } else if (responseData.events) {
             // If single array, split by end_date
             const now = Math.floor(Date.now() / 1000)
             const past: EventSlide[] = []
             const current: EventSlide[] = []
 
-            data.events.forEach((event: any) => {
+            responseData.events.forEach((event: any) => {
               const endDate = event.end_date || event.event_date || event.start_date
               const slide = convertToEventSlide(event)
               if (endDate && endDate < now) {

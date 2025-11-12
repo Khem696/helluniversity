@@ -1,6 +1,8 @@
 import { NextResponse } from "next/server"
 import { initializeDatabase } from "@/lib/turso"
 import { requireAuthorizedDomain, unauthorizedResponse, forbiddenResponse } from "@/lib/auth"
+import { createRequestLogger } from "@/lib/logger"
+import { withErrorHandling, successResponse, errorResponse, ErrorCodes } from "@/lib/api-response"
 
 /**
  * Database Initialization Route
@@ -13,40 +15,61 @@ import { requireAuthorizedDomain, unauthorizedResponse, forbiddenResponse } from
  */
 
 export async function POST() {
-  try {
+  return withErrorHandling(async () => {
+    const requestId = crypto.randomUUID()
+    const logger = createRequestLogger(requestId, '/api/admin/init-db')
+    
+    await logger.info('Database initialization request received')
+    
     // Check authentication and authorization
     try {
       await requireAuthorizedDomain()
     } catch (error) {
       if (error instanceof Error && error.message.includes("Unauthorized")) {
+        await logger.warn('Database initialization rejected: authentication failed')
         return unauthorizedResponse("Authentication required")
       }
+      await logger.warn('Database initialization rejected: authorization failed')
       return forbiddenResponse("Access denied: Must be from authorized Google Workspace domain")
     }
-    await initializeDatabase()
     
-    return NextResponse.json({
-      success: true,
-      message: "Database initialized successfully",
-    })
-  } catch (error) {
-    console.error("Database initialization error:", error)
+    await logger.info('Initializing database')
+    // Enable orphaned image cleanup to sync database with blob storage
+    await initializeDatabase({ cleanupOrphanedImages: true })
     
-    return NextResponse.json(
+    await logger.info('Database initialized successfully')
+    
+    return successResponse(
       {
-        success: false,
-        error: error instanceof Error ? error.message : "Failed to initialize database",
+        message: "Database initialized successfully",
       },
-      { status: 500 }
+      { requestId }
     )
-  }
+  }, { endpoint: '/api/admin/init-db' })
 }
 
 /**
  * GET endpoint to check database status
  */
 export async function GET() {
-  try {
+  return withErrorHandling(async () => {
+    const requestId = crypto.randomUUID()
+    const logger = createRequestLogger(requestId, '/api/admin/init-db')
+    
+    await logger.info('Database status check request received')
+    
+    // Check authentication and authorization
+    try {
+      await requireAuthorizedDomain()
+    } catch (error) {
+      if (error instanceof Error && error.message.includes("Unauthorized")) {
+        await logger.warn('Database status check rejected: authentication failed')
+        return unauthorizedResponse("Authentication required")
+      }
+      await logger.warn('Database status check rejected: authorization failed')
+      return forbiddenResponse("Access denied: Must be from authorized Google Workspace domain")
+    }
+    
     const { getTursoClient } = await import("@/lib/turso")
     const db = getTursoClient()
     
@@ -78,22 +101,22 @@ export async function GET() {
       tablesStatus[table] = existingTables.includes(table)
     })
     
-    return NextResponse.json({
-      success: true,
-      tables: tablesStatus,
-      allTablesExist: existingTables.length === requiredTables.length,
-      missingTables: requiredTables.filter(table => !existingTables.includes(table)),
-    })
-  } catch (error) {
-    console.error("Database status check error:", error)
+    const allTablesExist = existingTables.length === requiredTables.length
+    const missingTables = requiredTables.filter(table => !existingTables.includes(table))
     
-    return NextResponse.json(
+    await logger.info('Database status checked', {
+      allTablesExist,
+      missingTablesCount: missingTables.length
+    })
+    
+    return successResponse(
       {
-        success: false,
-        error: error instanceof Error ? error.message : "Failed to check database status",
+        tables: tablesStatus,
+        allTablesExist,
+        missingTables,
       },
-      { status: 500 }
+      { requestId }
     )
-  }
+  }, { endpoint: '/api/admin/init-db' })
 }
 

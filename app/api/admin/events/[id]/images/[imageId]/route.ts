@@ -1,6 +1,8 @@
 import { NextResponse } from "next/server"
 import { getTursoClient } from "@/lib/turso"
 import { requireAuthorizedDomain, unauthorizedResponse, forbiddenResponse } from "@/lib/auth"
+import { createRequestLogger } from "@/lib/logger"
+import { withErrorHandling, successResponse, errorResponse, notFoundResponse, ErrorCodes } from "@/lib/api-response"
 
 /**
  * Admin Event Image Management API
@@ -26,18 +28,32 @@ export async function PATCH(
   request: Request,
   { params }: { params: Promise<{ id: string; imageId: string }> }
 ) {
-  try {
+  return withErrorHandling(async () => {
+    const { id: eventId, imageId } = await params
+    const requestId = crypto.randomUUID()
+    const logger = createRequestLogger(requestId, '/api/admin/events/[id]/images/[imageId]')
+    
+    await logger.info('Admin update event image request', { eventId, imageId })
+    
     const authError = await checkAuth()
-    if (authError) return authError
+    if (authError) {
+      await logger.warn('Admin update event image rejected: authentication failed', { eventId, imageId })
+      return authError
+    }
 
-    const { imageId } = await params
     const body = await request.json()
     const { display_order } = body
+    
+    await logger.debug('Update event image data', { eventId, imageId, display_order })
 
     if (display_order === undefined) {
-      return NextResponse.json(
-        { success: false, error: "display_order is required" },
-        { status: 400 }
+      await logger.warn('Update event image rejected: missing display_order', { eventId, imageId })
+      return errorResponse(
+        ErrorCodes.VALIDATION_ERROR,
+        "display_order is required",
+        undefined,
+        400,
+        { requestId }
       )
     }
 
@@ -62,57 +78,53 @@ export async function PATCH(
     })
 
     if (result.rows.length === 0) {
-      return NextResponse.json(
-        { success: false, error: "Event image not found" },
-        { status: 404 }
-      )
+      await logger.warn('Event image not found', { eventId, imageId })
+      return notFoundResponse('Event image', { requestId })
     }
+    
+    await logger.info('Event image updated successfully', { eventId, imageId })
 
-    return NextResponse.json({
-      success: true,
-      event_image: result.rows[0],
-    })
-  } catch (error) {
-    console.error("Update event image error:", error)
-    return NextResponse.json(
+    return successResponse(
       {
-        success: false,
-        error: error instanceof Error ? error.message : "Failed to update event image",
+        event_image: result.rows[0],
       },
-      { status: 500 }
+      { requestId }
     )
-  }
+  }, { endpoint: '/api/admin/events/[id]/images/[imageId]' })
 }
 
 export async function DELETE(
   request: Request,
   { params }: { params: Promise<{ id: string; imageId: string }> }
 ) {
-  try {
+  return withErrorHandling(async () => {
+    const { id: eventId, imageId } = await params
+    const requestId = crypto.randomUUID()
+    const logger = createRequestLogger(requestId, '/api/admin/events/[id]/images/[imageId]')
+    
+    await logger.info('Admin delete event image request', { eventId, imageId })
+    
     const authError = await checkAuth()
-    if (authError) return authError
+    if (authError) {
+      await logger.warn('Admin delete event image rejected: authentication failed', { eventId, imageId })
+      return authError
+    }
 
-    const { imageId } = await params
     const db = getTursoClient()
 
     await db.execute({
       sql: "DELETE FROM event_images WHERE id = ?",
       args: [imageId],
     })
+    
+    await logger.info('Event image deleted successfully', { eventId, imageId })
 
-    return NextResponse.json({
-      success: true,
-      message: "Event image removed successfully",
-    })
-  } catch (error) {
-    console.error("Delete event image error:", error)
-    return NextResponse.json(
+    return successResponse(
       {
-        success: false,
-        error: error instanceof Error ? error.message : "Failed to delete event image",
+        message: "Event image removed successfully",
       },
-      { status: 500 }
+      { requestId }
     )
-  }
+  }, { endpoint: '/api/admin/events/[id]/images/[imageId]' })
 }
 

@@ -10,6 +10,23 @@ const Toaster = ({ ...props }: ToasterProps) => {
     <Sonner
       theme={theme as ToasterProps["theme"]}
       className="toaster group"
+      position="top-center"
+      closeButton
+      // Responsive settings for smaller screens
+      toastOptions={{
+        style: {
+          maxWidth: "calc(100vw - 2rem)",
+          width: "auto",
+          minWidth: "280px",
+          color: "#000000",
+        },
+        className: "sm:max-w-md",
+        classNames: {
+          title: "text-black",
+          description: "text-black",
+          closeButton: "bg-red-600 hover:bg-red-700 text-white rounded-full opacity-100 border-0",
+        },
+      }}
       style={
         {
           "--normal-bg": "var(--popover)",

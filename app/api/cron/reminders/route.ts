@@ -7,59 +7,72 @@
 
 import { NextResponse } from "next/server"
 import { sendBookingReminders } from "@/lib/booking-reminders"
+import { createRequestLogger } from "@/lib/logger"
+import { withErrorHandling, successResponse, errorResponse, ErrorCodes } from "@/lib/api-response"
 
 export async function GET(request: Request) {
-  try {
+  return withErrorHandling(async () => {
+    const requestId = crypto.randomUUID()
+    const logger = createRequestLogger(requestId, '/api/cron/reminders')
+    
+    await logger.info('Reminders cron job started')
+    
     // Verify Vercel cron secret
     const authHeader = request.headers.get('authorization')
     const cronSecret = process.env.CRON_SECRET
     
     if (!cronSecret) {
-      console.error('CRON_SECRET not configured')
-      return NextResponse.json(
-        { error: 'Cron secret not configured' },
-        { status: 500 }
+      await logger.error('CRON_SECRET not configured', new Error('CRON_SECRET not configured'))
+      return errorResponse(
+        ErrorCodes.INTERNAL_ERROR,
+        'Cron secret not configured',
+        undefined,
+        500,
+        { requestId }
       )
     }
 
     if (authHeader !== `Bearer ${cronSecret}`) {
-      console.warn('Unauthorized cron job attempt')
-      return NextResponse.json(
-        { error: 'Unauthorized' },
-        { status: 401 }
+      await logger.warn('Unauthorized cron job attempt')
+      return errorResponse(
+        ErrorCodes.UNAUTHORIZED,
+        'Unauthorized',
+        undefined,
+        401,
+        { requestId }
       )
     }
 
     // Send reminders
+    await logger.info('Sending booking reminders')
     const result = await sendBookingReminders()
     
-    return NextResponse.json({
-      success: true,
-      message: "Reminders sent successfully",
-      result: {
-        sent7Day: result.sent7Day,
-        sent24Hour: result.sent24Hour,
-        errors: result.errors,
-      },
-      timestamp: new Date().toISOString(),
+    await logger.info('Reminders sent', {
+      sent7Day: result.sent7Day,
+      sent24Hour: result.sent24Hour,
+      errorsCount: result.errors.length
     })
-  } catch (error) {
-    console.error("Reminders cron error:", error)
-    return NextResponse.json(
+    
+    return successResponse(
       {
-        success: false,
-        error: error instanceof Error ? error.message : "Failed to send reminders",
+        message: "Reminders sent successfully",
+        result: {
+          sent7Day: result.sent7Day,
+          sent24Hour: result.sent24Hour,
+          errors: result.errors,
+        },
         timestamp: new Date().toISOString(),
       },
-      { status: 500 }
+      { requestId }
     )
-  }
+  }, { endpoint: '/api/cron/reminders' })
 }
 
 // Also support POST for manual triggers
 export async function POST(request: Request) {
   return GET(request)
 }
+
 
 
 
