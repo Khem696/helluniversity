@@ -50,7 +50,7 @@ export async function GET(request: Request) {
     await logger.info('Reminders sent', {
       sent7Day: result.sent7Day,
       sent24Hour: result.sent24Hour,
-      errorsCount: result.errors.length
+      errorsCount: result.errors
     })
     
     return successResponse(
