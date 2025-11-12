@@ -37,9 +37,16 @@ export function StudioGalleryPage() {
 
         // Process artwork images
         if (artworkRes.ok) {
-          const artworkData = await artworkRes.json();
-          if (artworkData.success && artworkData.images?.length > 0) {
-            setArtworkImages(artworkData.images.map((img: any) => img.blob_url));
+          const artworkJson = await artworkRes.json();
+          if (artworkJson.success) {
+            // API returns { success: true, data: { images: [...] } }
+            const responseData = artworkJson.data || artworkJson
+            const images = responseData.images || []
+            if (images.length > 0) {
+              setArtworkImages(images.map((img: any) => img.blob_url));
+            } else {
+              setArtworkImages(ARTWORK_STUDIO_IMAGES);
+            }
           } else {
             setArtworkImages(ARTWORK_STUDIO_IMAGES);
           }
@@ -49,9 +56,16 @@ export function StudioGalleryPage() {
 
         // Process building images
         if (buildingRes.ok) {
-          const buildingData = await buildingRes.json();
-          if (buildingData.success && buildingData.images?.length > 0) {
-            setBuildingImages(buildingData.images.map((img: any) => img.blob_url));
+          const buildingJson = await buildingRes.json();
+          if (buildingJson.success) {
+            // API returns { success: true, data: { images: [...] } }
+            const responseData = buildingJson.data || buildingJson
+            const images = responseData.images || []
+            if (images.length > 0) {
+              setBuildingImages(images.map((img: any) => img.blob_url));
+            } else {
+              setBuildingImages(BUILDING_STUDIO_IMAGES);
+            }
           } else {
             setBuildingImages(BUILDING_STUDIO_IMAGES);
           }
@@ -61,9 +75,16 @@ export function StudioGalleryPage() {
 
         // Process gallery images
         if (galleryRes.ok) {
-          const galleryData = await galleryRes.json();
-          if (galleryData.success && galleryData.images?.length > 0) {
-            setGalleryImages(galleryData.images.map((img: any) => img.blob_url));
+          const galleryJson = await galleryRes.json();
+          if (galleryJson.success) {
+            // API returns { success: true, data: { images: [...] } }
+            const responseData = galleryJson.data || galleryJson
+            const images = responseData.images || []
+            if (images.length > 0) {
+              setGalleryImages(images.map((img: any) => img.blob_url));
+            } else {
+              setGalleryImages(GALLERY_IMAGES_PUBLIC);
+            }
           } else {
             setGalleryImages(GALLERY_IMAGES_PUBLIC);
           }

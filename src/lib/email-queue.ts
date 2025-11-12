@@ -106,6 +106,65 @@ export async function getPendingEmails(limit: number = 10): Promise<EmailQueueIt
 }
 
 /**
+ * Get pending emails for critical status changes
+ * Only processes status_change emails with status 'accepted', 'paid_deposit', 'postponed', 'cancelled', 'rejected', or 'checked-in'
+ */
+export async function getPendingCriticalStatusEmails(limit: number = 20): Promise<EmailQueueItem[]> {
+  const db = getTursoClient()
+  const now = Math.floor(Date.now() / 1000)
+
+  // Get all pending status_change emails
+  const result = await db.execute({
+    sql: `
+      SELECT * FROM email_queue
+      WHERE status = 'pending'
+        AND email_type = 'status_change'
+        AND (next_retry_at IS NULL OR next_retry_at <= ?)
+        AND retry_count < max_retries
+      ORDER BY created_at ASC
+      LIMIT ?
+    `,
+    args: [now, limit * 2], // Get more to filter by metadata
+  })
+
+  // Filter to only include emails with critical statuses in metadata
+  // Critical statuses: accepted, postponed, cancelled, rejected
+  const criticalEmails: EmailQueueItem[] = []
+  
+  for (const row of result.rows) {
+    const email = formatEmailQueueItem(row)
+    
+    // Parse metadata to check status
+    let metadata: any = {}
+    if (email.metadata) {
+      if (typeof email.metadata === 'string') {
+        try {
+          metadata = JSON.parse(email.metadata)
+        } catch {
+          // Skip if metadata can't be parsed
+          continue
+        }
+      } else {
+        metadata = email.metadata
+      }
+    }
+    
+    // Only include if status is one of the critical statuses
+    const criticalStatuses = ['accepted', 'paid_deposit', 'postponed', 'cancelled', 'rejected', 'checked-in']
+    if (criticalStatuses.includes(metadata.status)) {
+      criticalEmails.push(email)
+      
+      // Stop when we reach the limit
+      if (criticalEmails.length >= limit) {
+        break
+      }
+    }
+  }
+
+  return criticalEmails
+}
+
+/**
  * Update email queue item status
  */
 export async function updateEmailQueueStatus(
@@ -286,6 +345,93 @@ export async function processEmailQueue(limit: number = 10): Promise<{
       }
       
       console.error(`Email queue item ${email.id} failed: ${errorMessage}`)
+    }
+  }
+
+  return results
+}
+
+/**
+ * Process pending critical status change emails
+ * Handles: accepted, paid_deposit, postponed, cancelled, rejected, checked-in
+ */
+export async function processCriticalStatusEmails(limit: number = 20): Promise<{
+  processed: number
+  sent: number
+  failed: number
+  errors: string[]
+}> {
+  const pendingEmails = await getPendingCriticalStatusEmails(limit)
+  const results = {
+    processed: 0,
+    sent: 0,
+    failed: 0,
+    errors: [] as string[],
+  }
+
+  console.log(`Processing ${pendingEmails.length} critical status change emails (accepted/paid_deposit/postponed/cancelled/rejected/checked-in)`)
+
+  for (const email of pendingEmails) {
+    try {
+      results.processed++
+      
+      // Mark as processing
+      await markEmailProcessing(email.id)
+
+      // Send email
+      const transporter = await getTransporter()
+      const metadata = typeof email.metadata === 'object' 
+        ? email.metadata 
+        : (email.metadata ? safeParseMetadata(email.metadata) || {} : {})
+      
+      const mailOptions: nodemailer.SendMailOptions = {
+        from: `"Hell University Reservation System" <${process.env.SMTP_USER}>`,
+        to: email.recipientEmail,
+        subject: email.subject,
+        text: email.textContent,
+        html: email.htmlContent,
+        replyTo: metadata.replyTo || undefined,
+      }
+
+      const result = await transporter.sendMail(mailOptions)
+      
+      // Mark as sent
+      await markEmailSent(email.id)
+      results.sent++
+      
+      console.log(`Critical status email ${email.id} sent successfully: ${result.messageId} (Status: ${metadata.status})`)
+    } catch (error) {
+      // Safely extract error message
+      let errorMessage = "Unknown error"
+      if (error instanceof Error) {
+        errorMessage = error.message || error.toString()
+      } else if (typeof error === 'string') {
+        errorMessage = error
+      } else if (error && typeof error === 'object') {
+        try {
+          if ('message' in error && typeof error.message === 'string') {
+            errorMessage = error.message
+          } else if ('code' in error) {
+            errorMessage = `Error code: ${error.code}`
+          } else {
+            errorMessage = JSON.stringify(error)
+          }
+        } catch {
+          errorMessage = String(error)
+        }
+      }
+      
+      results.errors.push(`Email ${email.id}: ${errorMessage}`)
+      
+      // Schedule next retry or mark as failed
+      await scheduleNextRetry(email.id, errorMessage)
+      
+      if (email.retryCount + 1 >= email.maxRetries) {
+        results.failed++
+        console.error(`Critical status email ${email.id} failed after ${email.retryCount + 1} retries`)
+      } else {
+        console.error(`Critical status email ${email.id} failed, scheduled for retry: ${errorMessage}`)
+      }
     }
   }
 

@@ -1,6 +1,8 @@
 import { NextResponse } from "next/server"
 import { listBookings } from "@/lib/bookings"
 import { requireAuthorizedDomain, unauthorizedResponse, forbiddenResponse } from "@/lib/auth"
+import { createRequestLogger } from "@/lib/logger"
+import { withErrorHandling, successResponse, errorResponse, ErrorCodes } from "@/lib/api-response"
 
 /**
  * Admin Bookings Management API
@@ -22,13 +24,22 @@ async function checkAuth() {
 }
 
 export async function GET(request: Request) {
-  try {
+  return withErrorHandling(async () => {
+    const requestId = crypto.randomUUID()
+    const logger = createRequestLogger(requestId, '/api/admin/bookings')
+    
+    await logger.info('Admin bookings list request received')
+    
     const authError = await checkAuth()
-    if (authError) return authError
+    if (authError) {
+      await logger.warn('Admin bookings list request rejected: authentication failed')
+      return authError
+    }
 
     const { searchParams } = new URL(request.url)
     
     // Parse query parameters
+    const archive = searchParams.get("archive") === "true"
     const status = searchParams.get("status") as
       | "pending"
       | "accepted"
@@ -47,34 +58,78 @@ export async function GET(request: Request) {
       ? parseInt(searchParams.get("startDateTo")!)
       : undefined
 
+    await logger.debug('List bookings filters', {
+      archive,
+      status,
+      limit,
+      offset,
+      hasEmail: !!email,
+      hasDateFilters: !!(startDateFrom || startDateTo)
+    })
+    
     const result = await listBookings({
       status: status || undefined,
+      statuses: archive ? ["finished", "rejected", "cancelled"] : undefined,
+      excludeArchived: !archive, // Exclude archived when not requesting archive
       limit,
       offset,
       email,
       startDateFrom,
       startDateTo,
     })
-
-    return NextResponse.json({
-      success: true,
-      bookings: result.bookings,
-      pagination: {
-        total: result.total,
-        limit,
-        offset,
-        hasMore: offset + limit < result.total,
-      },
+    
+    await logger.info('Bookings list retrieved', { 
+      count: result.bookings.length, 
+      total: result.total,
+      archive 
     })
-  } catch (error) {
-    console.error("List bookings error:", error)
-    return NextResponse.json(
+
+    // Transform bookings to match frontend interface (convert ISO strings to Unix timestamps)
+    const transformedBookings = result.bookings.map((booking) => ({
+      id: booking.id,
+      name: booking.name,
+      email: booking.email,
+      phone: booking.phone,
+      participants: booking.participants,
+      event_type: booking.eventType,
+      other_event_type: booking.otherEventType,
+      date_range: booking.dateRange ? 1 : 0,
+      start_date: booking.startDate ? Math.floor(new Date(booking.startDate).getTime() / 1000) : 0,
+      end_date: booking.endDate ? Math.floor(new Date(booking.endDate).getTime() / 1000) : null,
+      start_time: booking.startTime || "",
+      end_time: booking.endTime || "",
+      organization_type: booking.organizationType,
+      organized_person: booking.organizedPerson,
+      introduction: booking.introduction,
+      biography: booking.biography,
+      special_requests: booking.specialRequests,
+      status: booking.status,
+      admin_notes: booking.adminNotes,
+      response_token: booking.responseToken,
+      token_expires_at: booking.tokenExpiresAt,
+      proposed_date: booking.proposedDate ? Math.floor(new Date(booking.proposedDate).getTime() / 1000) : null,
+      proposed_end_date: booking.proposedEndDate ? Math.floor(new Date(booking.proposedEndDate).getTime() / 1000) : null,
+      user_response: booking.userResponse,
+      response_date: booking.responseDate,
+      deposit_evidence_url: booking.depositEvidenceUrl,
+      deposit_verified_at: booking.depositVerifiedAt,
+      deposit_verified_by: booking.depositVerifiedBy,
+      created_at: booking.createdAt,
+      updated_at: booking.updatedAt,
+    }))
+
+    return successResponse(
       {
-        success: false,
-        error: error instanceof Error ? error.message : "Failed to list bookings",
+        bookings: transformedBookings,
+        pagination: {
+          total: result.total,
+          limit,
+          offset,
+          hasMore: offset + limit < result.total,
+        },
       },
-      { status: 500 }
+      { requestId }
     )
-  }
+  }, { endpoint: '/api/admin/bookings' })
 }
 

@@ -2,6 +2,8 @@ import { NextResponse } from "next/server"
 import { getTursoClient } from "@/lib/turso"
 import { requireAuthorizedDomain, unauthorizedResponse, forbiddenResponse } from "@/lib/auth"
 import { randomUUID } from "crypto"
+import { createRequestLogger } from "@/lib/logger"
+import { withErrorHandling, successResponse, errorResponse, ErrorCodes } from "@/lib/api-response"
 
 /**
  * Admin Events CRUD API
@@ -24,16 +26,36 @@ async function checkAuth() {
 }
 
 export async function POST(request: Request) {
-  try {
+  return withErrorHandling(async () => {
+    const requestId = crypto.randomUUID()
+    const logger = createRequestLogger(requestId, '/api/admin/events')
+    
+    await logger.info('Admin create event request received')
+    
     const authError = await checkAuth()
-    if (authError) return authError
+    if (authError) {
+      await logger.warn('Admin create event rejected: authentication failed')
+      return authError
+    }
+    
     const body = await request.json()
     const { title, description, image_id, event_date, start_date, end_date, location } = body
+    
+    await logger.debug('Event creation data', {
+      hasTitle: !!title,
+      hasDescription: !!description,
+      hasImageId: !!image_id,
+      hasLocation: !!location
+    })
 
     if (!title) {
-      return NextResponse.json(
-        { success: false, error: "Title is required" },
-        { status: 400 }
+      await logger.warn('Event creation rejected: missing title')
+      return errorResponse(
+        ErrorCodes.VALIDATION_ERROR,
+        "Title is required",
+        undefined,
+        400,
+        { requestId }
       )
     }
 
@@ -89,31 +111,37 @@ export async function POST(request: Request) {
       `,
       args: [eventId],
     })
+    
+    await logger.info('Event created successfully', { eventId, title })
 
-    return NextResponse.json({
-      success: true,
-      event: result.rows[0],
-    })
-  } catch (error) {
-    console.error("Create event error:", error)
-    return NextResponse.json(
+    return successResponse(
       {
-        success: false,
-        error: error instanceof Error ? error.message : "Failed to create event",
+        event: result.rows[0],
       },
-      { status: 500 }
+      { requestId }
     )
-  }
+  }, { endpoint: '/api/admin/events' })
 }
 
 export async function GET(request: Request) {
-  try {
+  return withErrorHandling(async () => {
+    const requestId = crypto.randomUUID()
+    const logger = createRequestLogger(requestId, '/api/admin/events')
+    
+    await logger.info('Admin events list request received')
+    
     const authError = await checkAuth()
-    if (authError) return authError
+    if (authError) {
+      await logger.warn('Admin events list rejected: authentication failed')
+      return authError
+    }
+    
     const { searchParams } = new URL(request.url)
     const limit = parseInt(searchParams.get("limit") || "50")
     const offset = parseInt(searchParams.get("offset") || "0")
     const upcoming = searchParams.get("upcoming") === "true"
+    
+    await logger.debug('List events parameters', { limit, offset, upcoming })
 
     const db = getTursoClient()
 
@@ -150,26 +178,25 @@ export async function GET(request: Request) {
       `,
       args: [...(upcoming ? args : []), limit, offset],
     })
-
-    return NextResponse.json({
-      success: true,
-      events: result.rows,
-      pagination: {
-        total,
-        limit,
-        offset,
-        hasMore: offset + limit < total,
-      },
+    
+    await logger.info('Events list retrieved', {
+      count: result.rows.length,
+      total,
+      upcoming
     })
-  } catch (error) {
-    console.error("List events error:", error)
-    return NextResponse.json(
+
+    return successResponse(
       {
-        success: false,
-        error: error instanceof Error ? error.message : "Failed to list events",
+        events: result.rows,
+        pagination: {
+          total,
+          limit,
+          offset,
+          hasMore: offset + limit < total,
+        },
       },
-      { status: 500 }
+      { requestId }
     )
-  }
+  }, { endpoint: '/api/admin/events' })
 }
 

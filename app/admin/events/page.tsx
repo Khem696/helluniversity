@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useEffect } from "react"
+import React, { useState, useEffect } from "react"
 import { redirect } from "next/navigation"
 import { useSession } from "next-auth/react"
 import { Button } from "@/components/ui/button"
@@ -22,7 +22,20 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select"
-import { Plus, Trash2, Edit, Loader2, Calendar, MapPin, Image as ImageIcon } from "lucide-react"
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover"
+import {
+  Command,
+  CommandEmpty,
+  CommandGroup,
+  CommandInput,
+  CommandItem,
+  CommandList,
+} from "@/components/ui/command"
+import { Plus, Trash2, Edit, Loader2, Calendar, MapPin, Image as ImageIcon, X, Check } from "lucide-react"
 import { toast } from "sonner"
 import { format } from "date-fns"
 
@@ -54,6 +67,7 @@ interface Image {
   id: string
   blob_url: string
   title: string | null
+  category: string | null
 }
 
 export default function EventsPage() {
@@ -67,6 +81,17 @@ export default function EventsPage() {
   const [createDialogOpen, setCreateDialogOpen] = useState(false)
   const [editDialogOpen, setEditDialogOpen] = useState(false)
   const [addingPhoto, setAddingPhoto] = useState(false)
+  const [createImageOpen, setCreateImageOpen] = useState(false)
+  const [editImageOpen, setEditImageOpen] = useState(false)
+  const [selectedImageId, setSelectedImageId] = useState<string | null>(null)
+  const [editSelectedImageId, setEditSelectedImageId] = useState<string | null>(null)
+  const createFormRef = React.useRef<HTMLFormElement>(null)
+  const createDialogOpenRef = React.useRef<boolean>(false)
+  
+  // Track dialog state to prevent unnecessary refreshes
+  useEffect(() => {
+    createDialogOpenRef.current = createDialogOpen
+  }, [createDialogOpen])
 
   // Redirect if not authenticated
   useEffect(() => {
@@ -76,21 +101,70 @@ export default function EventsPage() {
   }, [status])
 
   // Fetch events
-  const fetchEvents = async () => {
+  const fetchEvents = async (showLoading: boolean = true) => {
+    // Don't fetch if create dialog is open (prevents form reset while user is typing)
+    if (createDialogOpenRef.current && showLoading) {
+      return
+    }
+    
     try {
-      setLoading(true)
+      // Don't show loading state if create dialog is open (prevents form reset)
+      if (showLoading && !createDialogOpenRef.current) {
+        setLoading(true)
+      }
       const response = await fetch("/api/admin/events?limit=1000")
-      const data = await response.json()
-      if (data.success) {
-        setEvents(data.events)
+      const json = await response.json()
+      
+      // Enhanced logging to debug response structure (only in development)
+      if (process.env.NODE_ENV === 'development') {
+        console.log("[EventsPage] API Response:", {
+          hasSuccess: 'success' in json,
+          success: json.success,
+          hasData: 'data' in json,
+          hasDataEvents: json.data && 'events' in json.data,
+          hasDirectEvents: 'events' in json,
+          dataKeys: Object.keys(json),
+          dataDataKeys: json.data ? Object.keys(json.data) : undefined
+        })
+      }
+      
+      if (json.success) {
+        // API returns { success: true, data: { events: [...], pagination: {...} } }
+        // Check both possible response structures for compatibility
+        const fetchedEvents = Array.isArray(json.data?.events) 
+          ? json.data.events 
+          : Array.isArray(json.events) 
+            ? json.events 
+            : []
+        
+        if (process.env.NODE_ENV === 'development') {
+          console.log("[EventsPage] Fetched events:", {
+            count: fetchedEvents.length,
+            sample: fetchedEvents.length > 0 ? fetchedEvents.slice(0, 3).map((evt: Event) => ({
+              id: evt.id,
+              title: evt.title,
+              image_id: evt.image_id
+            })) : []
+          })
+        }
+        
+        setEvents(fetchedEvents)
       } else {
-        toast.error(data.error || "Failed to load events")
+        const errorMessage = json.error?.message || json.error || "Failed to load events"
+        toast.error(errorMessage)
+        console.error("[EventsPage] API error:", json)
+        // Set to empty array on error to prevent undefined state
+        setEvents([])
       }
     } catch (error) {
       toast.error("Failed to load events")
-      console.error(error)
+      console.error("[EventsPage] Fetch error:", error)
+      // Set to empty array on error to prevent undefined state
+      setEvents([])
     } finally {
-      setLoading(false)
+      if (showLoading && !createDialogOpenRef.current) {
+        setLoading(false)
+      }
     }
   }
 
@@ -98,9 +172,10 @@ export default function EventsPage() {
   const fetchEventDetails = async (eventId: string) => {
     try {
       const response = await fetch(`/api/admin/events/${eventId}`)
-      const data = await response.json()
-      if (data.success) {
-        return data.event
+      const json = await response.json()
+      if (json.success) {
+        // API returns { success: true, data: { event: {...} } }
+        return json.data?.event || json.event || null
       }
     } catch (error) {
       console.error("Failed to fetch event details", error)
@@ -120,8 +195,8 @@ export default function EventsPage() {
         }),
       })
 
-      const data = await response.json()
-      if (data.success) {
+      const json = await response.json()
+      if (json.success) {
         toast.success("Photo added successfully")
         setAddingPhoto(false)
         // Refresh event details
@@ -133,7 +208,8 @@ export default function EventsPage() {
         }
         fetchEvents()
       } else {
-        toast.error(data.error || "Failed to add photo")
+        const errorMessage = json.error?.message || json.error || "Failed to add photo"
+        toast.error(errorMessage)
       }
     } catch (error) {
       toast.error("Failed to add photo")
@@ -148,8 +224,8 @@ export default function EventsPage() {
         method: "DELETE",
       })
 
-      const data = await response.json()
-      if (data.success) {
+      const json = await response.json()
+      if (json.success) {
         toast.success("Photo removed successfully")
         // Refresh event details
         if (editingEvent) {
@@ -160,7 +236,8 @@ export default function EventsPage() {
         }
         fetchEvents()
       } else {
-        toast.error(data.error || "Failed to remove photo")
+        const errorMessage = json.error?.message || json.error || "Failed to remove photo"
+        toast.error(errorMessage)
       }
     } catch (error) {
       toast.error("Failed to remove photo")
@@ -172,18 +249,33 @@ export default function EventsPage() {
   const fetchImages = async () => {
     try {
       const response = await fetch("/api/admin/images?limit=1000")
-      const data = await response.json()
-      if (data.success) {
-        setImages(data.images)
+      const json = await response.json()
+      if (json.success) {
+        // API returns { success: true, data: { images: [...], pagination: {...} } }
+        // Check both possible response structures for compatibility
+        const fetchedImages = Array.isArray(json.data?.images) 
+          ? json.data.images 
+          : Array.isArray(json.images) 
+            ? json.images 
+            : []
+        setImages(fetchedImages)
+      } else {
+        // Set to empty array on error to prevent undefined state
+        setImages([])
       }
     } catch (error) {
       console.error("Failed to load images", error)
+      // Set to empty array on error to prevent undefined state
+      setImages([])
     }
   }
 
   useEffect(() => {
     if (session) {
-      fetchEvents()
+      // Only fetch on initial load, not if dialog is open
+      if (!createDialogOpenRef.current) {
+        fetchEvents()
+      }
       fetchImages()
     }
   }, [session])
@@ -194,11 +286,10 @@ export default function EventsPage() {
     setSaving(true)
 
     const formData = new FormData(e.currentTarget)
-    const imageId = formData.get("image_id") as string
     const eventData = {
       title: formData.get("title") as string,
       description: formData.get("description") as string || null,
-      image_id: imageId && imageId.trim() ? imageId : null,
+      image_id: selectedImageId && selectedImageId.trim() ? selectedImageId : null,
       event_date: formData.get("event_date") as string || null,
       start_date: formData.get("start_date") as string || null,
       end_date: formData.get("end_date") as string || null,
@@ -212,14 +303,22 @@ export default function EventsPage() {
         body: JSON.stringify(eventData),
       })
 
-      const data = await response.json()
-      if (data.success) {
+      const json = await response.json()
+      if (json.success) {
         toast.success("Event created successfully")
         setCreateDialogOpen(false)
-        e.currentTarget.reset()
-        fetchEvents()
+        setSelectedImageId(null)
+        // Reset form safely
+        if (createFormRef.current) {
+          createFormRef.current.reset()
+        } else if (e.currentTarget) {
+          e.currentTarget.reset()
+        }
+        // Fetch events without showing loading state (dialog is closing)
+        fetchEvents(false)
       } else {
-        toast.error(data.error || "Failed to create event")
+        const errorMessage = json.error?.message || json.error || "Failed to create event"
+        toast.error(errorMessage)
       }
     } catch (error) {
       toast.error("Failed to create event")
@@ -240,7 +339,6 @@ export default function EventsPage() {
 
     const title = formData.get("title") as string
     const description = formData.get("description") as string
-    const imageId = formData.get("image_id") as string
     const eventDate = formData.get("event_date") as string
     const startDate = formData.get("start_date") as string
     const endDate = formData.get("end_date") as string
@@ -248,7 +346,7 @@ export default function EventsPage() {
 
     if (title !== editingEvent.title) updates.title = title
     if (description !== (editingEvent.description || "")) updates.description = description || null
-    const finalImageId = imageId && imageId.trim() ? imageId : null
+    const finalImageId = editSelectedImageId && editSelectedImageId.trim() ? editSelectedImageId : null
     if (finalImageId !== (editingEvent.image_id || null)) updates.image_id = finalImageId
     if (eventDate) {
       const timestamp = Math.floor(new Date(eventDate).getTime() / 1000)
@@ -277,14 +375,16 @@ export default function EventsPage() {
         body: JSON.stringify(updates),
       })
 
-      const data = await response.json()
-      if (data.success) {
+      const json = await response.json()
+      if (json.success) {
         toast.success("Event updated successfully")
         setEditDialogOpen(false)
         setEditingEvent(null)
+        setEditSelectedImageId(null)
         fetchEvents()
       } else {
-        toast.error(data.error || "Failed to update event")
+        const errorMessage = json.error?.message || json.error || "Failed to update event"
+        toast.error(errorMessage)
       }
     } catch (error) {
       toast.error("Failed to update event")
@@ -301,13 +401,14 @@ export default function EventsPage() {
         method: "DELETE",
       })
 
-      const data = await response.json()
-      if (data.success) {
+      const json = await response.json()
+      if (json.success) {
         toast.success("Event deleted successfully")
         setDeleteConfirm(null)
         fetchEvents()
       } else {
-        toast.error(data.error || "Failed to delete event")
+        const errorMessage = json.error?.message || json.error || "Failed to delete event"
+        toast.error(errorMessage)
       }
     } catch (error) {
       toast.error("Failed to delete event")
@@ -351,7 +452,7 @@ export default function EventsPage() {
                 Create a new event with details and images
               </DialogDescription>
             </DialogHeader>
-            <form onSubmit={handleCreate} className="space-y-4">
+            <form ref={createFormRef} onSubmit={handleCreate} className="space-y-4">
               <div>
                 <Label htmlFor="create-title">Title *</Label>
                 <Input
@@ -373,18 +474,79 @@ export default function EventsPage() {
               </div>
               <div>
                 <Label htmlFor="create-image_id">Poster Image</Label>
-                <Select name="image_id" disabled={saving}>
-                  <SelectTrigger>
-                    <SelectValue placeholder="Select an image (optional)" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {images.map(img => (
-                      <SelectItem key={img.id} value={img.id}>
-                        {img.title || img.id}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
+                <Popover open={createImageOpen} onOpenChange={setCreateImageOpen}>
+                  <PopoverTrigger asChild>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      role="combobox"
+                      aria-expanded={createImageOpen}
+                      className="w-full justify-between"
+                      disabled={saving}
+                    >
+                      {selectedImageId ? (
+                        <div className="flex items-center gap-2">
+                          <img
+                            src={images.find(img => img.id === selectedImageId)?.blob_url || ""}
+                            alt={images.find(img => img.id === selectedImageId)?.title || ""}
+                            className="h-8 w-8 rounded object-cover"
+                          />
+                          <span className="truncate">
+                            {images.find(img => img.id === selectedImageId)?.title || selectedImageId}
+                          </span>
+                        </div>
+                      ) : (
+                        <span className="text-muted-foreground">Select an image (optional)</span>
+                      )}
+                      <X className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+                    </Button>
+                  </PopoverTrigger>
+                  <PopoverContent className="w-[400px] p-0" align="start">
+                    <Command>
+                      <CommandInput placeholder="Search images..." />
+                      <CommandList>
+                        <CommandEmpty>No images found.</CommandEmpty>
+                        <CommandGroup>
+                          {images
+                            .filter(img => img.category === "event")
+                            .map((img) => (
+                              <CommandItem
+                                key={img.id}
+                                value={`${img.title || ""} ${img.id}`}
+                                onSelect={() => {
+                                  setSelectedImageId(img.id === selectedImageId ? null : img.id)
+                                  setCreateImageOpen(false)
+                                }}
+                                className="flex items-center gap-2"
+                              >
+                                <Check
+                                  className={`h-4 w-4 ${selectedImageId === img.id ? "opacity-100" : "opacity-0"}`}
+                                />
+                                <img
+                                  src={img.blob_url}
+                                  alt={img.title || "Event image"}
+                                  className="h-16 w-16 rounded object-cover"
+                                />
+                                <span className="flex-1 truncate">{img.title || img.id}</span>
+                              </CommandItem>
+                            ))}
+                        </CommandGroup>
+                      </CommandList>
+                    </Command>
+                  </PopoverContent>
+                </Popover>
+                {selectedImageId && (
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    className="mt-2"
+                    onClick={() => setSelectedImageId(null)}
+                    disabled={saving}
+                  >
+                    Clear selection
+                  </Button>
+                )}
               </div>
               <div className="grid grid-cols-2 gap-4">
                 <div>
@@ -558,18 +720,79 @@ export default function EventsPage() {
               </div>
               <div>
                 <Label htmlFor="edit-image_id">Poster Image</Label>
-                <Select name="image_id" defaultValue={editingEvent.image_id || undefined} disabled={saving}>
-                  <SelectTrigger>
-                    <SelectValue placeholder="Select an image (optional)" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {images.map(img => (
-                      <SelectItem key={img.id} value={img.id}>
-                        {img.title || img.id}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
+                <Popover open={editImageOpen} onOpenChange={setEditImageOpen}>
+                  <PopoverTrigger asChild>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      role="combobox"
+                      aria-expanded={editImageOpen}
+                      className="w-full justify-between"
+                      disabled={saving}
+                    >
+                      {editSelectedImageId ? (
+                        <div className="flex items-center gap-2">
+                          <img
+                            src={images.find(img => img.id === editSelectedImageId)?.blob_url || ""}
+                            alt={images.find(img => img.id === editSelectedImageId)?.title || ""}
+                            className="h-8 w-8 rounded object-cover"
+                          />
+                          <span className="truncate">
+                            {images.find(img => img.id === editSelectedImageId)?.title || editSelectedImageId}
+                          </span>
+                        </div>
+                      ) : (
+                        <span className="text-muted-foreground">Select an image (optional)</span>
+                      )}
+                      <X className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+                    </Button>
+                  </PopoverTrigger>
+                  <PopoverContent className="w-[400px] p-0" align="start">
+                    <Command>
+                      <CommandInput placeholder="Search images..." />
+                      <CommandList>
+                        <CommandEmpty>No images found.</CommandEmpty>
+                        <CommandGroup>
+                          {images
+                            .filter(img => img.category === "event")
+                            .map((img) => (
+                              <CommandItem
+                                key={img.id}
+                                value={`${img.title || ""} ${img.id}`}
+                                onSelect={() => {
+                                  setEditSelectedImageId(img.id === editSelectedImageId ? null : img.id)
+                                  setEditImageOpen(false)
+                                }}
+                                className="flex items-center gap-2"
+                              >
+                                <Check
+                                  className={`h-4 w-4 ${editSelectedImageId === img.id ? "opacity-100" : "opacity-0"}`}
+                                />
+                                <img
+                                  src={img.blob_url}
+                                  alt={img.title || "Event image"}
+                                  className="h-16 w-16 rounded object-cover"
+                                />
+                                <span className="flex-1 truncate">{img.title || img.id}</span>
+                              </CommandItem>
+                            ))}
+                        </CommandGroup>
+                      </CommandList>
+                    </Command>
+                  </PopoverContent>
+                </Popover>
+                {editSelectedImageId && (
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    className="mt-2"
+                    onClick={() => setEditSelectedImageId(null)}
+                    disabled={saving}
+                  >
+                    Clear selection
+                  </Button>
+                )}
               </div>
               <div className="grid grid-cols-2 gap-4">
                 <div>

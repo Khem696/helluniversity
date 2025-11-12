@@ -1,5 +1,7 @@
 import { NextResponse } from "next/server"
 import { getTursoClient } from "@/lib/turso"
+import { createRequestLogger } from "@/lib/logger"
+import { withErrorHandling, successResponse, errorResponse, ErrorCodes } from "@/lib/api-response"
 
 /**
  * Public Images API
@@ -14,17 +16,28 @@ import { getTursoClient } from "@/lib/turso"
  */
 
 export async function GET(request: Request) {
-  try {
+  return withErrorHandling(async () => {
+    const requestId = crypto.randomUUID()
+    const logger = createRequestLogger(requestId, '/api/images')
+    
+    await logger.info('Get images request received')
+    
     const { searchParams } = new URL(request.url)
     const category = searchParams.get("category")
     const limit = parseInt(searchParams.get("limit") || "100")
 
     if (!category) {
-      return NextResponse.json(
-        { success: false, error: "Category parameter is required" },
-        { status: 400 }
+      await logger.warn('Get images rejected: missing category parameter')
+      return errorResponse(
+        ErrorCodes.VALIDATION_ERROR,
+        "Category parameter is required",
+        undefined,
+        400,
+        { requestId }
       )
     }
+    
+    await logger.debug('Get images parameters', { category, limit })
 
     const db = getTursoClient()
 
@@ -32,7 +45,7 @@ export async function GET(request: Request) {
     const result = await db.execute({
       sql: `
         SELECT 
-          id, blob_url, title, category, display_order, format,
+          id, blob_url, title, category, display_order, ai_selected, format,
           width, height, created_at
         FROM images
         WHERE category = ?
@@ -41,21 +54,20 @@ export async function GET(request: Request) {
       `,
       args: [category, limit],
     })
-
-    return NextResponse.json({
-      success: true,
-      images: result.rows,
+    
+    await logger.info('Images retrieved', { 
+      category, 
       count: result.rows.length,
+      limit 
     })
-  } catch (error) {
-    console.error("Get images error:", error)
-    return NextResponse.json(
+
+    return successResponse(
       {
-        success: false,
-        error: error instanceof Error ? error.message : "Failed to get images",
+        images: result.rows,
+        count: result.rows.length,
       },
-      { status: 500 }
+      { requestId }
     )
-  }
+  }, { endpoint: '/api/images' })
 }
 

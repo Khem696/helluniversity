@@ -1,5 +1,7 @@
 import { NextResponse } from "next/server"
 import { getTursoClient } from "@/lib/turso"
+import { createRequestLogger } from "@/lib/logger"
+import { withErrorHandling, successResponse, errorResponse, notFoundResponse, ErrorCodes } from "@/lib/api-response"
 
 /**
  * Public Event Details API
@@ -13,8 +15,13 @@ export async function GET(
   request: Request,
   { params }: { params: Promise<{ id: string }> }
 ) {
-  try {
+  return withErrorHandling(async () => {
     const { id } = await params
+    const requestId = crypto.randomUUID()
+    const logger = createRequestLogger(requestId, '/api/events/[id]')
+    
+    await logger.info('Public get event request', { eventId: id })
+    
     const db = getTursoClient()
 
     // Get event with poster image
@@ -32,10 +39,8 @@ export async function GET(
     })
 
     if (eventResult.rows.length === 0) {
-      return NextResponse.json(
-        { success: false, error: "Event not found" },
-        { status: 404 }
-      )
+      await logger.warn('Event not found', { eventId: id })
+      return notFoundResponse('Event', { requestId })
     }
 
     // Get in-event photos
@@ -51,23 +56,21 @@ export async function GET(
       `,
       args: [id],
     })
-
-    return NextResponse.json({
-      success: true,
-      event: {
-        ...eventResult.rows[0],
-        in_event_photos: inEventPhotos.rows,
-      },
+    
+    await logger.info('Event retrieved', {
+      eventId: id,
+      inEventPhotosCount: inEventPhotos.rows.length
     })
-  } catch (error) {
-    console.error("Get event error:", error)
-    return NextResponse.json(
+
+    return successResponse(
       {
-        success: false,
-        error: error instanceof Error ? error.message : "Failed to get event",
+        event: {
+          ...eventResult.rows[0],
+          in_event_photos: inEventPhotos.rows,
+        },
       },
-      { status: 500 }
+      { requestId }
     )
-  }
+  }, { endpoint: '/api/events/[id]' })
 }
 

@@ -142,11 +142,13 @@ export function SimpleCalendar({
                     "size-8 p-0 font-normal",
                     isSelected &&
                       "bg-primary text-primary-foreground hover:bg-primary hover:text-primary-foreground",
-                    isTodayDate && !isSelected &&
+                    isTodayDate && !isSelected && !isDisabled &&
                       "bg-accent text-accent-foreground",
-                    isDisabled && "opacity-50 cursor-not-allowed",
+                    isDisabled && 
+                      "opacity-40 cursor-not-allowed bg-red-50 hover:bg-red-50 text-red-400 line-through",
                     "focus:z-20"
                   )}
+                  title={isDisabled ? "This date is unavailable (occupied)" : undefined}
                 >
                   {format(date, "d")}
                 </button>

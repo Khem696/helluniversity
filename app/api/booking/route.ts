@@ -2,6 +2,11 @@ import { NextResponse } from "next/server"
 import { sendReservationEmails, verifyEmailConfig } from "@/lib/email"
 import { createBooking } from "@/lib/bookings"
 import { checkRateLimit, getRateLimitIdentifier } from "@/lib/rate-limit"
+import { checkBookingOverlap } from "@/lib/booking-validations"
+import { validateBookingData } from "@/lib/input-validation"
+import { createRequestLogger, withLogging } from "@/lib/logger"
+import { withErrorHandling, successResponse, validationErrorResponse, errorResponse, ErrorCodes, type ApiResponse } from "@/lib/api-response"
+import { withRateLimit, getRateLimitOptions } from "@/lib/rate-limit-middleware"
 
 // Helper function to get client IP address
 function getClientIP(request: Request): string | null {
@@ -25,47 +30,39 @@ function getClientIP(request: Request): string | null {
   return null
 }
 
-export async function POST(request: Request) {
-  try {
+export async function POST(request: Request): Promise<NextResponse> {
+  return withErrorHandling(async (): Promise<NextResponse<ApiResponse>> => {
+    const requestId = crypto.randomUUID()
+    const logger = createRequestLogger(requestId, '/api/booking')
+    
+    await logger.info('Booking request received')
+    
     const body = await request.json()
     const { token, ...bookingData } = body
-    
-    // Log received booking data for debugging (using error so it shows in production)
-    console.error('='.repeat(60))
-    console.error('📥 RECEIVED BOOKING DATA FROM FORM:')
-    console.error('='.repeat(60))
-    console.error('Name:', bookingData.name || 'MISSING')
-    console.error('Email:', bookingData.email || 'MISSING')
-    console.error('Phone:', bookingData.phone || 'MISSING')
-    console.error('Participants:', bookingData.participants || 'MISSING')
-    console.error('Event Type:', bookingData.eventType || 'MISSING')
-    console.error('Other Event Type:', bookingData.otherEventType || 'N/A')
-    console.error('Date Range:', bookingData.dateRange ? 'YES' : 'NO')
-    console.error('Start Date:', bookingData.startDate || 'MISSING')
-    console.error('End Date:', bookingData.endDate || 'MISSING')
-    console.error('Start Time:', bookingData.startTime || 'MISSING')
-    console.error('End Time:', bookingData.endTime || 'MISSING')
-    console.error('Organization Type:', bookingData.organizationType || 'MISSING')
-    console.error('Introduction:', bookingData.introduction ? `${bookingData.introduction.substring(0, 50)}...` : 'MISSING')
-    console.error('Biography:', bookingData.biography ? `${bookingData.biography.substring(0, 50)}...` : 'N/A')
-    console.error('Special Requests:', bookingData.specialRequests ? `${bookingData.specialRequests.substring(0, 50)}...` : 'N/A')
-    console.error('='.repeat(60))
 
+    // Check rate limit (using middleware)
+    const rateLimit = await withRateLimit(request, getRateLimitOptions('booking'))
+    if (!rateLimit.allowed && rateLimit.response) {
+      await logger.warn('Rate limit exceeded')
+      return rateLimit.response
+    }
+    
     // Validate reCAPTCHA token
     if (!token) {
-      return NextResponse.json(
-        { success: false, error: "reCAPTCHA token is required" },
-        { status: 400 }
-      )
+      await logger.warn('reCAPTCHA token missing')
+      return validationErrorResponse(['reCAPTCHA token is required'], { requestId })
     }
 
     const secretKey = process.env.RECAPTCHA_SECRET_KEY
 
     if (!secretKey) {
-      console.error("RECAPTCHA_SECRET_KEY is not set")
-      return NextResponse.json(
-        { success: false, error: "Server configuration error" },
-        { status: 500 }
+      await logger.error('RECAPTCHA_SECRET_KEY not configured', new Error('RECAPTCHA_SECRET_KEY is not set'))
+      return errorResponse(
+        ErrorCodes.INTERNAL_ERROR,
+        'Server configuration error',
+        undefined,
+        500,
+        { requestId }
       )
     }
 
@@ -94,18 +91,13 @@ export async function POST(request: Request) {
     // Check if HTTP response is OK
     if (!recaptchaResponse.ok) {
       const errorText = await recaptchaResponse.text()
-      console.error("reCAPTCHA API HTTP error:", {
-        status: recaptchaResponse.status,
-        statusText: recaptchaResponse.statusText,
-        errorBody: errorText
-      })
-      return NextResponse.json(
-        {
-          success: false,
-          error: "reCAPTCHA verification service error",
-          details: `HTTP ${recaptchaResponse.status}: ${recaptchaResponse.statusText}`
-        },
-        { status: 500 }
+      await logger.error('reCAPTCHA API HTTP error', new Error(`HTTP ${recaptchaResponse.status}: ${recaptchaResponse.statusText}`))
+      return errorResponse(
+        ErrorCodes.EXTERNAL_SERVICE_ERROR,
+        'reCAPTCHA verification service error',
+        `HTTP ${recaptchaResponse.status}: ${recaptchaResponse.statusText}`,
+        500,
+        { requestId }
       )
     }
 
@@ -114,230 +106,275 @@ export async function POST(request: Request) {
     try {
       recaptchaData = await recaptchaResponse.json()
     } catch (jsonError) {
-      console.error("Failed to parse reCAPTCHA response:", jsonError)
-      return NextResponse.json(
-        {
-          success: false,
-          error: "Invalid response from verification service",
-        },
-        { status: 500 }
+      await logger.error('Failed to parse reCAPTCHA response', jsonError instanceof Error ? jsonError : new Error(String(jsonError)))
+      return errorResponse(
+        ErrorCodes.EXTERNAL_SERVICE_ERROR,
+        'Invalid response from verification service',
+        undefined,
+        500,
+        { requestId }
       )
     }
 
     // Validate response structure and success field
     if (!recaptchaData || typeof recaptchaData.success !== "boolean") {
-      console.error("Invalid reCAPTCHA response structure:", recaptchaData)
-      return NextResponse.json(
-        {
-          success: false,
-          error: "Invalid verification response",
-        },
-        { status: 500 }
+      await logger.error('Invalid reCAPTCHA response structure')
+      return errorResponse(
+        ErrorCodes.EXTERNAL_SERVICE_ERROR,
+        'Invalid verification response',
+        undefined,
+        500,
+        { requestId }
       )
     }
 
     // Check if verification was successful
     if (!recaptchaData.success) {
-      return NextResponse.json(
-        {
-          success: false,
-          error: "reCAPTCHA verification failed",
-          "error-codes": recaptchaData["error-codes"] || [],
-        },
-        { status: 400 }
+      await logger.warn('reCAPTCHA verification failed', { errorCodes: recaptchaData["error-codes"] || [] })
+      return validationErrorResponse(
+        ['reCAPTCHA verification failed'],
+        { requestId, errorCodes: recaptchaData["error-codes"] || [] }
       )
     }
 
-    // Check rate limit
-    const identifier = getRateLimitIdentifier(request)
-    const rateLimitResult = await checkRateLimit(identifier, "booking")
-    
-    if (!rateLimitResult.success) {
-      return NextResponse.json(
-        {
-          success: false,
-          error: "Rate limit exceeded. Please try again later.",
-          limit: rateLimitResult.limit,
-          reset: rateLimitResult.reset,
-        },
-        { 
-          status: 429,
-          headers: {
-            "X-RateLimit-Limit": rateLimitResult.limit.toString(),
-            "X-RateLimit-Remaining": rateLimitResult.remaining.toString(),
-            "X-RateLimit-Reset": rateLimitResult.reset.toString(),
-          }
-        }
-      )
+    // Validate booking data using comprehensive validation
+    const validation = validateBookingData(bookingData)
+    if (!validation.valid) {
+      await logger.warn('Booking validation failed', { errors: validation.errors })
+      return validationErrorResponse(validation.errors, { requestId })
     }
 
-    // Validate required booking data
-    if (!bookingData.name || !bookingData.email || !bookingData.startDate) {
-      return NextResponse.json(
-        { success: false, error: "Missing required booking information" },
-        { status: 400 }
-      )
-    }
+    // Use sanitized data from validation
+    const sanitizedData = validation.sanitized!
 
     // Verify email configuration first
     const emailConfigCheck = verifyEmailConfig()
     if (!emailConfigCheck.valid) {
-      return NextResponse.json(
-        { 
-          success: false, 
-          error: "Email service is not configured. Please contact support.",
-          details: emailConfigCheck.errors
-        },
-        { status: 500 }
+      await logger.error('Email service not configured', new Error('Email configuration invalid'))
+      return errorResponse(
+        ErrorCodes.SERVICE_UNAVAILABLE,
+        'Email service is not configured. Please contact support.',
+        emailConfigCheck.errors,
+        500,
+        { requestId }
       )
     }
 
-    // Send emails - prioritize user confirmation
+    // Check for booking overlaps with checked-in bookings
+    // Use timezone library to properly convert Bangkok timezone dates to timestamps
+    const { createBangkokTimestamp, getBangkokTime, getBangkokDateString } = await import('@/lib/timezone')
+    const startDateTimestamp = createBangkokTimestamp(sanitizedData.startDate, sanitizedData.startTime || null)
+    const endDateTimestamp = sanitizedData.endDate
+      ? createBangkokTimestamp(sanitizedData.endDate, sanitizedData.endTime || null)
+      : null
+    
+    // Validate that start date is not today (users cannot book current date)
+    const now = getBangkokTime()
+    const todayDateStr = getBangkokDateString()
+    if (sanitizedData.startDate === todayDateStr) {
+      await logger.warn('Booking attempt for today rejected', { startDate: sanitizedData.startDate })
+      return errorResponse(
+        ErrorCodes.INVALID_INPUT,
+        'Start date cannot be today. Please select a future date.',
+        {},
+        400,
+        { requestId }
+      )
+    }
+    
+    // Validate that start date is in the future
+    if (startDateTimestamp <= now) {
+      await logger.warn('Booking attempt for past date rejected', { startDate: sanitizedData.startDate, startDateTimestamp, now })
+      return errorResponse(
+        ErrorCodes.INVALID_INPUT,
+        'Start date must be in the future. Please select a future date.',
+        {},
+        400,
+        { requestId }
+      )
+    }
+    
+    const overlapCheck = await checkBookingOverlap(
+      null, // New booking
+      startDateTimestamp,
+      endDateTimestamp,
+      sanitizedData.startTime || null,
+      sanitizedData.endTime || null
+    )
+    
+    if (overlapCheck.overlaps) {
+      const overlappingNames = overlapCheck.overlappingBookings
+        ?.map((b: any) => b.name || "Unknown")
+        .join(", ") || "existing booking"
+      await logger.warn('Booking overlap detected', { overlappingNames })
+      return errorResponse(
+        ErrorCodes.BOOKING_OVERLAP,
+        `The selected date and time overlaps with an existing checked-in booking (${overlappingNames}). Please choose a different date or time.`,
+        { overlappingBookings: overlapCheck.overlappingBookings },
+        409,
+        { requestId }
+      )
+    }
+    
+    // FINAL OVERLAP CHECK: Re-check right before saving to prevent race conditions
+    // This ensures we catch any bookings that became checked-in between initial check and save
+    await logger.info('Performing final overlap check before saving booking')
+    const finalOverlapCheck = await checkBookingOverlap(
+      null, // New booking
+      startDateTimestamp,
+      endDateTimestamp,
+      sanitizedData.startTime || null,
+      sanitizedData.endTime || null
+    )
+    
+    if (finalOverlapCheck.overlaps) {
+      const overlappingNames = finalOverlapCheck.overlappingBookings
+        ?.map((b: any) => b.name || "Unknown")
+        .join(", ") || "existing booking"
+      await logger.warn('Final overlap check detected conflict - booking became unavailable', { overlappingNames })
+      return errorResponse(
+        ErrorCodes.BOOKING_OVERLAP,
+        `The selected date and time is no longer available. It overlaps with a recently checked-in booking (${overlappingNames}). Please refresh the calendar and choose a different date or time.`,
+        { overlappingBookings: finalOverlapCheck.overlappingBookings },
+        409,
+        { requestId }
+      )
+    }
+    
+    // Prepare booking data for email (before creating booking)
+    const bookingDataForCreation = {
+      name: sanitizedData.name,
+      email: sanitizedData.email,
+      phone: sanitizedData.phone,
+      participants: sanitizedData.participants,
+      eventType: sanitizedData.eventType,
+      otherEventType: sanitizedData.otherEventType,
+      dateRange: !!sanitizedData.endDate,
+      startDate: sanitizedData.startDate,
+      endDate: sanitizedData.endDate,
+      startTime: sanitizedData.startTime,
+      endTime: sanitizedData.endTime,
+      organizationType: (bookingData.organizationType as "Tailor Event" | "Space Only" | "" | undefined) || undefined,
+      introduction: sanitizedData.introduction,
+      biography: sanitizedData.biography,
+      specialRequests: sanitizedData.specialRequests,
+    }
+    
+    // CRITICAL: Generate reference number BEFORE sending admin email
+    // This ensures we have a reference to include in the email subject
+    const { randomUUID } = await import('crypto')
+    const tempBookingId = randomUUID()
+    
+    // Generate reference number (same logic as createBooking)
+    const generateBookingReference = () => {
+      const timestamp = Math.floor(Date.now() / 1000)
+      const randomBytes = require('crypto').randomBytes(3)
+      const randomValue = parseInt(randomBytes.toString('hex'), 16)
+      const timestampPart = (timestamp % 46656).toString(36).toUpperCase().padStart(3, '0')
+      const randomPart = (randomValue % 1296).toString(36).toUpperCase().padStart(2, '0')
+      return `HU-${timestampPart}${randomPart}`
+    }
+    const tempReferenceNumber = generateBookingReference()
+    
+    // CRITICAL: Send BOTH emails FIRST - booking will NOT be saved if either fails
+    let emailStatus: { adminSent: boolean; userSent: boolean; errors: string[] } | undefined = undefined
     try {
-      // Use console.error so logs appear in production (console.log is removed)
-      console.error("=".repeat(60))
-      console.error("STARTING EMAIL SENDING PROCESS")
-      console.error("=".repeat(60))
-      console.error("Environment Variables Check (API Route):")
-      console.error("  RESERVATION_EMAIL:", process.env.RESERVATION_EMAIL ? `✅ SET (${process.env.RESERVATION_EMAIL})` : "❌ NOT SET")
-      console.error("  SMTP_USER:", process.env.SMTP_USER ? `✅ SET (${process.env.SMTP_USER})` : "❌ NOT SET")
-      console.error("  SMTP_HOST:", process.env.SMTP_HOST || "default (smtp.gmail.com)")
-      console.error("  SMTP_PORT:", process.env.SMTP_PORT || "default (587)")
-      console.error("  NODE_ENV:", process.env.NODE_ENV || "unknown")
-      console.error("  VERCEL:", process.env.VERCEL ? "YES" : "NO")
-      console.error("=".repeat(60))
+      await logger.info('Attempting to send both admin and user emails before saving booking')
+      emailStatus = await sendReservationEmails({
+        name: sanitizedData.name,
+        email: sanitizedData.email,
+        phone: sanitizedData.phone,
+        participants: sanitizedData.participants,
+        eventType: sanitizedData.eventType,
+        otherEventType: sanitizedData.otherEventType,
+        dateRange: !!sanitizedData.endDate,
+        startDate: sanitizedData.startDate,
+        endDate: sanitizedData.endDate || null,
+        startTime: sanitizedData.startTime,
+        endTime: sanitizedData.endTime,
+        organizationType: bookingData.organizationType as "Tailor Event" | "Space Only" | "" || "",
+        introduction: sanitizedData.introduction,
+        biography: sanitizedData.biography,
+        specialRequests: sanitizedData.specialRequests,
+      }, tempReferenceNumber) // Use reference number for email subject
       
-      // Validate RESERVATION_EMAIL is set before proceeding
-      if (!process.env.RESERVATION_EMAIL) {
-        console.error("⚠️ WARNING: RESERVATION_EMAIL is not set!")
-        console.error("⚠️ Admin notifications will use SMTP_USER as fallback:", process.env.SMTP_USER || "NOT SET")
-      }
-      
-      // Normalize booking data to ensure all fields are properly formatted
-      const normalizedBookingData = {
-        name: String(bookingData.name || "").trim(),
-        email: String(bookingData.email || "").trim(),
-        phone: String(bookingData.phone || "").trim(),
-        participants: bookingData.participants ? String(bookingData.participants).trim() : undefined,
-        eventType: String(bookingData.eventType || "").trim(),
-        otherEventType: bookingData.otherEventType ? String(bookingData.otherEventType).trim() : undefined,
-        dateRange: Boolean(bookingData.dateRange),
-        startDate: bookingData.startDate ? String(bookingData.startDate).trim() : null,
-        endDate: bookingData.endDate ? String(bookingData.endDate).trim() : null,
-        startTime: bookingData.startTime ? String(bookingData.startTime).trim() : undefined,
-        endTime: bookingData.endTime ? String(bookingData.endTime).trim() : undefined,
-        organizationType: (bookingData.organizationType as "Tailor Event" | "Space Only" | "") || "",
-        introduction: String(bookingData.introduction || "").trim(),
-        biography: bookingData.biography ? String(bookingData.biography).trim() : "",
-        specialRequests: bookingData.specialRequests ? String(bookingData.specialRequests).trim() : "",
-      }
-      
-      // Validate normalized data
-      if (!normalizedBookingData.name || !normalizedBookingData.email || !normalizedBookingData.startDate) {
-        return NextResponse.json(
-          { success: false, error: "Missing required booking information after normalization" },
-          { status: 400 }
+      // CRITICAL: BOTH emails must succeed - if either fails, do NOT save booking
+      if (!emailStatus.adminSent || !emailStatus.userSent) {
+        await logger.error('CRITICAL: Email sending failed - booking will NOT be saved', 
+          new Error(`Admin: ${emailStatus.adminSent}, User: ${emailStatus.userSent}, Errors: ${emailStatus.errors.join('; ')}`)
+        )
+        return errorResponse(
+          ErrorCodes.EMAIL_ERROR,
+          'Failed to send booking confirmation emails. Please try again later. Your booking was not saved.',
+          emailStatus.errors.join('; ') || 'Email sending failed',
+          500,
+          { requestId }
         )
       }
       
-      console.error("📦 Normalized booking data:", {
-        name: normalizedBookingData.name,
-        email: normalizedBookingData.email,
-        phone: normalizedBookingData.phone,
-        participants: normalizedBookingData.participants,
-        eventType: normalizedBookingData.eventType,
-        startDate: normalizedBookingData.startDate,
-        endDate: normalizedBookingData.endDate,
-        startTime: normalizedBookingData.startTime,
-        endTime: normalizedBookingData.endTime,
-        introduction: normalizedBookingData.introduction ? `${normalizedBookingData.introduction.substring(0, 30)}...` : "empty",
-        biography: normalizedBookingData.biography ? `${normalizedBookingData.biography.substring(0, 30)}...` : "empty",
-        specialRequests: normalizedBookingData.specialRequests ? `${normalizedBookingData.specialRequests.substring(0, 30)}...` : "empty",
-      })
-      
-      // Save booking to database
-      let savedBooking
-      try {
-        savedBooking = await createBooking(normalizedBookingData)
-        console.error("✅ Booking saved to database:", savedBooking.id)
-      } catch (dbError) {
-        console.error("❌ Failed to save booking to database:", dbError)
-        // Continue with email sending even if DB save fails
-        // This ensures users still get confirmation
-      }
-      
-      const emailStatus = await sendReservationEmails(normalizedBookingData)
-      
-      console.error("Email sending results:", {
-        adminSent: emailStatus.adminSent,
-        userSent: emailStatus.userSent,
-        errors: emailStatus.errors
-      })
-      
-      // If user confirmation was sent, consider it a success (user got their email)
-      // Both emails must succeed - if admin email fails, user email is not sent
-      if (emailStatus.adminSent && emailStatus.userSent) {
-        console.error("✅ Both admin notification and user confirmation sent successfully")
-        console.error("Booking received and emails sent:", bookingData)
-
-        return NextResponse.json({
-          success: true,
-          message: "Booking request received successfully. Confirmation email has been sent.",
-          bookingId: savedBooking?.id,
-          emailStatus: {
-            adminNotification: emailStatus.adminSent,
-            userConfirmation: emailStatus.userSent,
-          }
-        })
-      }
-      
-      // If either email failed, return error
-      const errorMessages = emailStatus.errors.join("; ")
-      console.error("❌ Email sending failed:", errorMessages)
-      console.error("Admin sent:", emailStatus.adminSent, "User sent:", emailStatus.userSent)
-      
-      // Determine appropriate error message
-      let errorMessage = "Failed to send confirmation emails. Please try again."
-      if (!emailStatus.adminSent && !emailStatus.userSent) {
-        errorMessage = "Failed to process your booking request. Please try again later."
-      } else if (!emailStatus.adminSent) {
-        errorMessage = "Failed to process your booking request. Please try again later."
-      } else if (!emailStatus.userSent) {
-        errorMessage = "Failed to send confirmation email. Please try again."
-      }
-      
-      return NextResponse.json(
-        { 
-          success: false, 
-          error: errorMessage,
-          details: errorMessages,
-          emailStatus: {
-            adminNotification: emailStatus.adminSent,
-            userConfirmation: emailStatus.userSent,
-          }
-        },
-        { status: 500 }
-      )
+      await logger.info('Both admin and user emails sent successfully, proceeding to save booking')
     } catch (emailError) {
-      // Email sending failed - booking fails
-      const errorMessage = emailError instanceof Error ? emailError.message : "Unknown email error"
-      console.error("Email sending error - booking failed:", emailError)
-      
-      return NextResponse.json(
-        { 
-          success: false, 
-          error: "Failed to send confirmation emails. Please check your connection and try again.",
-          details: errorMessage
-        },
-        { status: 500 }
+      await logger.error('CRITICAL: Email sending failed with exception - booking will NOT be saved', emailError instanceof Error ? emailError : new Error(String(emailError)))
+      return errorResponse(
+        ErrorCodes.EMAIL_ERROR,
+        'Failed to send booking confirmation emails. Please try again later. Your booking was not saved.',
+        emailError instanceof Error ? emailError.message : 'Email sending failed',
+        500,
+        { requestId }
       )
     }
-  } catch (error) {
-    console.error("Booking submission error:", error)
-    return NextResponse.json(
-      { success: false, error: "Internal server error" },
-      { status: 500 }
+    
+    // Only save booking to database AFTER both emails succeed
+    let savedBooking: { id: string; referenceNumber: string } | undefined = undefined
+    try {
+      savedBooking = await createBooking(bookingDataForCreation, tempReferenceNumber)
+      await logger.info('Booking created successfully', { 
+        bookingId: savedBooking.id, 
+        referenceNumber: savedBooking.referenceNumber 
+      })
+      
+      // Verify reference number matches (should be same since generated with same logic)
+      if (savedBooking.referenceNumber !== tempReferenceNumber) {
+        await logger.warn('Reference number mismatch', { 
+          temp: tempReferenceNumber, 
+          saved: savedBooking.referenceNumber 
+        })
+      }
+    } catch (dbError) {
+      await logger.error('CRITICAL: Failed to save booking after both emails succeeded', dbError instanceof Error ? dbError : new Error(String(dbError)))
+      // Both emails were sent but booking failed to save - this is a critical error
+      // Both admin and user received emails but booking won't exist - need to handle this
+      return errorResponse(
+        ErrorCodes.DATABASE_ERROR,
+        'Booking confirmation emails were sent but failed to save booking. Please contact support with your booking details.',
+        dbError instanceof Error ? dbError.message : 'Database error',
+        500,
+        { requestId }
+      )
+    }
+    
+    // Both emails succeeded and booking was saved - return success
+    try {
+      await logger.info('Booking created successfully - both emails sent and booking saved', { 
+        bookingId: savedBooking.id,
+        referenceNumber: savedBooking.referenceNumber
+      })
+    } catch (logError) {
+      // Log error but don't fail the request - booking was successful
+      console.error('Failed to log success message:', logError)
+    }
+    
+    // Return success response - ensure this is the last operation
+    const response = successResponse(
+      {
+        bookingId: savedBooking.id,
+        referenceNumber: savedBooking.referenceNumber,
+        message: 'Booking created successfully. Confirmation emails have been sent.',
+      },
+      { requestId }
     )
-  }
+    
+    return response
+  }, { endpoint: '/api/booking' })
 }
 

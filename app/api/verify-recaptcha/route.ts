@@ -1,4 +1,6 @@
 import { NextResponse } from "next/server"
+import { createRequestLogger } from "@/lib/logger"
+import { withErrorHandling, successResponse, errorResponse, ErrorCodes } from "@/lib/api-response"
 
 // Helper function to get client IP address
 function getClientIP(request: Request): string | null {
@@ -23,23 +25,35 @@ function getClientIP(request: Request): string | null {
 }
 
 export async function POST(request: Request) {
-  try {
+  return withErrorHandling(async () => {
+    const requestId = crypto.randomUUID()
+    const logger = createRequestLogger(requestId, '/api/verify-recaptcha')
+    
+    await logger.info('reCAPTCHA verification request received')
+    
     const { token } = await request.json()
 
     if (!token) {
-      return NextResponse.json(
-        { success: false, error: "Token is required" },
-        { status: 400 }
+      await logger.warn('reCAPTCHA verification rejected: missing token')
+      return errorResponse(
+        ErrorCodes.VALIDATION_ERROR,
+        "Token is required",
+        undefined,
+        400,
+        { requestId }
       )
     }
 
     const secretKey = process.env.RECAPTCHA_SECRET_KEY
 
     if (!secretKey) {
-      console.error("RECAPTCHA_SECRET_KEY is not set")
-      return NextResponse.json(
-        { success: false, error: "Server configuration error" },
-        { status: 500 }
+      await logger.error('RECAPTCHA_SECRET_KEY is not set', new Error('RECAPTCHA_SECRET_KEY is not set'))
+      return errorResponse(
+        ErrorCodes.INTERNAL_ERROR,
+        "Server configuration error",
+        undefined,
+        500,
+        { requestId }
       )
     }
 
@@ -47,12 +61,10 @@ export async function POST(request: Request) {
     const remoteip = getClientIP(request)
 
     // Log verification attempt (without exposing sensitive data)
-    console.log("reCAPTCHA verification attempt:", {
+    await logger.debug('reCAPTCHA verification attempt', {
       hasToken: !!token,
       tokenLength: token?.length,
-      hasSecretKey: !!secretKey,
-      hasRemoteIP: !!remoteip,
-      remoteip: remoteip || "not available"
+      hasRemoteIP: !!remoteip
     })
 
     // Verify token with Google reCAPTCHA API
@@ -77,18 +89,16 @@ export async function POST(request: Request) {
     // Check if HTTP response is OK
     if (!response.ok) {
       const errorText = await response.text()
-      console.error("reCAPTCHA API HTTP error:", {
+      await logger.error('reCAPTCHA API HTTP error', new Error(`HTTP ${response.status}: ${response.statusText}`), {
         status: response.status,
-        statusText: response.statusText,
-        errorBody: errorText
+        statusText: response.statusText
       })
-      return NextResponse.json(
-        {
-          success: false,
-          error: "reCAPTCHA verification service error",
-          details: `HTTP ${response.status}: ${response.statusText}`
-        },
-        { status: 500 }
+      return errorResponse(
+        ErrorCodes.INTERNAL_ERROR,
+        "reCAPTCHA verification service error",
+        `HTTP ${response.status}: ${response.statusText}`,
+        500,
+        { requestId }
       )
     }
 
@@ -97,58 +107,51 @@ export async function POST(request: Request) {
     try {
       data = await response.json()
     } catch (jsonError) {
-      console.error("Failed to parse reCAPTCHA response:", jsonError)
-      return NextResponse.json(
-        {
-          success: false,
-          error: "Invalid response from verification service",
-        },
-        { status: 500 }
+      await logger.error('Failed to parse reCAPTCHA response', jsonError instanceof Error ? jsonError : new Error(String(jsonError)))
+      return errorResponse(
+        ErrorCodes.INTERNAL_ERROR,
+        "Invalid response from verification service",
+        undefined,
+        500,
+        { requestId }
       )
     }
 
     // Validate response structure and success field
     if (!data || typeof data.success !== "boolean") {
-      console.error("Invalid reCAPTCHA response structure:", data)
-      return NextResponse.json(
-        {
-          success: false,
-          error: "Invalid verification response",
-        },
-        { status: 500 }
+      await logger.error('Invalid reCAPTCHA response structure', new Error('Invalid response structure'))
+      return errorResponse(
+        ErrorCodes.INTERNAL_ERROR,
+        "Invalid verification response",
+        undefined,
+        500,
+        { requestId }
       )
     }
 
     // Check if verification was successful
     if (!data.success) {
-      console.error("reCAPTCHA verification failed:", {
-        success: data.success,
+      await logger.warn('reCAPTCHA verification failed', {
         errorCodes: data["error-codes"] || [],
         challengeTs: data["challenge_ts"],
         hostname: data.hostname
       })
-      return NextResponse.json(
-        {
-          success: false,
-          error: "reCAPTCHA verification failed",
-          "error-codes": data["error-codes"] || [],
-        },
-        { status: 400 }
+      return errorResponse(
+        ErrorCodes.VALIDATION_ERROR,
+        "reCAPTCHA verification failed",
+        undefined,
+        400,
+        { requestId },
+        { "error-codes": data["error-codes"] || [] }
       )
     }
 
-    console.log("reCAPTCHA verification successful:", {
+    await logger.info('reCAPTCHA verification successful', {
       challengeTs: data["challenge_ts"],
       hostname: data.hostname
     })
 
-    return NextResponse.json({ success: true })
-  } catch (error) {
-    console.error("reCAPTCHA verification error:", error)
-    return NextResponse.json(
-      { success: false, error: "Internal server error" },
-      { status: 500 }
-    )
-  }
+    return successResponse({ verified: true }, { requestId })
+  }, { endpoint: '/api/verify-recaptcha' })
 }
 

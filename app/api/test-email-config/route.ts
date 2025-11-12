@@ -1,4 +1,6 @@
 import { NextResponse } from "next/server"
+import { createRequestLogger } from "@/lib/logger"
+import { withErrorHandling, successResponse, errorResponse, ErrorCodes } from "@/lib/api-response"
 
 /**
  * Test endpoint to verify email configuration in production
@@ -9,7 +11,12 @@ import { NextResponse } from "next/server"
  * or trigger a new deployment by making a small change and pushing to your repo
  */
 export async function GET(request: Request) {
-  try {
+  return withErrorHandling(async () => {
+    const requestId = crypto.randomUUID()
+    const logger = createRequestLogger(requestId, '/api/test-email-config')
+    
+    await logger.info('Email config test request received')
+    
     // Get environment variable status (without exposing sensitive values)
     const reservationEmail = process.env.RESERVATION_EMAIL?.trim()
     const smtpUser = process.env.SMTP_USER?.trim()
@@ -55,30 +62,32 @@ export async function GET(request: Request) {
       configErrors.push('RESERVATION_EMAIL or SMTP_USER must be set')
     }
     
-    return NextResponse.json({
-      success: true,
+    await logger.info('Email config checked', {
       configValid,
-      configErrors,
-      environment: envStatus,
-      message: configValid 
-        ? (reservationEmail 
-            ? "Email configuration is valid. RESERVATION_EMAIL is set." 
-            : "Email configuration is valid, but RESERVATION_EMAIL is not set (using SMTP_USER as fallback)")
-        : "Email configuration has errors - check configErrors array",
-      recommendation: !reservationEmail 
-        ? "Set RESERVATION_EMAIL environment variable in Vercel dashboard for dedicated admin notifications"
-        : null
-    }, {
-      headers: {
-        'Cache-Control': 'no-store, no-cache, must-revalidate',
-      }
+      errorsCount: configErrors.length
     })
-  } catch (error) {
-    return NextResponse.json({
-      success: false,
-      error: error instanceof Error ? error.message : "Unknown error",
-      stack: process.env.NODE_ENV === 'development' ? (error instanceof Error ? error.stack : undefined) : undefined
-    }, { status: 500 })
-  }
+    
+    const response = successResponse(
+      {
+        configValid,
+        configErrors,
+        environment: envStatus,
+        message: configValid 
+          ? (reservationEmail 
+              ? "Email configuration is valid. RESERVATION_EMAIL is set." 
+              : "Email configuration is valid, but RESERVATION_EMAIL is not set (using SMTP_USER as fallback)")
+          : "Email configuration has errors - check configErrors array",
+        recommendation: !reservationEmail 
+          ? "Set RESERVATION_EMAIL environment variable in Vercel dashboard for dedicated admin notifications"
+          : null
+      },
+      { requestId }
+    )
+    
+    // Add cache control headers
+    response.headers.set('Cache-Control', 'no-store, no-cache, must-revalidate')
+    
+    return response
+  }, { endpoint: '/api/test-email-config' })
 }
 

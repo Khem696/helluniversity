@@ -1,6 +1,8 @@
 import { NextResponse } from "next/server"
 import { requireAuthorizedDomain, unauthorizedResponse, forbiddenResponse } from "@/lib/auth"
 import { getEmailQueueItem, retryEmail, cancelEmail, deleteEmail } from "@/lib/email-queue"
+import { createRequestLogger } from "@/lib/logger"
+import { withErrorHandling, successResponse, errorResponse, notFoundResponse, ErrorCodes } from "@/lib/api-response"
 
 /**
  * Admin Email Queue Item Management API
@@ -32,34 +34,35 @@ export async function GET(
   request: Request,
   { params }: { params: Promise<{ id: string }> }
 ) {
-  try {
-    const authError = await checkAuth()
-    if (authError) return authError
-
+  return withErrorHandling(async () => {
     const { id } = await params
+    const requestId = crypto.randomUUID()
+    const logger = createRequestLogger(requestId, '/api/admin/email-queue/[id]')
+    
+    await logger.info('Admin get email queue item request', { emailId: id })
+    
+    const authError = await checkAuth()
+    if (authError) {
+      await logger.warn('Admin get email queue item rejected: authentication failed', { emailId: id })
+      return authError
+    }
+
     const email = await getEmailQueueItem(id)
 
     if (!email) {
-      return NextResponse.json(
-        { success: false, error: "Email not found" },
-        { status: 404 }
-      )
+      await logger.warn('Email queue item not found', { emailId: id })
+      return notFoundResponse('Email queue item', { requestId })
     }
+    
+    await logger.info('Email queue item retrieved', { emailId: id })
 
-    return NextResponse.json({
-      success: true,
-      email,
-    })
-  } catch (error) {
-    console.error("Get email queue item error:", error)
-    return NextResponse.json(
+    return successResponse(
       {
-        success: false,
-        error: error instanceof Error ? error.message : "Failed to get email queue item",
+        email,
       },
-      { status: 500 }
+      { requestId }
     )
-  }
+  }, { endpoint: '/api/admin/email-queue/[id]' })
 }
 
 /**
@@ -70,34 +73,41 @@ export async function POST(
   request: Request,
   { params }: { params: Promise<{ id: string }> }
 ) {
-  try {
-    const authError = await checkAuth()
-    if (authError) return authError
-
+  return withErrorHandling(async () => {
     const { id } = await params
+    const requestId = crypto.randomUUID()
+    const logger = createRequestLogger(requestId, '/api/admin/email-queue/[id]')
+    
+    await logger.info('Admin retry email request', { emailId: id })
+    
+    const authError = await checkAuth()
+    if (authError) {
+      await logger.warn('Admin retry email rejected: authentication failed', { emailId: id })
+      return authError
+    }
+
     const result = await retryEmail(id)
 
     if (!result.success) {
-      return NextResponse.json(
-        { success: false, error: result.error },
-        { status: 400 }
+      await logger.warn('Email retry failed', { emailId: id, error: result.error })
+      return errorResponse(
+        ErrorCodes.VALIDATION_ERROR,
+        result.error || "Failed to retry email",
+        undefined,
+        400,
+        { requestId }
       )
     }
+    
+    await logger.info('Email retried successfully', { emailId: id })
 
-    return NextResponse.json({
-      success: true,
-      message: "Email retried successfully",
-    })
-  } catch (error) {
-    console.error("Retry email error:", error)
-    return NextResponse.json(
+    return successResponse(
       {
-        success: false,
-        error: error instanceof Error ? error.message : "Failed to retry email",
+        message: "Email retried successfully",
       },
-      { status: 500 }
+      { requestId }
     )
-  }
+  }, { endpoint: '/api/admin/email-queue/[id]' })
 }
 
 /**
@@ -108,27 +118,30 @@ export async function DELETE(
   request: Request,
   { params }: { params: Promise<{ id: string }> }
 ) {
-  try {
-    const authError = await checkAuth()
-    if (authError) return authError
-
+  return withErrorHandling(async () => {
     const { id } = await params
-    await deleteEmail(id)
+    const requestId = crypto.randomUUID()
+    const logger = createRequestLogger(requestId, '/api/admin/email-queue/[id]')
+    
+    await logger.info('Admin delete email request', { emailId: id })
+    
+    const authError = await checkAuth()
+    if (authError) {
+      await logger.warn('Admin delete email rejected: authentication failed', { emailId: id })
+      return authError
+    }
 
-    return NextResponse.json({
-      success: true,
-      message: "Email deleted successfully",
-    })
-  } catch (error) {
-    console.error("Delete email error:", error)
-    return NextResponse.json(
+    await deleteEmail(id)
+    
+    await logger.info('Email deleted successfully', { emailId: id })
+
+    return successResponse(
       {
-        success: false,
-        error: error instanceof Error ? error.message : "Failed to delete email",
+        message: "Email deleted successfully",
       },
-      { status: 500 }
+      { requestId }
     )
-  }
+  }, { endpoint: '/api/admin/email-queue/[id]' })
 }
 
 /**
@@ -139,57 +152,77 @@ export async function PATCH(
   request: Request,
   { params }: { params: Promise<{ id: string }> }
 ) {
-  try {
-    const authError = await checkAuth()
-    if (authError) return authError
-
+  return withErrorHandling(async () => {
     const { id } = await params
+    const requestId = crypto.randomUUID()
+    const logger = createRequestLogger(requestId, '/api/admin/email-queue/[id]')
+    
+    await logger.info('Admin update email request', { emailId: id })
+    
+    const authError = await checkAuth()
+    if (authError) {
+      await logger.warn('Admin update email rejected: authentication failed', { emailId: id })
+      return authError
+    }
+
     let body: { action?: string } = {}
     try {
       body = await request.json()
     } catch (jsonError) {
-      return NextResponse.json(
-        { success: false, error: "Invalid request body" },
-        { status: 400 }
+      await logger.warn('Invalid request body', { emailId: id })
+      return errorResponse(
+        ErrorCodes.VALIDATION_ERROR,
+        "Invalid request body",
+        undefined,
+        400,
+        { requestId }
       )
     }
     
     const { action } = body
+    
+    await logger.debug('Email update action', { emailId: id, action })
 
     if (action === "cancel") {
+      await logger.info('Cancelling email', { emailId: id })
       await cancelEmail(id)
-      return NextResponse.json({
-        success: true,
-        message: "Email cancelled successfully",
-      })
+      await logger.info('Email cancelled successfully', { emailId: id })
+      return successResponse(
+        {
+          message: "Email cancelled successfully",
+        },
+        { requestId }
+      )
     } else if (action === "retry") {
+      await logger.info('Retrying email', { emailId: id })
       const result = await retryEmail(id)
       if (!result.success) {
-        return NextResponse.json(
-          { success: false, error: result.error || "Failed to retry email" },
-          { status: 400 }
+        await logger.warn('Email retry failed', { emailId: id, error: result.error })
+        return errorResponse(
+          ErrorCodes.VALIDATION_ERROR,
+          result.error || "Failed to retry email",
+          undefined,
+          400,
+          { requestId }
         )
       }
-      return NextResponse.json({
-        success: true,
-        message: "Email retried successfully",
-      })
+      await logger.info('Email retried successfully', { emailId: id })
+      return successResponse(
+        {
+          message: "Email retried successfully",
+        },
+        { requestId }
+      )
     }
 
-    return NextResponse.json(
-      { success: false, error: "Invalid action. Expected 'cancel' or 'retry'" },
-      { status: 400 }
+    await logger.warn('Invalid action provided', { emailId: id, action })
+    return errorResponse(
+      ErrorCodes.VALIDATION_ERROR,
+      "Invalid action. Expected 'cancel' or 'retry'",
+      undefined,
+      400,
+      { requestId }
     )
-  } catch (error) {
-    console.error("Update email error:", error)
-    const errorMessage = error instanceof Error ? error.message : "Failed to update email"
-    return NextResponse.json(
-      {
-        success: false,
-        error: errorMessage,
-      },
-      { status: 500 }
-    )
-  }
+  }, { endpoint: '/api/admin/email-queue/[id]' })
 }
 

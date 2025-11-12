@@ -1,4 +1,6 @@
 import { NextResponse } from "next/server"
+import { createRequestLogger } from "@/lib/logger"
+import { withErrorHandling, successResponse, errorResponse, ErrorCodes } from "@/lib/api-response"
 
 // Helper function to convert image path to full URL
 function getImageUrl(imagePath: string): string {
@@ -225,41 +227,73 @@ async function pollForResult(
   }
 }
 
+// Custom prompts for each event type
+// Optimized for Flux 1 Kontext to preserve original image and add event-themed decorations
+const EVENT_TYPE_PROMPTS: Record<string, string> = {
+  "Arts & Design Coaching": "Preserve the original image structure and layout completely. Add decorative elements on top of the existing space for an Arts & Design Coaching Workshop: artistic wall decorations, creative design posters, color palette displays, inspirational art pieces, and design tools arranged as decorative accents on furniture and table. Maintain all original architectural features, furniture positions, and room structure. Only overlay event-themed decorations that complement the existing space without altering the base image.",
+  "Seminar & Workshop": "Preserve the original image structure and layout completely. Add decorative elements on top of the existing space for a Seminar & Workshop: professional presentation materials, workshop banners, educational posters, seminar signage, and organized learning materials as decorative accents. Maintain all original architectural features, furniture positions, and room structure. Only overlay event-themed decorations that complement the existing space without altering the base image.",
+  "Family Gathering": "Preserve the original image structure and layout completely. Add decorative elements on top of the existing space for a Family Gathering: warm family photos, cozy decorative pillows, festive table settings, family celebration banners, and welcoming home decorations. Maintain all original architectural features, furniture positions, and room structure. Only overlay event-themed decorations that complement the existing space without altering the base image.",
+  "Holiday Festive": "Preserve the original image structure and layout completely. Add decorative elements on top of the existing space for a Holiday Festive event: holiday-themed decorations, festive garlands, seasonal ornaments, holiday lighting accents, and celebratory banners. Maintain all original architectural features, furniture positions, and room structure. Only overlay event-themed decorations that complement the existing space without altering the base image.",
+}
+
 export async function POST(request: Request) {
-  try {
+  return withErrorHandling(async () => {
+    const requestId = crypto.randomUUID()
+    const logger = createRequestLogger(requestId, '/api/ai-space')
+    
+    await logger.info('AI space generation request received')
+    
     const body = await request.json()
-    const { token, selectedImages, prompt } = body
+    const { token, eventType } = body
+    
+    await logger.debug('AI space generation parameters', { hasToken: !!token, eventType })
 
     // Validate reCAPTCHA token
     if (!token) {
-      return NextResponse.json(
-        { success: false, error: "reCAPTCHA token is required" },
-        { status: 400 }
+      await logger.warn('AI space generation rejected: missing reCAPTCHA token')
+      return errorResponse(
+        ErrorCodes.VALIDATION_ERROR,
+        "reCAPTCHA token is required",
+        undefined,
+        400,
+        { requestId }
       )
     }
 
     // Validate inputs
-    if (!selectedImages || selectedImages.length === 0) {
-      return NextResponse.json(
-        { success: false, error: "Please select at least one image" },
-        { status: 400 }
+    if (!eventType) {
+      await logger.warn('AI space generation rejected: missing event type')
+      return errorResponse(
+        ErrorCodes.VALIDATION_ERROR,
+        "Event type is required",
+        undefined,
+        400,
+        { requestId }
       )
     }
 
-    if (!prompt || prompt.trim().length === 0) {
-      return NextResponse.json(
-        { success: false, error: "Please provide a prompt" },
-        { status: 400 }
+    // Validate event type
+    if (!EVENT_TYPE_PROMPTS[eventType]) {
+      await logger.warn('AI space generation rejected: invalid event type', { eventType })
+      return errorResponse(
+        ErrorCodes.VALIDATION_ERROR,
+        "Invalid event type",
+        undefined,
+        400,
+        { requestId }
       )
     }
 
     const secretKey = process.env.RECAPTCHA_SECRET_KEY
 
     if (!secretKey) {
-      console.error("RECAPTCHA_SECRET_KEY is not set")
-      return NextResponse.json(
-        { success: false, error: "Server configuration error" },
-        { status: 500 }
+      await logger.error('RECAPTCHA_SECRET_KEY is not set', new Error('RECAPTCHA_SECRET_KEY is not set'))
+      return errorResponse(
+        ErrorCodes.INTERNAL_ERROR,
+        "Server configuration error",
+        undefined,
+        500,
+        { requestId }
       )
     }
 
@@ -299,18 +333,16 @@ export async function POST(request: Request) {
     // Check if HTTP response is OK
     if (!recaptchaResponse.ok) {
       const errorText = await recaptchaResponse.text()
-      console.error("reCAPTCHA API HTTP error:", {
+      await logger.error('reCAPTCHA API HTTP error', new Error(`HTTP ${recaptchaResponse.status}: ${recaptchaResponse.statusText}`), {
         status: recaptchaResponse.status,
-        statusText: recaptchaResponse.statusText,
-        errorBody: errorText
+        statusText: recaptchaResponse.statusText
       })
-      return NextResponse.json(
-        {
-          success: false,
-          error: "reCAPTCHA verification service error",
-          details: `HTTP ${recaptchaResponse.status}: ${recaptchaResponse.statusText}`
-        },
-        { status: 500 }
+      return errorResponse(
+        ErrorCodes.EXTERNAL_SERVICE_ERROR,
+        "reCAPTCHA verification service error",
+        `HTTP ${recaptchaResponse.status}: ${recaptchaResponse.statusText}`,
+        500,
+        { requestId }
       )
     }
 
@@ -319,39 +351,44 @@ export async function POST(request: Request) {
     try {
       recaptchaData = await recaptchaResponse.json()
     } catch (jsonError) {
-      console.error("Failed to parse reCAPTCHA response:", jsonError)
-      return NextResponse.json(
-        {
-          success: false,
-          error: "Invalid response from verification service",
-        },
-        { status: 500 }
+      await logger.error('Failed to parse reCAPTCHA response', jsonError instanceof Error ? jsonError : new Error(String(jsonError)))
+      return errorResponse(
+        ErrorCodes.EXTERNAL_SERVICE_ERROR,
+        "Invalid response from verification service",
+        undefined,
+        500,
+        { requestId }
       )
     }
 
     // Validate response structure and success field
     if (!recaptchaData || typeof recaptchaData.success !== "boolean") {
-      console.error("Invalid reCAPTCHA response structure:", recaptchaData)
-      return NextResponse.json(
-        {
-          success: false,
-          error: "Invalid verification response",
-        },
-        { status: 500 }
+      await logger.error('Invalid reCAPTCHA response structure', new Error('Invalid response structure'))
+      return errorResponse(
+        ErrorCodes.EXTERNAL_SERVICE_ERROR,
+        "Invalid verification response",
+        undefined,
+        500,
+        { requestId }
       )
     }
 
     // Check if verification was successful
     if (!recaptchaData.success) {
-      return NextResponse.json(
-        {
-          success: false,
-          error: "reCAPTCHA verification failed",
-          "error-codes": recaptchaData["error-codes"] || [],
-        },
-        { status: 400 }
+      await logger.warn('reCAPTCHA verification failed', {
+        errorCodes: recaptchaData["error-codes"] || []
+      })
+      return errorResponse(
+        ErrorCodes.VALIDATION_ERROR,
+        "reCAPTCHA verification failed",
+        undefined,
+        400,
+        { requestId },
+        { "error-codes": recaptchaData["error-codes"] || [] }
       )
     }
+    
+    await logger.info('reCAPTCHA verification successful')
 
     // Rate limiting check (uses IP + User-Agent fingerprint for better device tracking)
     // Device fingerprint combines IP + User-Agent + Accept-Language + Accept-Encoding
@@ -361,56 +398,94 @@ export async function POST(request: Request) {
     const rateLimitResult = await checkRateLimit(identifier, "ai-space")
 
     if (!rateLimitResult.success) {
-      return NextResponse.json(
+      await logger.warn('AI space generation rejected: rate limit exceeded', {
+        limit: rateLimitResult.limit,
+        remaining: rateLimitResult.remaining,
+        reset: rateLimitResult.reset
+      })
+      const response = errorResponse(
+        ErrorCodes.RATE_LIMIT_EXCEEDED,
+        "Rate limit exceeded. Please try again later.",
         {
-          success: false,
-          error: "Rate limit exceeded. Please try again later.",
-          rateLimit: {
-            limit: rateLimitResult.limit,
-            remaining: rateLimitResult.remaining,
-            reset: rateLimitResult.reset,
-          },
+          limit: rateLimitResult.limit,
+          remaining: rateLimitResult.remaining,
+          reset: rateLimitResult.reset,
         },
-        {
-          status: 429,
-          headers: {
-            "X-RateLimit-Limit": rateLimitResult.limit.toString(),
-            "X-RateLimit-Remaining": rateLimitResult.remaining.toString(),
-            "X-RateLimit-Reset": rateLimitResult.reset.toString(),
-            "Retry-After": (rateLimitResult.reset - Math.floor(Date.now() / 1000)).toString(),
-          },
-        }
+        429,
+        { requestId }
       )
+      // Add rate limit headers
+      response.headers.set("X-RateLimit-Limit", rateLimitResult.limit.toString())
+      response.headers.set("X-RateLimit-Remaining", rateLimitResult.remaining.toString())
+      response.headers.set("X-RateLimit-Reset", rateLimitResult.reset.toString())
+      response.headers.set("Retry-After", (rateLimitResult.reset - Math.floor(Date.now() / 1000)).toString())
+      return response
     }
 
     // Check for BlackForest Lab API key
     const apiKey = process.env.PROVIDER_API_KEY
 
     if (!apiKey) {
-      console.error("PROVIDER_API_KEY is not set")
-      return NextResponse.json(
-        { success: false, error: "AI service is not configured. Please contact administrator." },
-        { status: 500 }
+      await logger.error('PROVIDER_API_KEY is not set', new Error('PROVIDER_API_KEY is not set'))
+      return errorResponse(
+        ErrorCodes.INTERNAL_ERROR,
+        "AI service is not configured. Please contact administrator.",
+        undefined,
+        500,
+        { requestId }
       )
     }
 
-    // Validate that all images are from the allowed studio directory
-    const studioImagePrefix = "/aispaces/studio/"
-    const invalidImages = selectedImages.filter(
-      (path: string) => !path.startsWith(studioImagePrefix) && !path.includes(studioImagePrefix)
-    )
+    // Get database client
+    const { getTursoClient } = await import("@/lib/turso")
+    const db = getTursoClient()
+
+    // Get custom prompt for the event type
+    const prompt = EVENT_TYPE_PROMPTS[eventType]
+
+    // Get studio images (aispace_studio category) for generation
+    // Admin controls which images are used by selecting them (ai_selected = 1)
+    // Only selected images will be used, ordered by ai_order (admin selection order)
+    const studioImagesResult = await db.execute({
+      sql: `
+        SELECT blob_url
+        FROM images
+        WHERE category = 'aispace_studio' AND ai_selected = 1
+        ORDER BY ai_order ASC, display_order ASC, created_at ASC
+      `,
+      args: [],
+    })
     
-    if (invalidImages.length > 0) {
-      return NextResponse.json(
-        { success: false, error: "All images must be from the studio directory" },
-        { status: 400 }
+    if (studioImagesResult.rows.length === 0) {
+      await logger.warn('AI space generation rejected: no studio images selected')
+      return errorResponse(
+        ErrorCodes.VALIDATION_ERROR,
+        "No studio images selected for AI generation. Please select images in the admin panel.",
+        undefined,
+        400,
+        { requestId }
       )
     }
 
-    // Convert image paths to full URLs
-    const imageUrls = selectedImages.map(getImageUrl)
+    const selectedImages = studioImagesResult.rows.map((row: any) => row.blob_url)
+    
+    await logger.info('Studio images selected for AI generation', {
+      count: selectedImages.length,
+      eventType
+    })
 
-    console.log(`Processing ${selectedImages.length} image(s) for AI space generation`)
+    // Convert image URLs (they're already blob URLs, so just ensure they're valid)
+    const imageUrls = selectedImages.map((url: string) => {
+      if (url.startsWith('http://') || url.startsWith('https://')) {
+        return url
+      }
+      return getImageUrl(url)
+    })
+
+    await logger.info('Starting AI image generation', {
+      imageCount: selectedImages.length,
+      eventType
+    })
 
     // Use primary global endpoint per BFL documentation: https://docs.bfl.ai/api_integration/integration_guidelines
     // API Reference: https://docs.bfl.ai/kontext/kontext_image_editing#flux-1-kontext-image-editing-parameters
@@ -422,7 +497,7 @@ export async function POST(request: Request) {
     // Per BFL docs: input_image can be base64 encoded image or URL (up to 20MB or 20 megapixels)
     for (let imageIndex = 0; imageIndex < imageUrls.length; imageIndex++) {
       const imageUrl = imageUrls[imageIndex]
-      console.log(`Processing image ${imageIndex + 1}/${imageUrls.length}`)
+      await logger.debug(`Processing image ${imageIndex + 1}/${imageUrls.length}`)
 
       // Convert image to base64 format for the API
       // BFL API accepts base64 encoded image (without data URI prefix) or image URL
@@ -450,21 +525,27 @@ export async function POST(request: Request) {
 
       if (!bflResponse.success) {
         // If one image fails, return error but include any images generated so far
-        return NextResponse.json(
+        await logger.error(`Image ${imageIndex + 1} generation failed`, new Error(bflResponse.error || 'Unknown error'), {
+          imageIndex: imageIndex + 1,
+          totalImages: imageUrls.length,
+          generatedSoFar: allGeneratedImages.length
+        })
+        return errorResponse(
+          ErrorCodes.EXTERNAL_SERVICE_ERROR,
+          `Image ${imageIndex + 1} failed: ${bflResponse.error}`,
           {
-            success: false,
-            error: `Image ${imageIndex + 1} failed: ${bflResponse.error}`,
             images: allGeneratedImages.length > 0 ? allGeneratedImages : undefined,
             details: process.env.NODE_ENV === 'development' ? bflResponse.details : undefined,
           },
-          { status: bflResponse.status || 500 }
+          bflResponse.status || 500,
+          { requestId }
         )
       }
 
       const bflData = bflResponse.data
 
-      console.log(`BlackForest Lab API response (image ${imageIndex + 1}):`, {
-        keys: Object.keys(bflData),
+      await logger.debug(`BFL API response received`, {
+        imageIndex: imageIndex + 1,
         hasPollingUrl: !!bflData.polling_url,
         hasId: !!bflData.id,
         hasResult: !!bflData.result,
@@ -489,11 +570,17 @@ export async function POST(request: Request) {
       } else if (bflData.result && typeof bflData.result === 'string') {
         generatedImageUrl = bflData.result
       } else {
-        console.warn(`Unexpected API response format (image ${imageIndex + 1}). Full response:`, JSON.stringify(bflData, null, 2))
+        await logger.warn(`Unexpected API response format`, {
+          imageIndex: imageIndex + 1,
+          responseKeys: Object.keys(bflData)
+        })
         throw new Error(`Unexpected response format from AI service (image ${imageIndex + 1}). Check API documentation for correct format.`)
       }
 
       if (!generatedImageUrl) {
+        await logger.error(`No image URL returned`, new Error('No image URL in response'), {
+          imageIndex: imageIndex + 1
+        })
         throw new Error(`No image URL returned for image ${imageIndex + 1}`)
       }
 
@@ -504,43 +591,29 @@ export async function POST(request: Request) {
       // Add result to overall results
       allGeneratedImages.push(generatedImageUrl)
       
-      console.log(`Image ${imageIndex + 1} completed: generated successfully`)
+      await logger.info(`Image ${imageIndex + 1} generated successfully`, {
+        imageIndex: imageIndex + 1,
+        totalImages: imageUrls.length
+      })
     }
 
     if (allGeneratedImages.length === 0) {
+      await logger.error('No images were generated', new Error('No images were generated'))
       throw new Error("No images were generated")
     }
 
-    console.log(`All images processed: ${allGeneratedImages.length} total image(s) generated`)
-
-    return NextResponse.json({
-      success: true,
-      images: allGeneratedImages,
-      totalImages: allGeneratedImages.length,
+    await logger.info('All images processed successfully', {
+      totalGenerated: allGeneratedImages.length,
+      eventType
     })
-  } catch (error) {
-    console.error("AI space generation error:", error)
-    
-    let errorMessage = "Internal server error"
-    let statusCode = 500
-    
-    if (error instanceof Error) {
-      errorMessage = error.message
-      
-      // Handle specific error types
-      if (error.message.includes("timeout")) {
-        statusCode = 408
-        errorMessage = "Request timed out. Image generation is taking longer than expected. Please try again."
-      } else if (error.message.includes("fetch") || error.message.includes("network")) {
-        statusCode = 503
-        errorMessage = "Network error occurred. Please try again."
-      }
-    }
-    
-    return NextResponse.json(
-      { success: false, error: errorMessage },
-      { status: statusCode }
+
+    return successResponse(
+      {
+        images: allGeneratedImages,
+        totalImages: allGeneratedImages.length,
+      },
+      { requestId }
     )
-  }
+  }, { endpoint: '/api/ai-space' })
 }
 

@@ -52,12 +52,44 @@ export function getEventEndDateTime(event: EventSlide): string {
 /**
  * Check if event is past/finished
  * @param event - EventSlide object
- * @returns true if event end time is before current time
+ * @returns true if event end time is before current time (in Bangkok timezone)
  */
 export function isPastEvent(event: EventSlide): boolean {
+  // CRITICAL: Compare dates in Bangkok timezone to avoid timezone conversion issues
+  // event.date is already in YYYY-MM-DD format (Bangkok timezone)
+  // event.time is in HH.MM - HH.MM format (Bangkok timezone)
   const eventEndDateTime = getEventEndDateTime(event)
-  const currentDateTime = new Date().toISOString()
-  return eventEndDateTime < currentDateTime
+  
+  // Parse event end datetime (format: "YYYY-MM-DDTHH:MM:00")
+  const [eventDate, eventTime] = eventEndDateTime.split('T')
+  const [eventHour, eventMinute] = eventTime.split(':').map(Number)
+  
+  // Get current date/time in Bangkok timezone
+  // Use Intl.DateTimeFormat to get Bangkok timezone components without toISOString()
+  const now = new Date()
+  const bangkokFormatter = new Intl.DateTimeFormat('en-US', {
+    timeZone: 'Asia/Bangkok',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false
+  })
+  
+  const parts = bangkokFormatter.formatToParts(now)
+  const currentDateStr = `${parts.find(p => p.type === 'year')?.value}-${parts.find(p => p.type === 'month')?.value}-${parts.find(p => p.type === 'day')?.value}`
+  const currentHour = parseInt(parts.find(p => p.type === 'hour')?.value || '0', 10)
+  const currentMinute = parseInt(parts.find(p => p.type === 'minute')?.value || '0', 10)
+  
+  // Compare dates first, then times
+  if (eventDate < currentDateStr) return true
+  if (eventDate > currentDateStr) return false
+  
+  // Same date, compare times
+  const eventTimeMinutes = eventHour * 60 + eventMinute
+  const currentTimeMinutes = currentHour * 60 + currentMinute
+  return eventTimeMinutes < currentTimeMinutes
 }
 
 /**

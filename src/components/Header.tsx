@@ -18,12 +18,14 @@ import { withBasePath } from "@/lib/utils"
 import { Recaptcha } from "./Recaptcha"
 import PhoneInput from "react-phone-number-input"
 import { TimePicker } from "@/components/ui/time-picker"
+import { dateToBangkokDateString } from "@/lib/timezone-client"
 
 const STORAGE_KEY = "helluniversity_booking_form"
 const DEBOUNCE_DELAY = 500 // milliseconds
 
-// Helper function to add AM/PM to 24-hour time format (keeps 24-hour format)
-function formatTimeWithAMPM(time24: string): string {
+// Helper function to format 24-hour time for storage (keep 24-hour format in database)
+// Just ensures proper formatting: "12:00" -> "12:00", "9:5" -> "09:05"
+function formatTimeForStorage(time24: string): string {
   if (!time24 || !time24.includes(':')) return ''
   
   const [hours, minutes] = time24.split(':')
@@ -32,12 +34,8 @@ function formatTimeWithAMPM(time24: string): string {
   
   if (isNaN(hour24)) return time24
   
-  // Keep 24-hour format but add AM/PM
-  if (hour24 < 12) {
-    return `${hours.padStart(2, '0')}:${mins} AM`
-  } else {
-    return `${hours.padStart(2, '0')}:${mins} PM`
-  }
+  // Keep 24-hour format, just pad properly
+  return `${hour24.toString().padStart(2, '0')}:${mins.padStart(2, '0')}`
 }
 
 interface FormData {
@@ -100,11 +98,60 @@ export function Header() {
   const [retryCount, setRetryCount] = useState(0)
   const saveTimeoutRef = useRef<NodeJS.Timeout | null>(null)
   const recaptchaKeyRef = useRef(0) // Force reCAPTCHA re-render
+  const [unavailableDates, setUnavailableDates] = useState<Set<string>>(new Set())
+  const [unavailableTimeRanges, setUnavailableTimeRanges] = useState<Array<{
+    date: string
+    startTime: string | null
+    endTime: string | null
+    startDate: number
+    endDate: number
+  }>>([])
 
   // Ensure component is mounted (client-side only)
   useEffect(() => {
     setMounted(true)
   }, [])
+
+  // Fetch unavailable dates when booking dialog opens and refresh periodically
+  useEffect(() => {
+    if (bookingOpen && mounted) {
+      const fetchUnavailableDates = () => {
+        fetch("/api/booking/availability")
+          .then((res) => res.json())
+          .then((json) => {
+              // Check both possible response structures
+              const unavailableDatesArray = json.data?.unavailableDates || json.unavailableDates || []
+              const unavailableTimeRangesArray = json.data?.unavailableTimeRanges || json.unavailableTimeRanges || []
+              
+              if (json.success) {
+                const dates = new Set<string>(unavailableDatesArray)
+                setUnavailableDates(dates)
+                setUnavailableTimeRanges(unavailableTimeRangesArray)
+                
+                // Debug logging
+                if (unavailableDatesArray.length > 0) {
+                  console.log(`[Header] Unavailable dates fetched: ${unavailableDatesArray.length} dates`, unavailableDatesArray.slice(0, 10))
+                } else {
+                  console.log(`[Header] No unavailable dates found`)
+                }
+              } else {
+                console.error("[Header] Failed to fetch unavailable dates:", json)
+              }
+          })
+          .catch((err) => {
+            console.error("Failed to fetch unavailable dates:", err)
+          })
+      }
+      
+      // Fetch immediately
+      fetchUnavailableDates()
+      
+      // Refresh every 10 seconds while dialog is open to catch new check-ins
+      const refreshInterval = setInterval(fetchUnavailableDates, 10000)
+      
+      return () => clearInterval(refreshInterval)
+    }
+  }, [bookingOpen, mounted])
 
   // Load form data from localStorage on component mount
   useEffect(() => {
@@ -141,8 +188,8 @@ export function Header() {
       const dataToSave: StoredFormData = {
         formData: {
           ...formData,
-          startDate: startDate?.toISOString() || null,
-          endDate: endDate?.toISOString() || null,
+          startDate: startDate ? dateToBangkokDateString(startDate) : null,
+          endDate: endDate ? dateToBangkokDateString(endDate) : null,
         },
         timestamp: Date.now()
       }
@@ -187,7 +234,7 @@ export function Header() {
 
   const handleStartDateChange = (date: Date | undefined) => {
     setStartDate(date)
-    setFormData(prev => ({ ...prev, startDate: date?.toISOString() || null }))
+    setFormData(prev => ({ ...prev, startDate: date ? dateToBangkokDateString(date) : null }))
     // Clear error when user selects a date
     if (error) {
       setError(null)
@@ -195,11 +242,22 @@ export function Header() {
   }
 
   const handleEndDateChange = (date: Date | undefined) => {
-    // Validate that end date is not the same as start date when dateRange is true
+    // Validate that start date is selected first
+    if (!startDate) {
+      setError({
+        type: "validation",
+        message: "Please select a start date first before selecting an end date.",
+        retryable: false
+      })
+      return
+    }
+    
+    // Validate that end date is after start date when dateRange is true
     if (formData.dateRange && date && startDate) {
-      const startDateStr = startDate.toISOString().split('T')[0]
-      const endDateStr = date.toISOString().split('T')[0]
-      if (startDateStr === endDateStr) {
+      const startDateStr = dateToBangkokDateString(startDate)
+      const endDateStr = dateToBangkokDateString(date)
+      
+      if (endDateStr === startDateStr) {
         setError({
           type: "validation",
           message: "End date cannot be the same as start date. Please select a different end date.",
@@ -207,10 +265,19 @@ export function Header() {
         })
         return
       }
+      
+      if (date < startDate) {
+        setError({
+          type: "validation",
+          message: "End date must be after start date. Please select a date after the start date.",
+          retryable: false
+        })
+        return
+      }
     }
     
     setEndDate(date)
-    setFormData(prev => ({ ...prev, endDate: date?.toISOString() || null }))
+    setFormData(prev => ({ ...prev, endDate: date ? dateToBangkokDateString(date) : null }))
     // Clear error when user selects a valid date
     if (error) {
       setError(null)
@@ -318,9 +385,10 @@ export function Header() {
       return
     }
     // Validate that start and end dates are not the same when dateRange is true
+    // Use Bangkok timezone for consistent date comparison
     if (formData.dateRange && startDate && endDate) {
-      const startDateStr = startDate.toISOString().split('T')[0]
-      const endDateStr = endDate.toISOString().split('T')[0]
+      const startDateStr = dateToBangkokDateString(startDate)
+      const endDateStr = dateToBangkokDateString(endDate)
       if (startDateStr === endDateStr) {
         setError({
           type: "validation",
@@ -346,6 +414,29 @@ export function Header() {
       })
       return
     }
+    
+    // Validate single day booking: end time must be after start time
+    // For multiple day bookings, times are on different days so we don't compare them
+    if (!formData.dateRange && formData.startTime && formData.endTime) {
+      const parseTime = (time: string): number => {
+        if (!time || !time.includes(':')) return 0
+        const [hours, minutes] = time.split(':').map(Number)
+        return (hours || 0) * 60 + (minutes || 0) // Convert to minutes for comparison
+      }
+      
+      const startMinutes = parseTime(formData.startTime.trim())
+      const endMinutes = parseTime(formData.endTime.trim())
+      
+      if (endMinutes <= startMinutes) {
+        setError({
+          type: "validation",
+          message: "For single day bookings, the end time must be after the start time. Please select a later end time.",
+          retryable: false
+        })
+        return
+      }
+    }
+    
     if (!formData.participants || parseInt(formData.participants) <= 0) {
       setError({
         type: "validation",
@@ -395,10 +486,10 @@ export function Header() {
         eventType: formData.eventType.trim(),
         otherEventType: formData.otherEventType.trim(),
         dateRange: formData.dateRange,
-        startDate: startDate?.toISOString() || null,
-        endDate: endDate?.toISOString() || null,
-        startTime: formData.startTime.trim(),
-        endTime: formData.endTime.trim(),
+        startDate: startDate ? dateToBangkokDateString(startDate) : null,
+        endDate: endDate ? dateToBangkokDateString(endDate) : null,
+        startTime: formData.startTime ? formatTimeForStorage(formData.startTime.trim()) : null,
+        endTime: formData.endTime ? formatTimeForStorage(formData.endTime.trim()) : null,
         organizationType: formData.organizationType,
         introduction: formData.introduction.trim(),
         biography: formData.biography.trim(),
@@ -419,9 +510,75 @@ export function Header() {
       // Handle non-JSON responses
       let data
       try {
+        // Clone response to check status before parsing
+        const responseClone = response.clone()
         data = await response.json()
+        
+        // Debug: Log response in development
+        if (process.env.NODE_ENV === 'development') {
+          console.log('Booking API Response:', {
+            status: response.status,
+            ok: response.ok,
+            success: data?.success,
+            hasData: !!data?.data,
+            hasError: !!data?.error,
+            fullData: data
+          })
+        }
       } catch (jsonError) {
+        // Try to get text for debugging
+        try {
+          const text = await response.clone().text()
+          console.error('Failed to parse JSON response:', {
+            error: jsonError,
+            status: response.status,
+            ok: response.ok,
+            responseText: text.substring(0, 500)
+          })
+        } catch (textError) {
+          console.error('Failed to parse response and get text:', jsonError, textError)
+        }
         throw new Error("Server returned invalid response. Please try again.")
+      }
+      
+      // Helper function to extract error message from API response
+      const getErrorMessage = (error: any, defaultMsg: string): string => {
+        if (!error) return defaultMsg
+        if (typeof error === 'string') return error
+        if (typeof error === 'object') {
+          // Priority 1: Check for validation errors array in details (most specific)
+          // This is the structure: error.details.errors = ['Error 1', 'Error 2', ...]
+          if (error.details) {
+            if (Array.isArray(error.details.errors) && error.details.errors.length > 0) {
+              return error.details.errors.join('. ')
+            }
+            // Check if details itself is an object with errors
+            if (typeof error.details === 'object' && Array.isArray(error.details.errors)) {
+              return error.details.errors.join('. ')
+            }
+            // Check for string details
+            if (typeof error.details === 'string') {
+              return error.details
+            }
+          }
+          // Priority 2: Check for errors array at root level
+          if (Array.isArray(error.errors) && error.errors.length > 0) {
+            return error.errors.join('. ')
+          }
+          // Priority 3: Use message property, but check for validation errors first
+          if (error.message) {
+            // For validation errors, always check details first
+            if (error.message === 'Validation failed' || error.code === 'VALIDATION_ERROR') {
+              if (error.details && Array.isArray(error.details.errors) && error.details.errors.length > 0) {
+                return error.details.errors.join('. ')
+              }
+            }
+            return error.message
+          }
+          // Fallback: try to stringify if it's an object
+          return JSON.stringify(error)
+        }
+        return defaultMsg
       }
       
       if (!response.ok) {
@@ -430,7 +587,13 @@ export function Header() {
           // 404 likely means API route doesn't exist (static export mode)
           throw new Error("Reservation form is not available on this static site. Please contact us directly via email or phone.")
         } else if (response.status === 400) {
-          throw new Error(data.error || "Invalid request. Please check your input and try again.")
+          // For 400 errors, show specific validation errors if available
+          // Debug: Log the error structure to help diagnose issues
+          if (process.env.NODE_ENV === 'development') {
+            console.log('API Error Response (400):', JSON.stringify(data, null, 2))
+          }
+          const errorMsg = getErrorMessage(data.error, "Invalid request. Please check your input and try again.")
+          throw new Error(errorMsg)
         } else if (response.status === 401 || response.status === 403) {
           throw new Error("Authentication failed. Please refresh the page and try again.")
         } else if (response.status === 429) {
@@ -438,29 +601,31 @@ export function Header() {
         } else if (response.status >= 500) {
           throw new Error("Server error. Please try again in a few moments.")
         } else {
-          throw new Error(data.error || `Request failed with status ${response.status}`)
+          throw new Error(getErrorMessage(data.error, `Request failed with status ${response.status}`))
         }
       }
       
       if (!data.success) {
-        // Extract error message, including details if available
-        const errorMsg = data.error || "Failed to submit booking"
-        const details = data.details ? ` ${data.details}` : ""
-        throw new Error(errorMsg + details)
+        // Extract error message, prioritizing specific validation errors
+        const errorMsg = getErrorMessage(data.error, "Failed to submit booking")
+        throw new Error(errorMsg)
       }
       
       // Success - clear form data and localStorage
       toast.success("Reservation submitted successfully!", {
         description: "Thank you for your reservation request! We'll be in touch soon.",
         duration: 5000,
-        className: "bg-green-50 border-green-200 text-green-900 rounded-lg shadow-lg font-comfortaa",
+        className: "bg-white border border-gray-300 rounded-lg shadow-lg font-comfortaa",
         style: {
-          backgroundColor: "#f0fdf4",
-          borderColor: "#bbf7d0",
-          color: "#14532d",
+          backgroundColor: "#ffffff",
+          borderColor: "#d1d5db",
           borderRadius: "0.5rem",
-          padding: "1rem",
+          padding: "clamp(0.75rem, 2vw, 1rem)",
           boxShadow: "0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05)",
+          maxWidth: "calc(100vw - 2rem)",
+          width: "auto",
+          minWidth: "280px",
+          fontSize: "clamp(0.875rem, 2vw, 1rem)",
         },
       })
       
@@ -542,14 +707,18 @@ export function Header() {
       toast.error("Failed to submit reservation", {
         description: errorMessage,
         duration: 7000,
-        className: "bg-red-50 border-red-200 text-red-900 rounded-lg shadow-lg font-comfortaa",
+        className: "bg-red-600 border border-red-700 text-white rounded-lg shadow-lg font-comfortaa",
         style: {
-          backgroundColor: "#fef2f2",
-          borderColor: "#fecaca",
-          color: "#991b1b",
+          backgroundColor: "#dc2626",
+          borderColor: "#b91c1c",
+          color: "#ffffff",
           borderRadius: "0.5rem",
-          padding: "1rem",
+          padding: "clamp(0.75rem, 2vw, 1rem)",
           boxShadow: "0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05)",
+          maxWidth: "calc(100vw - 2rem)",
+          width: "auto",
+          minWidth: "280px",
+          fontSize: "clamp(0.875rem, 2vw, 1rem)",
         },
       })
     } finally {
@@ -836,7 +1005,7 @@ export function Header() {
                               id="startDate"
                               name="startDate"
                               type="date"
-                              value={startDate ? startDate.toISOString().split('T')[0] : ""}
+                              value={startDate ? dateToBangkokDateString(startDate) : ""}
                               onChange={(e) => {
                                 if (e.target.value) {
                                   handleStartDateChange(new Date(e.target.value))
@@ -876,7 +1045,22 @@ export function Header() {
                                 <SimpleCalendar
                                   selected={startDate}
                                   onSelect={handleStartDateChange}
-                                  disabled={(date) => date < new Date() || !isRecaptchaVerified || process.env.NEXT_PUBLIC_USE_STATIC_IMAGES === '1'}
+                                  disabled={(date) => {
+                                    // Disable past dates and today (users cannot book current date)
+                                    if (date < new Date()) return true
+                                    // Check if date is today in Bangkok timezone
+                                    const todayStr = dateToBangkokDateString(new Date())
+                                    const dateStr = dateToBangkokDateString(date)
+                                    if (todayStr === dateStr) return true
+                                    if (!isRecaptchaVerified) return true
+                                    if (process.env.NEXT_PUBLIC_USE_STATIC_IMAGES === '1') return true
+                                    // Check if date is unavailable (has checked-in booking or postponed booking with deposit_verified_at)
+                                    const isUnavailable = unavailableDates.has(dateStr)
+                                    if (isUnavailable) {
+                                      console.log(`[Header] Date ${dateStr} is unavailable (blocked by booking)`)
+                                    }
+                                    return isUnavailable
+                                  }}
                                 />
                               </PopoverContent>
                             </Popover>
@@ -890,7 +1074,7 @@ export function Header() {
                                 id="endDate"
                                 name="endDate"
                                 type="date"
-                                value={endDate ? endDate.toISOString().split('T')[0] : ""}
+                                value={endDate ? dateToBangkokDateString(endDate) : ""}
                                 onChange={(e) => {
                                   if (e.target.value) {
                                     handleEndDateChange(new Date(e.target.value))
@@ -916,14 +1100,15 @@ export function Header() {
                                     id="endDate-visual"
                                     type="button"
                                     variant="outline"
-                                    disabled={!isRecaptchaVerified || process.env.NEXT_PUBLIC_USE_STATIC_IMAGES === '1'}
-                                    className={`w-full justify-start text-left font-normal font-comfortaa ${!isRecaptchaVerified ? "opacity-50 cursor-not-allowed" : ""}`}
+                                    disabled={!isRecaptchaVerified || process.env.NEXT_PUBLIC_USE_STATIC_IMAGES === '1' || !startDate}
+                                    className={`w-full justify-start text-left font-normal font-comfortaa ${!isRecaptchaVerified || !startDate ? "opacity-50 cursor-not-allowed" : ""}`}
                                     style={{ fontSize: 'clamp(0.75rem, 0.8vw, 0.875rem)', height: 'clamp(2rem, 2.2vw, 2.25rem)' }}
                                     aria-labelledby="endDate-label"
                                     aria-describedby="endDate"
+                                    title={!startDate ? "Please select a start date first" : ""}
                                   >
                                     <CalendarIcon className="mr-2" style={{ width: 'clamp(0.75rem, 0.8vw, 1rem)', height: 'clamp(0.75rem, 0.8vw, 1rem)' }} />
-                                    {endDate ? format(endDate, "PPP") : "Pick end date"}
+                                    {endDate ? format(endDate, "PPP") : !startDate ? "Select start date first" : "Pick end date"}
                                   </Button>
                                 </PopoverTrigger>
                                 <PopoverContent className="w-auto p-0" align="start">
@@ -931,15 +1116,23 @@ export function Header() {
                                     selected={endDate}
                                     onSelect={handleEndDateChange}
                                     disabled={(date) => {
-                                      if (!isRecaptchaVerified || process.env.NEXT_PUBLIC_USE_STATIC_IMAGES === '1') return true
+                                      if (!isRecaptchaVerified) return true
+                                      if (process.env.NEXT_PUBLIC_USE_STATIC_IMAGES === '1') return true
                                       if (date < new Date()) return true
                                       if (startDate) {
-                                        const startDateStr = startDate.toISOString().split('T')[0]
-                                        const dateStr = date.toISOString().split('T')[0]
+                                        const startDateStr = dateToBangkokDateString(startDate)
+                                        const dateStr = dateToBangkokDateString(date)
                                         // Disable if date is before start date OR same as start date
-                                        return date < startDate || startDateStr === dateStr
+                                        if (date < startDate || startDateStr === dateStr) return true
                                       }
-                                      return false
+                                      // Check if date is unavailable (has checked-in booking or postponed booking with deposit_verified_at)
+                                      // Convert date to Bangkok timezone for proper comparison
+                                      const dateStr = dateToBangkokDateString(date)
+                                      const isUnavailable = unavailableDates.has(dateStr)
+                                      if (isUnavailable) {
+                                        console.log(`[Header] End date ${dateStr} is unavailable (blocked by booking)`)
+                                      }
+                                      return isUnavailable
                                     }}
                                   />
                                 </PopoverContent>

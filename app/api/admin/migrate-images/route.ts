@@ -4,8 +4,10 @@ import { join, relative } from "path"
 import { existsSync } from "fs"
 import { getTursoClient } from "@/lib/turso"
 import { processAndUploadImage } from "@/lib/image-processor"
-import { requireAuthorizedDomain, unauthorizedResponse, forbiddenResponse } from "@/lib/auth"
+import { requireAuthorizedDomain } from "@/lib/auth"
 import { randomUUID } from "crypto"
+import { createRequestLogger } from "@/lib/logger"
+import { withErrorHandling, successResponse, errorResponse, ErrorCodes, ApiResponse, unauthorizedResponse, forbiddenResponse } from "@/lib/api-response"
 
 /**
  * Image Migration Route
@@ -54,7 +56,7 @@ async function scanDirectory(
   const images: ImageFile[] = []
 
   if (!existsSync(dirPath)) {
-    console.log(`Directory does not exist: ${dirPath}`)
+    // Directory doesn't exist - return empty array (no logging needed for helper function)
     return images
   }
 
@@ -135,7 +137,8 @@ async function scanDirectory(
       }
     }
   } catch (error) {
-    console.error(`Error scanning directory ${dirPath}:`, error)
+    // Error scanning directory - log but continue (helper function, minimal logging)
+    // Main handler will log overall results
   }
 
   return images
@@ -157,26 +160,44 @@ async function imageAlreadyMigrated(
     })
     return result.rows.length > 0
   } catch (error) {
-    console.error("Error checking if image exists:", error)
+    // Error checking - assume not migrated (helper function, minimal logging)
     return false
   }
 }
 
 export async function POST(request: Request) {
-  try {
+  return withErrorHandling(async (): Promise<NextResponse<ApiResponse<any>>> => {
+    const requestId = crypto.randomUUID()
+    const logger = createRequestLogger(requestId, '/api/admin/migrate-images')
+    
+    await logger.info('Image migration request received')
+    
     // Check authentication and authorization
     try {
       await requireAuthorizedDomain()
     } catch (error) {
       if (error instanceof Error && error.message.includes("Unauthorized")) {
-        return unauthorizedResponse("Authentication required")
+        await logger.warn('Image migration rejected: authentication failed')
+        return unauthorizedResponse("Authentication required", { requestId })
       }
-      return forbiddenResponse("Access denied: Must be from authorized Google Workspace domain")
+      await logger.warn('Image migration rejected: authorization failed')
+      return forbiddenResponse("Access denied: Must be from authorized Google Workspace domain", { requestId })
     }
 
     const { searchParams } = new URL(request.url)
     const dryRun = searchParams.get("dryRun") === "true"
-    const categoryFilter = searchParams.get("category")
+    // Support both "category" (singular) and "categories" (plural, comma-separated)
+    const categoriesParam = searchParams.get("categories") || searchParams.get("category")
+    const selectedCategories = categoriesParam 
+      ? new Set(categoriesParam.split(",").map(cat => cat.trim()).filter(cat => cat.length > 0))
+      : null
+
+    await logger.debug('Migration parameters', {
+      dryRun,
+      categoriesParam,
+      selectedCategoriesCount: selectedCategories?.size || 0,
+      selectedCategories: selectedCategories ? Array.from(selectedCategories) : undefined
+    })
 
     // Scan directories
     const publicDir = join(process.cwd(), "public")
@@ -184,36 +205,52 @@ export async function POST(request: Request) {
 
     // Scan assets directory
     const assetsDir = join(publicDir, "assets")
-    console.log(`Scanning assets directory: ${assetsDir}`)
+    await logger.debug('Scanning assets directory', { assetsDir })
     const assetsImages = await scanDirectory(assetsDir, "/assets")
-    console.log(`Found ${assetsImages.length} images in assets directory`)
+    await logger.debug('Assets directory scanned', { count: assetsImages.length })
     imagesToMigrate.push(...assetsImages)
 
     // Scan aispaces/studio directory
     const studioDir = join(publicDir, "aispaces", "studio")
-    console.log(`Scanning studio directory: ${studioDir}`)
+    await logger.debug('Scanning studio directory', { studioDir })
     const studioImages = await scanDirectory(studioDir, "/aispaces/studio", "aispace_studio")
-    console.log(`Found ${studioImages.length} images in studio directory`)
+    await logger.debug('Studio directory scanned', { count: studioImages.length })
     imagesToMigrate.push(...studioImages)
     
-    console.log(`Total images found: ${imagesToMigrate.length}`)
+    await logger.info('Directory scanning completed', {
+      totalFound: imagesToMigrate.length,
+      assetsCount: assetsImages.length,
+      studioCount: studioImages.length
+    })
 
-    // Filter by category if specified
-    const filteredImages = categoryFilter
-      ? imagesToMigrate.filter((img) => img.category === categoryFilter)
+    // Filter by selected categories if specified
+    const filteredImages = selectedCategories && selectedCategories.size > 0
+      ? imagesToMigrate.filter((img) => {
+          const imgCategory = img.category || "uncategorized"
+          return selectedCategories.has(imgCategory)
+        })
       : imagesToMigrate
+    
+    await logger.info('Category filtering completed', {
+      beforeFilter: imagesToMigrate.length,
+      afterFilter: filteredImages.length,
+      selectedCategories: selectedCategories ? Array.from(selectedCategories) : 'all'
+    })
 
     if (filteredImages.length === 0) {
-      return NextResponse.json({
-        success: true,
-        message: "No images found to migrate",
-        stats: {
-          total: 0,
-          migrated: 0,
-          skipped: 0,
-          failed: 0,
+      await logger.info('No images found to migrate')
+      return successResponse(
+        {
+          message: "No images found to migrate",
+          stats: {
+            total: 0,
+            migrated: 0,
+            skipped: 0,
+            failed: 0,
+          },
         },
-      })
+        { requestId }
+      )
     }
 
     if (dryRun) {
@@ -223,21 +260,28 @@ export async function POST(request: Request) {
         const cat = img.category || "uncategorized"
         byCategory[cat] = (byCategory[cat] || 0) + 1
       })
-
-      return NextResponse.json({
-        success: true,
-        message: `Dry run: Found ${filteredImages.length} images to migrate`,
-        dryRun: true,
-        images: filteredImages.map((img) => ({
-          path: img.publicPath,
-          category: img.category,
-          filename: img.filename,
-        })),
-        stats: {
-          total: filteredImages.length,
-          byCategory,
-        },
+      
+      await logger.info('Dry run completed', {
+        imagesCount: filteredImages.length,
+        byCategory
       })
+
+      return successResponse(
+        {
+          message: `Dry run: Found ${filteredImages.length} images to migrate`,
+          dryRun: true,
+          images: filteredImages.map((img) => ({
+            path: img.publicPath,
+            category: img.category,
+            filename: img.filename,
+          })),
+          stats: {
+            total: filteredImages.length,
+            byCategory,
+          },
+        },
+        { requestId }
+      )
     }
 
     // Perform migration
@@ -325,38 +369,59 @@ export async function POST(request: Request) {
           error instanceof Error ? error.message : "Unknown error"
         }`
         results.errors.push(errorMsg)
-        console.error(errorMsg, error)
+        await logger.error('Image migration failed', error instanceof Error ? error : new Error(String(error)), {
+          filename: imageFile.filename,
+          category: imageFile.category
+        })
       }
     }
 
-    return NextResponse.json({
-      success: true,
-      message: `Migration completed: ${results.migrated} migrated, ${results.skipped} skipped, ${results.failed} failed`,
-      stats: {
-        total: filteredImages.length,
-        migrated: results.migrated,
-        skipped: results.skipped,
-        failed: results.failed,
-      },
-      errors: results.errors.length > 0 ? results.errors : undefined,
+    await logger.info('Image migration completed', {
+      total: filteredImages.length,
+      migrated: results.migrated,
+      skipped: results.skipped,
+      failed: results.failed,
+      errorsCount: results.errors.length
     })
-  } catch (error) {
-    console.error("Image migration error:", error)
-    return NextResponse.json(
+    
+    return successResponse(
       {
-        success: false,
-        error: error instanceof Error ? error.message : "Failed to migrate images",
+        message: `Migration completed: ${results.migrated} migrated, ${results.skipped} skipped, ${results.failed} failed`,
+        stats: {
+          total: filteredImages.length,
+          migrated: results.migrated,
+          skipped: results.skipped,
+          failed: results.failed,
+        },
+        errors: results.errors.length > 0 ? results.errors : undefined,
       },
-      { status: 500 }
+      { requestId }
     )
-  }
+  }, { endpoint: '/api/admin/migrate-images' })
 }
 
 /**
  * GET endpoint to check migration status
  */
 export async function GET() {
-  try {
+  return withErrorHandling(async (): Promise<NextResponse<ApiResponse<any>>> => {
+    const requestId = crypto.randomUUID()
+    const logger = createRequestLogger(requestId, '/api/admin/migrate-images')
+    
+    await logger.info('Migration status check request received')
+    
+    // Check authentication and authorization
+    try {
+      await requireAuthorizedDomain()
+    } catch (error) {
+      if (error instanceof Error && error.message.includes("Unauthorized")) {
+        await logger.warn('Migration status check rejected: authentication failed')
+        return unauthorizedResponse("Authentication required", { requestId })
+      }
+      await logger.warn('Migration status check rejected: authorization failed')
+      return forbiddenResponse("Access denied: Must be from authorized Google Workspace domain", { requestId })
+    }
+    
     const db = getTursoClient()
 
     // Count images by category
@@ -379,23 +444,18 @@ export async function GET() {
       sql: `SELECT COUNT(*) as count FROM images`,
     })
     const total = (totalResult.rows[0] as any).count
+    
+    await logger.info('Migration status retrieved', { total, categoriesCount: Object.keys(byCategory).length })
 
-    return NextResponse.json({
-      success: true,
-      stats: {
-        total,
-        byCategory,
-      },
-    })
-  } catch (error) {
-    console.error("Migration status check error:", error)
-    return NextResponse.json(
+    return successResponse(
       {
-        success: false,
-        error: error instanceof Error ? error.message : "Failed to check migration status",
+        stats: {
+          total,
+          byCategory,
+        },
       },
-      { status: 500 }
+      { requestId }
     )
-  }
+  }, { endpoint: '/api/admin/migrate-images' })
 }
 

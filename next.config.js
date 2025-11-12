@@ -78,6 +78,15 @@ const nextConfig = {
         protocol: 'https',
         hostname: 'images.unsplash.com',
       },
+      // Vercel Blob Storage domains
+      {
+        protocol: 'https',
+        hostname: '*.public.blob.vercel-storage.com',
+      },
+      {
+        protocol: 'https',
+        hostname: '*.blob.vercel-storage.com',
+      },
       // BlackForest Labs delivery domains (for reference - images should be proxied)
       {
         protocol: 'https',

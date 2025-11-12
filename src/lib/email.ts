@@ -107,7 +107,8 @@ function formatEventType(eventType: string, otherEventType?: string): string {
   return baseType
 }
 
-// Helper function to add AM/PM to 24-hour time format (keeps 24-hour format)
+// Helper function to add AM/PM to 24-hour time format for display
+// Converts "13:00" -> "13:00 PM", "09:30" -> "09:30 AM", "00:00" -> "00:00 AM"
 function formatTime24WithAMPM(time24: string | null | undefined): string {
   try {
     if (!time24 || !time24.trim() || !time24.includes(':')) return ''
@@ -119,13 +120,9 @@ function formatTime24WithAMPM(time24: string | null | undefined): string {
     
     if (isNaN(hour24)) return trimmed
     
-    // Keep 24-hour format but add AM/PM
-    const paddedHours = hours.padStart(2, '0')
-    if (hour24 < 12) {
-      return `${paddedHours}:${mins} AM`
-    } else {
-      return `${paddedHours}:${mins} PM`
-    }
+    // Keep 24-hour format, just add AM/PM
+    const period = hour24 < 12 ? 'AM' : 'PM'
+    return `${trimmed} ${period}`
   } catch (error) {
     console.error('❌ formatTime24WithAMPM error:', error)
     return time24 || ''
@@ -133,18 +130,30 @@ function formatTime24WithAMPM(time24: string | null | undefined): string {
 }
 
 // Format date and time for display
+// CRITICAL: Use Bangkok timezone to avoid timezone conversion issues
 function formatDateTime(dateString: string | null | undefined, timeString?: string): string {
   try {
     if (!dateString) return "Not specified"
     
-    const date = new Date(dateString)
-    if (isNaN(date.getTime())) return dateString || "Not specified"
+    // Parse date string (YYYY-MM-DD) in Bangkok timezone
+    // dateString can be YYYY-MM-DD format or ISO string
+    const dateOnly = dateString.includes('T') ? dateString.split('T')[0] : dateString
+    const [year, month, day] = dateOnly.split('-').map(Number)
     
+    if (!Number.isFinite(year) || !Number.isFinite(month) || !Number.isFinite(day)) {
+      return dateString || "Not specified"
+    }
+    
+    // Create date in Bangkok timezone (GMT+7)
+    const date = new Date(Date.UTC(year, month - 1, day, 0, 0, 0))
+    
+    // Format in Bangkok timezone
     const dateFormatted = date.toLocaleDateString('en-US', {
       weekday: 'long',
       year: 'numeric',
       month: 'long',
       day: 'numeric',
+      timeZone: 'Asia/Bangkok',
     })
     
     if (timeString && timeString.trim()) {
@@ -168,8 +177,13 @@ function formatDateRange(data: ReservationData): string {
     
     const startDateTime = formatDateTime(data.startDate, data.startTime)
     
+    // Check if it's a multiple day booking:
+    // 1. dateRange flag is true, OR
+    // 2. endDate exists and is different from startDate
+    const isMultipleDays = data.dateRange || (data.endDate && data.endDate !== data.startDate)
+    
     // Single day booking
-    if (!data.dateRange || !data.endDate) {
+    if (!isMultipleDays || !data.endDate) {
       if (data.endTime && data.endTime.trim()) {
         const formattedEndTime = formatTime24WithAMPM(data.endTime)
         return `${startDateTime} to ${formattedEndTime}`
@@ -177,7 +191,7 @@ function formatDateRange(data: ReservationData): string {
       return startDateTime
     }
     
-    // Date range booking
+    // Date range booking - show full start and end dates with times
     const endDateTime = formatDateTime(data.endDate, data.endTime)
     return `${startDateTime} to ${endDateTime}`
   } catch (error) {
@@ -602,7 +616,7 @@ For inquiries: helluniversity.cm@gmail.com
  * Send reservation notification email to admin
  * Uses nodemailer v7 compatible API
  */
-export async function sendAdminNotification(data: ReservationData): Promise<void> {
+export async function sendAdminNotification(data: ReservationData, bookingId?: string): Promise<void> {
   const recipientEmail = process.env.RESERVATION_EMAIL || process.env.SMTP_USER
 
   if (!recipientEmail) {
@@ -611,12 +625,13 @@ export async function sendAdminNotification(data: ReservationData): Promise<void
 
   const formattedEventType = formatEventType(data.eventType, data.otherEventType)
   const formattedDateRange = formatDateRange(data)
+  const bookingIdText = bookingId ? ` [Booking ID: ${bookingId}]` : ''
 
   const mailOptions: nodemailer.SendMailOptions = {
     from: `"Hell University Reservation System" <${process.env.SMTP_USER}>`,
     to: recipientEmail,
     replyTo: data.email,
-    subject: `New Reservation Inquiry - ${formattedEventType} - ${formattedDateRange.substring(0, 50)}`,
+    subject: `New Reservation Inquiry${bookingIdText} - ${formattedEventType} - ${formattedDateRange.substring(0, 50)}`,
     text: generateAdminEmailText(data),
     html: generateAdminEmailHTML(data),
   }
@@ -657,11 +672,12 @@ export async function sendAdminNotification(data: ReservationData): Promise<void
  * Send auto-reply confirmation email to user
  * Uses nodemailer v7 compatible API
  */
-export async function sendUserConfirmation(data: ReservationData): Promise<void> {
+export async function sendUserConfirmation(data: ReservationData, bookingId?: string): Promise<void> {
+  const bookingIdText = bookingId ? ` [Booking ID: ${bookingId}]` : ''
   const mailOptions: nodemailer.SendMailOptions = {
     from: `"Hell University" <${process.env.SMTP_USER}>`,
     to: data.email,
-    subject: 'Reservation Inquiry Received - Hell University',
+    subject: `Reservation Inquiry Received${bookingIdText} - Hell University`,
     text: generateUserEmailText(data),
     html: generateUserEmailHTML(data),
   }
@@ -704,7 +720,8 @@ export async function sendUserConfirmation(data: ReservationData): Promise<void>
  * Uses nodemailer v7 compatible error handling
  */
 export async function sendReservationEmails(
-  data: ReservationData
+  data: ReservationData,
+  bookingReference?: string
 ): Promise<{ adminSent: boolean; userSent: boolean; errors: string[] }> {
   const errors: string[] = []
   let adminSent = false
@@ -715,7 +732,7 @@ export async function sendReservationEmails(
     console.error('='.repeat(60))
     console.error('STEP 1: Attempting to send admin notification email...')
     console.error('='.repeat(60))
-    await sendAdminNotification(data)
+    await sendAdminNotification(data, bookingReference)
     adminSent = true
     console.error('✅ Admin notification sent successfully')
     console.error('='.repeat(60))
@@ -782,7 +799,7 @@ export async function sendReservationEmails(
     console.error('='.repeat(60))
     console.error('STEP 2: Attempting to send user confirmation email...')
     console.error('='.repeat(60))
-    await sendUserConfirmation(data)
+    await sendUserConfirmation(data, bookingReference)
     userSent = true
     console.error('✅ User confirmation sent successfully')
     console.error('='.repeat(60))
@@ -869,7 +886,13 @@ function generateStatusChangeEmailHTML(
   changeReason?: string,
   proposedDate?: string | null,
   responseToken?: string,
-  proposedEndDate?: string | null
+  proposedEndDate?: string | null,
+  proposedStartTime?: string | null,
+  proposedEndTime?: string | null,
+  previousProposedDate?: string | null,
+  previousProposedEndDate?: string | null,
+  previousProposedStartTime?: string | null,
+  previousProposedEndTime?: string | null
 ): string {
   // Use NEXT_PUBLIC_SITE_URL if set, otherwise try VERCEL_URL (for preview deployments),
   // otherwise fall back to production domain
@@ -880,11 +903,25 @@ function generateStatusChangeEmailHTML(
     ? `${siteUrl}/booking/response/${responseToken}`
     : null
 
+  const depositUploadUrl = responseToken
+    ? `${siteUrl}/booking/deposit/${responseToken}`
+    : null
+
   const statusMessages: Record<string, { title: string; message: string; color: string }> = {
     accepted: {
-      title: 'Reservation Accepted',
-      message: 'Great news! Your reservation request has been accepted.',
+      title: 'Reservation Accepted - Deposit Required',
+      message: 'Great news! Your reservation request has been accepted. Please upload your deposit evidence to complete the booking process.',
       color: '#10b981',
+    },
+    paid_deposit: {
+      title: 'Deposit Received',
+      message: 'Thank you! We have received your deposit evidence. Our admin team will verify it and confirm your check-in shortly.',
+      color: '#3b82f6',
+    },
+    pending_deposit: {
+      title: 'Deposit Evidence Required - Re-upload Needed',
+      message: 'We need you to re-upload your deposit evidence. The previous upload did not meet our requirements. Please upload a new deposit evidence using the link below.',
+      color: '#f59e0b',
     },
     rejected: {
       title: 'Reservation Not Available',
@@ -899,7 +936,7 @@ function generateStatusChangeEmailHTML(
     postponed: {
       title: 'Reservation Postponed',
       message: proposedDate 
-        ? 'Your reservation has been postponed. Please review the proposed new date below and respond.'
+        ? 'You have proposed a new date for your reservation. Our admin team will review your proposal and respond shortly.'
         : 'Your reservation has been postponed. Please propose an alternative date or cancel your reservation.',
       color: '#f59e0b',
     },
@@ -909,6 +946,11 @@ function generateStatusChangeEmailHTML(
         ? 'Thank you for your proposal. We have received your request for a new date and will review it shortly.'
         : 'Your reservation status has been updated.',
       color: '#3b82f6',
+    },
+    'checked-in': {
+      title: 'Check-In Confirmed',
+      message: 'Your check-in has been confirmed by our admin team. We look forward to hosting your event!',
+      color: '#10b981',
     },
   }
 
@@ -974,29 +1016,118 @@ function generateStatusChangeEmailHTML(
                 </table>
               </div>
               
+              ${previousProposedDate && !proposedDate ? `
+              <div style="background-color: #fee2e2; border-left: 4px solid #ef4444; padding: 20px; margin: 20px 0; border-radius: 4px;">
+                <h3 style="margin: 0 0 10px 0; color: #991b1b; font-size: 18px;">Previous Proposed Date${previousProposedEndDate && previousProposedEndDate !== previousProposedDate ? 's' : ''} (Cleared)</h3>
+                <p style="margin: 0 0 10px 0; color: #7f1d1d; font-size: 16px; font-weight: 500;">
+                  ${previousProposedEndDate && previousProposedEndDate !== previousProposedDate
+                    ? `${sanitizeHTML((() => {
+                        // CRITICAL: Parse date string (YYYY-MM-DD) in Bangkok timezone
+                        const dateOnly = previousProposedDate.includes('T') ? previousProposedDate.split('T')[0] : previousProposedDate
+                        const [year, month, day] = dateOnly.split('-').map(Number)
+                        const date = new Date(Date.UTC(year, month - 1, day, 0, 0, 0))
+                        return date.toLocaleDateString('en-US', { 
+                        weekday: 'long', 
+                        year: 'numeric', 
+                        month: 'long', 
+                          day: 'numeric',
+                          timeZone: 'Asia/Bangkok'
+                        })
+                      })())} - ${sanitizeHTML((() => {
+                        const dateOnly = previousProposedEndDate.includes('T') ? previousProposedEndDate.split('T')[0] : previousProposedEndDate
+                        const [year, month, day] = dateOnly.split('-').map(Number)
+                        const date = new Date(Date.UTC(year, month - 1, day, 0, 0, 0))
+                        return date.toLocaleDateString('en-US', { 
+                        weekday: 'long', 
+                        year: 'numeric', 
+                        month: 'long', 
+                          day: 'numeric',
+                          timeZone: 'Asia/Bangkok'
+                        })
+                      })())}`
+                    : sanitizeHTML((() => {
+                        const dateOnly = previousProposedDate.includes('T') ? previousProposedDate.split('T')[0] : previousProposedDate
+                        const [year, month, day] = dateOnly.split('-').map(Number)
+                        const date = new Date(Date.UTC(year, month - 1, day, 0, 0, 0))
+                        return date.toLocaleDateString('en-US', { 
+                        weekday: 'long', 
+                        year: 'numeric', 
+                        month: 'long', 
+                          day: 'numeric',
+                          timeZone: 'Asia/Bangkok'
+                        })
+                      })())}
+                </p>
+                ${(previousProposedStartTime || previousProposedEndTime) ? `
+                <p style="margin: 5px 0 10px 0; color: #7f1d1d; font-size: 14px; line-height: 1.6;">
+                  ${previousProposedStartTime && previousProposedEndTime
+                    ? `Time: ${sanitizeHTML(previousProposedStartTime)} - ${sanitizeHTML(previousProposedEndTime)}`
+                    : previousProposedStartTime
+                      ? `Start Time: ${sanitizeHTML(previousProposedStartTime)}`
+                      : previousProposedEndTime
+                        ? `End Time: ${sanitizeHTML(previousProposedEndTime)}`
+                        : ''}
+                </p>
+                ` : ''}
+                <p style="margin: 0; color: #7f1d1d; font-size: 14px; line-height: 1.6;">
+                  The above proposed date${previousProposedEndDate && previousProposedEndDate !== previousProposedDate ? 's' : ''} has been cleared. Please propose a new date below.
+                </p>
+              </div>
+              ` : ''}
+              
               ${proposedDate ? `
               <div style="background-color: #fef3c7; border-left: 4px solid #f59e0b; padding: 20px; margin: 20px 0; border-radius: 4px;">
                 <h3 style="margin: 0 0 10px 0; color: #92400e; font-size: 18px;">${status === 'pending' ? 'Your Proposed Date' : 'Proposed New Date'}${proposedEndDate && proposedEndDate !== proposedDate ? 's' : ''}</h3>
-                <p style="margin: 0; color: #78350f; font-size: 16px; font-weight: 500;">
+                <p style="margin: 0 0 5px 0; color: #78350f; font-size: 16px; font-weight: 500;">
                   ${proposedEndDate && proposedEndDate !== proposedDate
-                    ? `${sanitizeHTML(new Date(proposedDate).toLocaleDateString('en-US', { 
+                    ? `${sanitizeHTML((() => {
+                        // CRITICAL: Parse date string (YYYY-MM-DD) in Bangkok timezone
+                        const dateOnly = proposedDate.includes('T') ? proposedDate.split('T')[0] : proposedDate
+                        const [year, month, day] = dateOnly.split('-').map(Number)
+                        const date = new Date(Date.UTC(year, month - 1, day, 0, 0, 0))
+                        return date.toLocaleDateString('en-US', { 
                         weekday: 'long', 
                         year: 'numeric', 
                         month: 'long', 
-                        day: 'numeric' 
-                      }))} - ${sanitizeHTML(new Date(proposedEndDate).toLocaleDateString('en-US', { 
+                          day: 'numeric',
+                          timeZone: 'Asia/Bangkok'
+                        })
+                      })())} - ${sanitizeHTML((() => {
+                        const dateOnly = proposedEndDate.includes('T') ? proposedEndDate.split('T')[0] : proposedEndDate
+                        const [year, month, day] = dateOnly.split('-').map(Number)
+                        const date = new Date(Date.UTC(year, month - 1, day, 0, 0, 0))
+                        return date.toLocaleDateString('en-US', { 
                         weekday: 'long', 
                         year: 'numeric', 
                         month: 'long', 
-                        day: 'numeric' 
-                      }))}`
-                    : sanitizeHTML(new Date(proposedDate).toLocaleDateString('en-US', { 
+                          day: 'numeric',
+                          timeZone: 'Asia/Bangkok'
+                        })
+                      })())}`
+                    : sanitizeHTML((() => {
+                        const dateOnly = proposedDate.includes('T') ? proposedDate.split('T')[0] : proposedDate
+                        const [year, month, day] = dateOnly.split('-').map(Number)
+                        const date = new Date(Date.UTC(year, month - 1, day, 0, 0, 0))
+                        return date.toLocaleDateString('en-US', { 
                         weekday: 'long', 
                         year: 'numeric', 
                         month: 'long', 
-                        day: 'numeric' 
-                      }))}
+                          day: 'numeric',
+                          timeZone: 'Asia/Bangkok'
+                        })
+                      })())}
                 </p>
+                ${(proposedStartTime || proposedEndTime) ? `
+                <p style="margin: 5px 0 0 0; color: #78350f; font-size: 14px; line-height: 1.6;">
+                  ${proposedStartTime && proposedEndTime
+                    ? `Time: ${sanitizeHTML(proposedStartTime)} - ${sanitizeHTML(proposedEndTime)}`
+                    : proposedStartTime
+                      ? `Start Time: ${sanitizeHTML(proposedStartTime)}`
+                      : proposedEndTime
+                        ? `End Time: ${sanitizeHTML(proposedEndTime)}`
+                        : ''}
+                </p>
+                ` : ''}
               </div>
               ` : ''}
               
@@ -1007,21 +1138,128 @@ function generateStatusChangeEmailHTML(
               </div>
               ` : ''}
               
-              ${responseUrl ? `
+              ${status === 'accepted' ? `
               <div style="margin: 30px 0; text-align: center;">
-                <p style="margin: 0 0 20px 0; color: #333333; font-size: 16px; line-height: 1.6;">
-                  ${status === 'postponed' 
-                    ? 'Please click the button below to respond to this proposal:'
-                    : status === 'accepted'
-                    ? 'You can manage your reservation using the link below (view details, cancel if needed):'
-                    : 'You can manage your reservation using the link below (view details, cancel if needed):'}
+                <p style="margin: 0 0 20px 0; color: #333333; font-size: 16px; line-height: 1.6; font-weight: 600;">
+                  ⚠️ IMPORTANT: Deposit Required
                 </p>
-                <a href="${responseUrl}" style="display: inline-block; background-color: ${statusInfo.color}; color: #ffffff; text-decoration: none; padding: 14px 28px; border-radius: 6px; font-size: 16px; font-weight: 600;">
-                  ${status === 'postponed' ? 'Respond to Proposal' : 'Manage Reservation'}
+                <p style="margin: 0 0 20px 0; color: #333333; font-size: 16px; line-height: 1.6;">
+                  Your reservation has been accepted! Please upload your deposit evidence to complete the booking process. The deposit must be uploaded before the reservation start date and time.
+                </p>
+                ${depositUploadUrl ? `
+                <a href="${depositUploadUrl}" style="display: inline-block; background-color: ${statusInfo.color}; color: #ffffff; text-decoration: none; padding: 14px 28px; border-radius: 6px; font-size: 16px; font-weight: 600; margin-bottom: 15px;">
+                  Upload Deposit Evidence
+                </a>
+                <p style="margin: 20px 0 0 0; color: #6b7280; font-size: 12px; line-height: 1.6;">
+                  Or copy and paste this link into your browser:<br>
+                  <a href="${depositUploadUrl}" style="color: #3b82f6; word-break: break-all;">${depositUploadUrl}</a>
+                </p>
+                ` : responseUrl ? `
+                <p style="margin: 0 0 15px 0; color: #ef4444; font-size: 14px; line-height: 1.6;">
+                  Please visit the booking page to upload your deposit evidence:
+                </p>
+                <a href="${responseUrl}" style="display: inline-block; background-color: ${statusInfo.color}; color: #ffffff; text-decoration: none; padding: 14px 28px; border-radius: 6px; font-size: 16px; font-weight: 600; margin-bottom: 15px;">
+                  Go to Booking Page
                 </a>
                 <p style="margin: 20px 0 0 0; color: #6b7280; font-size: 12px; line-height: 1.6;">
                   Or copy and paste this link into your browser:<br>
                   <a href="${responseUrl}" style="color: #3b82f6; word-break: break-all;">${responseUrl}</a>
+                </p>
+                ` : `
+                <p style="margin: 0; color: #ef4444; font-size: 14px; line-height: 1.6;">
+                  Please contact us to receive your deposit upload link.
+                </p>
+                `}
+              </div>
+              ` : ''}
+              
+              ${status === 'pending_deposit' ? `
+              <div style="margin: 30px 0; text-align: center;">
+                <p style="margin: 0 0 20px 0; color: #333333; font-size: 16px; line-height: 1.6; font-weight: 600;">
+                  ⚠️ IMPORTANT: Deposit Re-upload Required
+                </p>
+                <p style="margin: 0 0 20px 0; color: #333333; font-size: 16px; line-height: 1.6;">
+                  The previous deposit evidence you uploaded did not meet our requirements. Please upload a new deposit evidence to complete the booking process. The deposit must be uploaded before the reservation start date and time.
+                </p>
+                ${depositUploadUrl ? `
+                <a href="${depositUploadUrl}" style="display: inline-block; background-color: ${statusInfo.color}; color: #ffffff; text-decoration: none; padding: 14px 28px; border-radius: 6px; font-size: 16px; font-weight: 600; margin-bottom: 15px;">
+                  Upload Deposit Evidence
+                </a>
+                <p style="margin: 20px 0 0 0; color: #6b7280; font-size: 12px; line-height: 1.6;">
+                  Or copy and paste this link into your browser:<br>
+                  <a href="${depositUploadUrl}" style="color: #3b82f6; word-break: break-all;">${depositUploadUrl}</a>
+                </p>
+                ` : responseUrl ? `
+                <p style="margin: 0 0 15px 0; color: #ef4444; font-size: 14px; line-height: 1.6;">
+                  Please visit the booking page to upload your deposit evidence:
+                </p>
+                <a href="${responseUrl}" style="display: inline-block; background-color: ${statusInfo.color}; color: #ffffff; text-decoration: none; padding: 14px 28px; border-radius: 6px; font-size: 16px; font-weight: 600; margin-bottom: 15px;">
+                  Go to Booking Page
+                </a>
+                <p style="margin: 20px 0 0 0; color: #6b7280; font-size: 12px; line-height: 1.6;">
+                  Or copy and paste this link into your browser:<br>
+                  <a href="${responseUrl}" style="color: #3b82f6; word-break: break-all;">${responseUrl}</a>
+                </p>
+                ` : `
+                <p style="margin: 0; color: #ef4444; font-size: 14px; line-height: 1.6;">
+                  Please contact us to receive your deposit upload link.
+                </p>
+                `}
+              </div>
+              ` : ''}
+              
+              ${responseUrl && status === 'checked-in' ? `
+              <div style="margin: 30px 0; text-align: center;">
+                <p style="margin: 0 0 20px 0; color: #333333; font-size: 16px; line-height: 1.6;">
+                  Your check-in has been confirmed! You can view your reservation details or propose a new date if needed:
+                </p>
+                <a href="${responseUrl}" style="display: inline-block; background-color: ${statusInfo.color}; color: #ffffff; text-decoration: none; padding: 14px 28px; border-radius: 6px; font-size: 16px; font-weight: 600;">
+                  View Reservation
+                </a>
+                <p style="margin: 20px 0 0 0; color: #6b7280; font-size: 12px; line-height: 1.6;">
+                  Or copy and paste this link into your browser:<br>
+                  <a href="${responseUrl}" style="color: #3b82f6; word-break: break-all;">${responseUrl}</a>
+                </p>
+              </div>
+              ` : ''}
+              
+              ${responseUrl && status === 'postponed' ? `
+              <div style="margin: 30px 0; text-align: center;">
+                <p style="margin: 0 0 20px 0; color: #333333; font-size: 16px; line-height: 1.6;">
+                  You can propose a new date, accept the proposed date, or cancel your reservation:
+                </p>
+                <a href="${responseUrl}" style="display: inline-block; background-color: ${statusInfo.color}; color: #ffffff; text-decoration: none; padding: 14px 28px; border-radius: 6px; font-size: 16px; font-weight: 600; margin-bottom: 15px;">
+                  Manage Reservation
+                </a>
+                ${depositUploadUrl && !booking.depositEvidenceUrl ? `
+                <p style="margin: 20px 0; color: #333333; font-size: 16px; line-height: 1.6; font-weight: 600;">
+                  ⚠️ Deposit Still Required
+                </p>
+                <p style="margin: 0 0 20px 0; color: #333333; font-size: 16px; line-height: 1.6;">
+                  Your reservation has been postponed, but you still need to upload your deposit evidence. You can upload it using the link below:
+                </p>
+                <a href="${depositUploadUrl}" style="display: inline-block; background-color: #10b981; color: #ffffff; text-decoration: none; padding: 14px 28px; border-radius: 6px; font-size: 16px; font-weight: 600; margin-bottom: 15px;">
+                  Upload Deposit Evidence
+                </a>
+                <p style="margin: 20px 0 0 0; color: #6b7280; font-size: 12px; line-height: 1.6;">
+                  Or copy and paste this link into your browser:<br>
+                  <a href="${depositUploadUrl}" style="color: #3b82f6; word-break: break-all;">${depositUploadUrl}</a>
+                </p>
+                ` : ''}
+                <p style="margin: ${depositUploadUrl && !booking.depositEvidenceUrl ? '20px' : '20px'} 0 0 0; color: #6b7280; font-size: 12px; line-height: 1.6;">
+                  Or copy and paste this link into your browser:<br>
+                  <a href="${responseUrl}" style="color: #3b82f6; word-break: break-all;">${responseUrl}</a>
+                </p>
+              </div>
+              ` : ''}
+              
+              ${status === 'paid_deposit' ? `
+              <div style="margin: 30px 0; text-align: center;">
+                <p style="margin: 0 0 20px 0; color: #333333; font-size: 16px; line-height: 1.6;">
+                  Our admin team is currently reviewing your deposit evidence. Once verified, you will receive a confirmation email with access to your reservation management page.
+                </p>
+                <p style="margin: 0; color: #6b7280; font-size: 14px; line-height: 1.6;">
+                  Please wait for our team to complete the verification process.
                 </p>
               </div>
               ` : ''}
@@ -1061,11 +1299,19 @@ function generateStatusChangeEmailText(
   proposedDate?: string | null,
   responseUrl?: string | null
 ): string {
+  const siteUrl = process.env.NEXT_PUBLIC_SITE_URL 
+    || (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : null)
+    || 'https://huculturehub.com'
+  const depositUploadUrl = responseUrl?.replace('/booking/response/', '/booking/deposit/') || null
+
   const statusMessages: Record<string, string> = {
-    accepted: 'Great news! Your reservation request has been accepted.',
+    accepted: 'Great news! Your reservation request has been accepted. Please upload your deposit evidence to complete the booking process.',
+    paid_deposit: 'Thank you! We have received your deposit evidence. Our admin team will verify it and confirm your check-in shortly.',
+    pending_deposit: 'The previous deposit evidence you uploaded did not meet our requirements. Please upload a new deposit evidence to complete the booking process.',
+    'checked-in': 'Your check-in has been confirmed by our admin team. We look forward to hosting your event!',
     rejected: 'We regret to inform you that your reservation request could not be accommodated at this time.',
     postponed: proposedDate 
-      ? 'Your reservation has been postponed. Please review the proposed new date below and respond.'
+      ? 'You have proposed a new date for your reservation. Our admin team will review your proposal and respond shortly.'
       : 'Your reservation has been postponed. Please propose an alternative date or cancel your reservation.',
     pending: proposedDate 
       ? 'Thank you for your proposal. We have received your request for a new date and will review it shortly.'
@@ -1090,11 +1336,16 @@ function generateStatusChangeEmailText(
 
   if (proposedDate) {
     text += `${status === 'pending' ? 'YOUR PROPOSED DATE' : 'PROPOSED NEW DATE'}:\n`
-    text += `${new Date(proposedDate).toLocaleDateString('en-US', { 
+    // CRITICAL: Parse date string (YYYY-MM-DD) in Bangkok timezone
+    const dateOnly = proposedDate.includes('T') ? proposedDate.split('T')[0] : proposedDate
+    const [year, month, day] = dateOnly.split('-').map(Number)
+    const date = new Date(Date.UTC(year, month - 1, day, 0, 0, 0))
+    text += `${date.toLocaleDateString('en-US', { 
       weekday: 'long', 
       year: 'numeric', 
       month: 'long', 
-      day: 'numeric' 
+      day: 'numeric',
+      timeZone: 'Asia/Bangkok'
     })}\n\n`
   }
 
@@ -1102,8 +1353,48 @@ function generateStatusChangeEmailText(
     text += `ADDITIONAL NOTES:\n${changeReason}\n\n`
   }
 
+  if (status === 'pending_deposit') {
+    text += `\n⚠️ IMPORTANT: Deposit Re-upload Required\n\n`
+    text += `The previous deposit evidence you uploaded did not meet our requirements. Please upload a new deposit evidence to complete the booking process. The deposit must be uploaded before the reservation start date and time.\n\n`
+    if (depositUploadUrl) {
+      text += `Upload Deposit Evidence: ${depositUploadUrl}\n\n`
+    } else if (responseUrl) {
+      text += `Please visit the booking page to upload your deposit evidence:\n${responseUrl}\n\n`
+    } else {
+      text += `Please contact us to receive your deposit upload link.\n\n`
+    }
+  }
+
+  if (status === 'accepted') {
+    text += `\n⚠️ IMPORTANT: Deposit Required\n\n`
+    text += `Your reservation has been accepted! Please upload your deposit evidence to complete the booking process. The deposit must be uploaded before the reservation start date and time.\n\n`
+    if (depositUploadUrl) {
+      text += `Upload Deposit Evidence: ${depositUploadUrl}\n\n`
+    } else if (responseUrl) {
+      text += `Please visit the booking page to upload your deposit evidence:\n${responseUrl}\n\n`
+    } else {
+      text += `Please contact us to receive your deposit upload link.\n\n`
+    }
+  }
+
+  if (responseUrl && status === 'checked-in') {
+    text += `Your check-in has been confirmed! You can view your reservation details or propose a new date if needed:\n`
+    text += `${responseUrl}\n\n`
+  }
+
   if (responseUrl && status === 'postponed') {
-    text += `Please visit the following link to respond:\n${responseUrl}\n\n`
+    text += `You can propose a new date, accept the proposed date, or cancel your reservation:\n`
+    text += `${responseUrl}\n\n`
+    if (depositUploadUrl && !booking.depositEvidenceUrl) {
+      text += `⚠️ IMPORTANT: Deposit Still Required\n\n`
+      text += `Your reservation has been postponed, but you still need to upload your deposit evidence. You can upload it using the link below:\n\n`
+      text += `Upload Deposit Evidence: ${depositUploadUrl}\n\n`
+    }
+  }
+  
+  if (status === 'paid_deposit') {
+    text += `\nOur admin team is currently reviewing your deposit evidence. Once verified, you will receive a confirmation email with access to your reservation management page.\n`
+    text += `Please wait for our team to complete the verification process.\n\n`
   }
 
   if (status === 'cancelled') {
@@ -1126,6 +1417,12 @@ export async function sendBookingStatusNotification(
     changeReason?: string
     proposedDate?: string | null
     proposedEndDate?: string | null
+    proposedStartTime?: string | null
+    proposedEndTime?: string | null
+    previousProposedDate?: string | null
+    previousProposedEndDate?: string | null
+    previousProposedStartTime?: string | null
+    previousProposedEndTime?: string | null
     responseToken?: string
     skipDuplicateCheck?: boolean // Allow override for retries
   }
@@ -1157,7 +1454,7 @@ export async function sendBookingStatusNotification(
   const mailOptions: nodemailer.SendMailOptions = {
     from: `"Hell University" <${process.env.SMTP_USER}>`,
     to: booking.email,
-    subject: `Reservation Status Update - ${booking.eventType}`,
+    subject: `Reservation Status Update [Booking ID: ${booking.referenceNumber || booking.id}] - ${booking.eventType}`,
     text: generateStatusChangeEmailText(
       booking,
       status,
@@ -1171,7 +1468,13 @@ export async function sendBookingStatusNotification(
       options?.changeReason,
       options?.proposedDate,
       options?.responseToken,
-      options?.proposedEndDate || booking.proposedEndDate || undefined
+      options?.proposedEndDate || booking.proposedEndDate || undefined,
+      options?.proposedStartTime,
+      options?.proposedEndTime,
+      options?.previousProposedDate,
+      options?.previousProposedEndDate,
+      options?.previousProposedStartTime,
+      options?.previousProposedEndTime
     ),
   }
 
@@ -1276,27 +1579,29 @@ export async function sendAdminUserResponseNotification(
     }
     const timeText = timeInfo.length > 0 ? ` (${timeInfo.join(' - ')})` : ''
     
+    // Parse date string (YYYY-MM-DD) in Bangkok timezone to avoid timezone conversion issues
+    // options.proposedDate is a date string like "2025-11-19", not an ISO string
+    const parseBangkokDate = (dateStr: string) => {
+      const [year, month, day] = dateStr.split('-').map(Number)
+      // Create date in Bangkok timezone (GMT+7)
+      // Use UTC methods to avoid local timezone conversion
+      const date = new Date(Date.UTC(year, month - 1, day, 0, 0, 0))
+      // Format in Bangkok timezone (GMT+7 = UTC+7)
+      return date.toLocaleDateString('en-US', { 
+        weekday: 'long', 
+        year: 'numeric', 
+        month: 'long', 
+        day: 'numeric',
+        timeZone: 'Asia/Bangkok'
+      })
+    }
+    
     if (options?.proposedEndDate && options.proposedEndDate !== options.proposedDate) {
       // Multiple days
-      proposedDateText = `${new Date(options.proposedDate).toLocaleDateString('en-US', { 
-        weekday: 'long', 
-        year: 'numeric', 
-        month: 'long', 
-        day: 'numeric' 
-      })} - ${new Date(options.proposedEndDate).toLocaleDateString('en-US', { 
-        weekday: 'long', 
-        year: 'numeric', 
-        month: 'long', 
-        day: 'numeric' 
-      })}${timeText}`
+      proposedDateText = `${parseBangkokDate(options.proposedDate)} - ${parseBangkokDate(options.proposedEndDate)}${timeText}`
     } else {
       // Single day
-      proposedDateText = `${new Date(options.proposedDate).toLocaleDateString('en-US', { 
-        weekday: 'long', 
-        year: 'numeric', 
-        month: 'long', 
-        day: 'numeric' 
-      })}${timeText}`
+      proposedDateText = `${parseBangkokDate(options.proposedDate)}${timeText}`
     }
   }
 
@@ -1419,7 +1724,7 @@ Hell University Reservation System
     from: `"Hell University Reservation System" <${process.env.SMTP_USER}>`,
     to: recipientEmail,
     replyTo: booking.email,
-    subject: `${responseInfo.title} - ${formattedEventType}`,
+    subject: `${responseInfo.title} [Booking ID: ${booking.referenceNumber || booking.id}] - ${formattedEventType}`,
     text: textContent,
     html: htmlContent,
   }
@@ -1633,10 +1938,16 @@ Best regards,
 Hell University Reservation System
   `.trim()
 
+  // Create booking IDs list for subject (limit to first 3 for readability)
+  const bookingIds = bookings.map(b => b.booking.referenceNumber || b.booking.id)
+  const bookingIdsText = bookingIds.length <= 3 
+    ? bookingIds.join(', ')
+    : `${bookingIds.slice(0, 3).join(', ')} and ${bookingIds.length - 3} more`
+
   const mailOptions: nodemailer.SendMailOptions = {
     from: `"Hell University Reservation System" <${process.env.SMTP_USER}>`,
     to: recipientEmail,
-    subject: `Automatic Booking Updates - ${bookings.length} booking${bookings.length > 1 ? 's' : ''} updated`,
+    subject: `Automatic Booking Updates [Booking IDs: ${bookingIdsText}] - ${bookings.length} booking${bookings.length > 1 ? 's' : ''} updated`,
     text: textContent,
     html: htmlContent,
   }
@@ -1723,6 +2034,21 @@ export async function sendAdminStatusChangeNotification(
       message: 'A booking has been marked as finished.',
       color: '#3b82f6',
     },
+    paid_deposit: {
+      title: 'Deposit Evidence Uploaded',
+      message: 'The user has uploaded deposit evidence. Please verify the deposit.',
+      color: '#8b5cf6',
+    },
+    pending_deposit: {
+      title: 'Deposit Evidence Rejected',
+      message: 'Deposit evidence has been rejected. User will re-upload deposit evidence.',
+      color: '#f59e0b',
+    },
+    'checked-in': {
+      title: 'Booking Checked In',
+      message: 'The booking has been checked in and deposit verified.',
+      color: '#10b981',
+    },
   }
 
   const statusInfo = statusMessages[newStatus] || {
@@ -1730,6 +2056,12 @@ export async function sendAdminStatusChangeNotification(
     message: `Booking status has been changed from ${oldStatus} to ${newStatus}.`,
     color: '#3b82f6',
   }
+
+  // Generate admin panel link for deposit verification
+  const siteUrl = process.env.NEXT_PUBLIC_SITE_URL 
+    || (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : null)
+    || 'https://huculturehub.com'
+  const adminBookingsUrl = `${siteUrl}/admin/bookings`
 
   let proposedDateText = ''
   if (booking.proposedDate) {
@@ -1837,6 +2169,28 @@ export async function sendAdminStatusChangeNotification(
               </div>
               ` : ''}
               
+              ${newStatus === 'paid_deposit' ? `
+              <div style="margin: 30px 0; text-align: center; background-color: #f3f4f6; padding: 25px; border-radius: 8px;">
+                <p style="margin: 0 0 20px 0; color: #111827; font-size: 16px; line-height: 1.6; font-weight: 600;">
+                  ⚠️ Action Required: Verify Deposit Evidence
+                </p>
+                <p style="margin: 0 0 20px 0; color: #374151; font-size: 14px; line-height: 1.6;">
+                  The user has uploaded deposit evidence. Please review and verify the deposit in the admin panel.
+                </p>
+                <a href="${adminBookingsUrl}" style="display: inline-block; background-color: ${statusInfo.color}; color: #ffffff; text-decoration: none; padding: 14px 28px; border-radius: 6px; font-size: 16px; font-weight: 600; margin-bottom: 10px;">
+                  Go to Admin Panel
+                </a>
+                <p style="margin: 15px 0 0 0; color: #6b7280; font-size: 12px; line-height: 1.6;">
+                  Booking ID: ${booking.referenceNumber || booking.id}<br>
+                  Or search by email: ${sanitizeHTML(booking.email)}
+                </p>
+                <p style="margin: 15px 0 0 0; color: #6b7280; font-size: 12px; line-height: 1.6;">
+                  Or copy and paste this link:<br>
+                  <a href="${adminBookingsUrl}" style="color: #3b82f6; word-break: break-all;">${adminBookingsUrl}</a>
+                </p>
+              </div>
+              ` : ''}
+              
               <p style="margin: 30px 0 0 0; color: #6b7280; font-size: 14px; line-height: 1.6;">
                 This is an automated notification of a booking status change.
               </p>
@@ -1855,7 +2209,7 @@ export async function sendAdminStatusChangeNotification(
 </html>
   `.trim()
 
-  const textContent = `${statusInfo.title}
+  let textContent = `${statusInfo.title}
 
 ${statusInfo.message}
 
@@ -1868,8 +2222,17 @@ Date & Time: ${formattedDateRange}
 Previous Status: ${oldStatus}
 New Status: ${newStatus}
 ${proposedDateText ? `Proposed Date: ${proposedDateText}\n` : ''}${changedBy ? `Changed By: ${changedBy}\n` : ''}
-${changeReason ? `\nCHANGE REASON:\n${changeReason}\n` : ''}
-This is an automated notification of a booking status change.
+${changeReason ? `\nCHANGE REASON:\n${changeReason}\n` : ''}`
+
+  if (newStatus === 'paid_deposit') {
+    textContent += `\n⚠️ ACTION REQUIRED: VERIFY DEPOSIT EVIDENCE\n\n`
+    textContent += `The user has uploaded deposit evidence. Please review and verify the deposit in the admin panel.\n\n`
+    textContent += `Admin Panel: ${adminBookingsUrl}\n`
+    textContent += `Booking ID: ${booking.referenceNumber || booking.id}\n`
+    textContent += `Or search by email: ${booking.email}\n\n`
+  }
+
+  textContent += `This is an automated notification of a booking status change.
 
 Best regards,
 Hell University Reservation System
@@ -1879,7 +2242,7 @@ Hell University Reservation System
     from: `"Hell University Reservation System" <${process.env.SMTP_USER}>`,
     to: recipientEmail,
     replyTo: booking.email,
-    subject: `${statusInfo.title} - ${formattedEventType} - ${booking.name}`,
+    subject: `${statusInfo.title} [Booking ID: ${booking.referenceNumber || booking.id}] - ${formattedEventType} - ${booking.name}`,
     text: textContent,
     html: htmlContent,
   }
@@ -2033,7 +2396,7 @@ Hell University Reservation System
     from: `"Hell University Reservation System" <${process.env.SMTP_USER}>`,
     to: recipientEmail,
     replyTo: booking.email,
-    subject: `User Checked In - ${formattedEventType} - ${booking.name}`,
+    subject: `User Checked In [Booking ID: ${booking.referenceNumber || booking.id}] - ${formattedEventType} - ${booking.name}`,
     text: textContent,
     html: htmlContent,
   }
@@ -2197,7 +2560,7 @@ Hell University Reservation System
     from: `"Hell University Reservation System" <${process.env.SMTP_USER}>`,
     to: recipientEmail,
     replyTo: booking.email,
-    subject: `Booking Deleted - ${formattedEventType} - ${booking.name}`,
+    subject: `Booking Deleted [Booking ID: ${booking.referenceNumber || booking.id}] - ${formattedEventType} - ${booking.name}`,
     text: textContent,
     html: htmlContent,
   }

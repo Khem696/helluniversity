@@ -43,7 +43,7 @@ export function AboutPage() {
                 Later, Hell University became the identity and inspiration for Kade to create art activities in this area for students and arts lovers alike, until it seemed as if this place had become a classroom surrounded by simple life and nature.
                 </p>
                 <p className="text-white font-comfortaa text-[clamp(14px,1vw,18px)] leading-relaxed">
-                After he passed away in November 2024, the family and loved ones saw the value of the works and this place and wish to preserve it, to pass on its value and the naturalness of people and surroundings from his perspective.
+                After Kade passed away in November 2024, the family and loved ones saw the value of the works and this place and wish to preserve it, to pass on its value and the naturalness of people and surroundings from Kade's perspective.
                 </p>
                 {/* <div className="border-b border-dotted border-white/30 py-2" />
                 <div className="border-b border-dotted border-white/30 py-2" />

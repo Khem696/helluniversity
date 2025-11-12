@@ -2,6 +2,8 @@ import { NextResponse } from "next/server"
 import { readdir } from "fs/promises"
 import { join } from "path"
 import { existsSync } from "fs"
+import { createRequestLogger } from "@/lib/logger"
+import { withErrorHandling, successResponse, errorResponse, ErrorCodes } from "@/lib/api-response"
 
 /**
  * API Route to dynamically discover studio images
@@ -11,18 +13,23 @@ import { existsSync } from "fs"
  */
 
 export async function GET() {
-  try {
+  return withErrorHandling(async () => {
+    const requestId = crypto.randomUUID()
+    const logger = createRequestLogger(requestId, '/api/ai-space/images')
+    
+    await logger.info('AI space images discovery request received')
+    
     const studioDir = join(process.cwd(), "public", "aispaces", "studio")
     
     // Check if directory exists
     if (!existsSync(studioDir)) {
-      return NextResponse.json(
-        { 
-          success: false, 
-          error: "Studio directory not found",
-          images: [] 
-        },
-        { status: 404 }
+      await logger.warn('Studio directory not found', { studioDir })
+      return errorResponse(
+        ErrorCodes.NOT_FOUND,
+        "Studio directory not found",
+        undefined,
+        404,
+        { requestId }
       )
     }
 
@@ -43,23 +50,17 @@ export async function GET() {
         return numA - numB
       })
       .map(file => `/aispaces/studio/${file}`)
+    
+    await logger.info('Studio images discovered', { count: imageFiles.length })
 
-    return NextResponse.json({
-      success: true,
-      images: imageFiles,
-      count: imageFiles.length,
-    })
-  } catch (error) {
-    console.error("Error discovering studio images:", error)
-    return NextResponse.json(
-      { 
-        success: false, 
-        error: error instanceof Error ? error.message : "Unknown error",
-        images: [] 
+    return successResponse(
+      {
+        images: imageFiles,
+        count: imageFiles.length,
       },
-      { status: 500 }
+      { requestId }
     )
-  }
+  }, { endpoint: '/api/ai-space/images' })
 }
 
 
