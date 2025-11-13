@@ -464,10 +464,10 @@ export function StudioGalleryPage() {
               <DialogTrigger asChild>
                 <button
                   type="button"
-                  aria-label="Tailor Your Desire"
+                  aria-label="Tailor Your Reservation"
                   className="font-comfortaa inline-flex items-center justify-center w-auto whitespace-nowrap rounded-full bg-[#5B9AB8] text-white px-5 sm:px-6 md:px-8 py-2 md:py-3 text-[clamp(1.00rem,3.2vw,1.25rem)] shadow-sm hover:bg-[#4d8ea7] focus:outline-hidden focus-visible:ring-2 focus-visible:ring-white/70 transition-colors"
                 >
-                  Tailor Your Desire
+                  Tailor Your Reservation
                 </button>
               </DialogTrigger>
               <DialogContent className="top-0 left-0 translate-x-0 translate-y-0 w-full h-screen max-w-none sm:max-w-none rounded-none border-0 p-0 bg-transparent overflow-hidden">
