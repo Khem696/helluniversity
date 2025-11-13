@@ -107,13 +107,14 @@ export async function getPendingEmails(limit: number = 10): Promise<EmailQueueIt
 
 /**
  * Get pending emails for critical status changes
- * Only processes status_change emails with status 'accepted', 'paid_deposit', 'postponed', 'cancelled', 'rejected', or 'checked-in'
+ * Only processes status_change emails with status 'pending_deposit', 'confirmed', or 'cancelled'
  */
 export async function getPendingCriticalStatusEmails(limit: number = 20): Promise<EmailQueueItem[]> {
   const db = getTursoClient()
   const now = Math.floor(Date.now() / 1000)
 
   // Get all pending status_change emails
+  // Optimized: Uses idx_email_queue_critical (status, email_type, created_at) index
   const result = await db.execute({
     sql: `
       SELECT * FROM email_queue
@@ -128,7 +129,7 @@ export async function getPendingCriticalStatusEmails(limit: number = 20): Promis
   })
 
   // Filter to only include emails with critical statuses in metadata
-  // Critical statuses: accepted, postponed, cancelled, rejected
+  // Critical statuses: pending_deposit, confirmed, cancelled
   const criticalEmails: EmailQueueItem[] = []
   
   for (const row of result.rows) {
@@ -150,7 +151,7 @@ export async function getPendingCriticalStatusEmails(limit: number = 20): Promis
     }
     
     // Only include if status is one of the critical statuses
-    const criticalStatuses = ['accepted', 'paid_deposit', 'postponed', 'cancelled', 'rejected', 'checked-in']
+    const criticalStatuses = ['pending_deposit', 'confirmed', 'cancelled']
     if (criticalStatuses.includes(metadata.status)) {
       criticalEmails.push(email)
       
@@ -353,7 +354,7 @@ export async function processEmailQueue(limit: number = 10): Promise<{
 
 /**
  * Process pending critical status change emails
- * Handles: accepted, paid_deposit, postponed, cancelled, rejected, checked-in
+ * Handles: pending_deposit, confirmed, cancelled
  */
 export async function processCriticalStatusEmails(limit: number = 20): Promise<{
   processed: number
@@ -369,7 +370,7 @@ export async function processCriticalStatusEmails(limit: number = 20): Promise<{
     errors: [] as string[],
   }
 
-  console.log(`Processing ${pendingEmails.length} critical status change emails (accepted/paid_deposit/postponed/cancelled/rejected/checked-in)`)
+  console.log(`Processing ${pendingEmails.length} critical status change emails (pending_deposit/confirmed/cancelled)`)
 
   for (const email of pendingEmails) {
     try {
@@ -449,6 +450,12 @@ export async function getEmailQueueItems(options?: {
 }): Promise<{ items: EmailQueueItem[]; total: number }> {
   const db = getTursoClient()
   
+  // Optimize query to leverage composite indexes
+  // If both status and emailType are provided, use idx_email_queue_status_type_created
+  // If only status, use idx_email_queue_status (with next_retry_at)
+  // If only emailType, use idx_email_queue_type
+  // Otherwise, use idx_email_queue_created
+  
   let sql = "SELECT * FROM email_queue WHERE 1=1"
   const args: any[] = []
   
@@ -462,12 +469,14 @@ export async function getEmailQueueItems(options?: {
     args.push(options.emailType)
   }
   
-  // Get total count
+  // Get total count (uses same indexes for filtering)
   const countSql = sql.replace("SELECT *", "SELECT COUNT(*) as count")
   const countResult = await db.execute({ sql: countSql, args })
   const total = (countResult.rows[0] as any)?.count || 0
   
   // Get items with pagination
+  // ORDER BY created_at DESC leverages idx_email_queue_status_type_created when both filters are present
+  // or idx_email_queue_created when no filters
   sql += " ORDER BY created_at DESC"
   if (options?.limit) {
     sql += " LIMIT ?"

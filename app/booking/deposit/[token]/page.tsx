@@ -18,6 +18,7 @@ interface BookingData {
   startTime?: string
   endTime?: string
   status: string
+  depositEvidenceUrl?: string | null
 }
 
 export default function DepositUploadPage() {
@@ -64,10 +65,10 @@ export default function DepositUploadPage() {
         const booking = json.data.booking
         setBooking(booking)
         
-        // Check if booking is in accepted or pending_deposit status
-        // pending_deposit means admin rejected previous deposit, user needs to re-upload
-        if (booking.status !== "accepted" && booking.status !== "pending_deposit") {
-          setError(`Deposit can only be uploaded for accepted or pending_deposit bookings. Current status: ${booking.status}`)
+        // Check if booking is in pending_deposit status
+        // pending_deposit means admin accepted booking and is waiting for deposit, or admin rejected previous deposit
+        if (booking.status !== "pending_deposit") {
+          setError(`Deposit can only be uploaded for pending_deposit bookings. Current status: ${booking.status}`)
         }
       } catch (err) {
         console.error("Error fetching booking:", err)
@@ -389,7 +390,7 @@ export default function DepositUploadPage() {
             Upload Deposit Evidence
           </h1>
           <p className="text-white/90 font-comfortaa text-[clamp(14px,1.5vw,18px)]">
-            {booking.status === "pending_deposit" 
+            {booking.status === "pending_deposit" && booking.depositEvidenceUrl
               ? "Your previous deposit evidence was rejected. Please upload a new deposit evidence image."
               : "Please upload your deposit payment evidence"}
           </p>
@@ -434,10 +435,18 @@ export default function DepositUploadPage() {
             Deposit Evidence
           </h2>
 
-          {booking.status === "pending_deposit" && (
+          {booking.status === "pending_deposit" && booking.depositEvidenceUrl && (
             <div className="bg-orange-50 border border-orange-200 text-orange-800 p-3 sm:p-4 rounded mb-4 sm:mb-6">
               <p className="font-comfortaa text-[clamp(13px,1.3vw,15px)]">
                 ⚠️ <strong>Re-upload Required:</strong> Your previous deposit evidence did not meet our requirements. Please upload a new deposit evidence image.
+              </p>
+            </div>
+          )}
+          
+          {booking.status === "pending_deposit" && !booking.depositEvidenceUrl && (
+            <div className="bg-blue-50 border border-blue-200 text-blue-800 p-3 sm:p-4 rounded mb-4 sm:mb-6">
+              <p className="font-comfortaa text-[clamp(13px,1.3vw,15px)]">
+                ℹ️ <strong>Deposit Required:</strong> Your reservation has been accepted! Please upload your deposit evidence to complete the booking process.
               </p>
             </div>
           )}

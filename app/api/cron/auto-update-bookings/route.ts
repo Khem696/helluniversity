@@ -2,16 +2,15 @@
  * Auto-Update Bookings Cron Job
  * 
  * This endpoint is called by Vercel cron jobs to automatically:
- * - Cancel pending/postponed bookings with past start dates
- * - Cancel accepted bookings past grace period without check-in
- * - Mark finished bookings past end date
+ * - Cancel pending/pending_deposit bookings with past start dates
+ * - Mark confirmed bookings as finished when past end date
  * 
  * This endpoint should be called periodically (e.g., every hour)
  */
 
 import { NextResponse } from 'next/server'
 import { autoUpdateFinishedBookings } from '@/lib/bookings'
-import { successResponse, errorResponse, ErrorCodes } from '@/lib/api-response'
+import { withErrorHandling, successResponse, errorResponse, ErrorCodes } from '@/lib/api-response'
 import { createRequestLogger } from '@/lib/logger'
 
 /**
@@ -26,10 +25,10 @@ export async function POST(request: Request) {
 }
 
 async function handleAutoUpdate(request: Request) {
-  const requestId = crypto.randomUUID()
-  const logger = createRequestLogger(requestId, '/api/cron/auto-update-bookings')
-  
-  try {
+  return withErrorHandling(async () => {
+    const requestId = crypto.randomUUID()
+    const logger = createRequestLogger(requestId, '/api/cron/auto-update-bookings')
+    
     await logger.info('Auto-update bookings cron job started')
     
     // Verify Vercel cron secret
@@ -112,19 +111,6 @@ async function handleAutoUpdate(request: Request) {
       },
       { requestId }
     )
-  } catch (error) {
-    await logger.error(
-      'Auto-update bookings cron job failed',
-      error instanceof Error ? error : new Error(String(error))
-    )
-    
-    return errorResponse(
-      ErrorCodes.INTERNAL_ERROR,
-      'Failed to auto-update bookings',
-      error instanceof Error ? error.message : undefined,
-      500,
-      { requestId }
-    )
-  }
+  }, { endpoint: '/api/cron/auto-update-bookings' })
 }
 

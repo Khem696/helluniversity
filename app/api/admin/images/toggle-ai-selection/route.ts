@@ -79,17 +79,29 @@ export async function POST(request: Request) {
     })
 
     // Get all selected images for aispace_studio category
+    // Order by display_order first (visual order), then ai_order, then created_at
+    // This ensures ai_order matches the visual order after drag-and-drop
+    // Exclude event images (managed in Admin Events page)
+    // Poster images: linked via events.image_id
+    // In-event photos: linked via event_images.image_id
     const selectedImages = await db.execute({
       sql: `
         SELECT id, ai_order, display_order, created_at
         FROM images
-        WHERE category = 'aispace_studio' AND ai_selected = 1
-        ORDER BY ai_order ASC, display_order ASC, created_at ASC
+        WHERE category = 'aispace_studio' 
+          AND ai_selected = 1
+          AND id NOT IN (
+            SELECT DISTINCT image_id FROM events WHERE image_id IS NOT NULL
+            UNION
+            SELECT DISTINCT image_id FROM event_images WHERE image_id IS NOT NULL
+          )
+        ORDER BY display_order ASC, ai_order ASC, created_at ASC
       `,
       args: [],
     })
 
-    // Automatically reorder all selected images (1, 2, 3, ...)
+    // Automatically reorder all selected images (1, 2, 3, ...) based on display_order
+    // This ensures ai_order matches the visual order
     for (let i = 0; i < selectedImages.rows.length; i++) {
       const img = selectedImages.rows[i] as any
       await db.execute({

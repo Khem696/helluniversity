@@ -7,6 +7,7 @@ import { validateBookingData } from "@/lib/input-validation"
 import { createRequestLogger, withLogging } from "@/lib/logger"
 import { withErrorHandling, successResponse, validationErrorResponse, errorResponse, ErrorCodes, type ApiResponse } from "@/lib/api-response"
 import { withRateLimit, getRateLimitOptions } from "@/lib/rate-limit-middleware"
+import { getTursoClient } from "@/lib/turso"
 
 // Helper function to get client IP address
 function getClientIP(request: Request): string | null {
@@ -37,6 +38,47 @@ export async function POST(request: Request): Promise<NextResponse> {
     
     await logger.info('Booking request received')
     
+    // Check if bookings are enabled
+    let bookingsEnabled = true
+    try {
+      const db = getTursoClient()
+      
+      // Check if settings table exists
+      const tableCheck = await db.execute({
+        sql: `SELECT name FROM sqlite_master WHERE type='table' AND name='settings'`,
+        args: [],
+      })
+
+      if (tableCheck.rows.length > 0) {
+        // Table exists, check the setting
+        const settingsResult = await db.execute({
+          sql: `SELECT value FROM settings WHERE key = 'bookings_enabled'`,
+          args: [],
+        })
+
+        if (settingsResult.rows.length > 0) {
+          const setting = settingsResult.rows[0] as any
+          bookingsEnabled = setting.value === '1' || setting.value === 1 || setting.value === true
+        }
+      }
+      // If table doesn't exist, default to enabled (allow bookings)
+    } catch (error) {
+      // If there's any error checking settings, default to enabled
+      await logger.warn('Error checking booking enabled status, defaulting to enabled', error instanceof Error ? error : new Error(String(error)))
+      bookingsEnabled = true
+    }
+
+    if (!bookingsEnabled) {
+      await logger.warn('Booking request rejected: bookings are disabled')
+      return errorResponse(
+        ErrorCodes.SERVICE_UNAVAILABLE,
+        'Booking submissions are currently disabled. Please contact us directly or try again later.',
+        undefined,
+        503,
+        { requestId }
+      )
+    }
+    
     const body = await request.json()
     const { token, ...bookingData } = body
 
@@ -44,7 +86,7 @@ export async function POST(request: Request): Promise<NextResponse> {
     const rateLimit = await withRateLimit(request, getRateLimitOptions('booking'))
     if (!rateLimit.allowed && rateLimit.response) {
       await logger.warn('Rate limit exceeded')
-      return rateLimit.response
+      return rateLimit.response as NextResponse<ApiResponse>
     }
     
     // Validate reCAPTCHA token

@@ -106,11 +106,34 @@ export function Header() {
     startDate: number
     endDate: number
   }>>([])
+  const [bookingsEnabled, setBookingsEnabled] = useState<boolean>(true)
 
   // Ensure component is mounted (client-side only)
   useEffect(() => {
     setMounted(true)
   }, [])
+
+  // Fetch booking enabled status
+  useEffect(() => {
+    async function fetchBookingStatus() {
+      try {
+        const response = await fetch("/api/settings/booking-enabled")
+        const json = await response.json()
+        
+        if (json.success && json.data) {
+          setBookingsEnabled(json.data.enabled)
+        }
+      } catch (error) {
+        console.error("Failed to fetch booking status:", error)
+        // Default to enabled on error
+        setBookingsEnabled(true)
+      }
+    }
+
+    if (mounted) {
+      fetchBookingStatus()
+    }
+  }, [mounted])
 
   // Fetch unavailable dates when booking dialog opens and refresh periodically
   useEffect(() => {
@@ -300,6 +323,10 @@ export function Header() {
   }
 
   function handleRecaptchaError() {
+    // Don't show error if form is submitting or modal is closing
+    if (isSubmitting || !bookingOpen) {
+      return
+    }
     setRecaptchaToken(null)
     setIsRecaptchaVerified(false)
     setError({
@@ -310,6 +337,11 @@ export function Header() {
   }
 
   function handleRecaptchaExpire() {
+    // Don't show error if form is submitting or modal is closing
+    // This prevents error messages after successful submission
+    if (isSubmitting || !bookingOpen) {
+      return
+    }
     setRecaptchaToken(null)
     setIsRecaptchaVerified(false)
     setError({
@@ -757,8 +789,8 @@ export function Header() {
           <span className="text-[#2a1f1a] font-urbanist font-extrabold leading-[1.2]">University</span>
         </h1>
 
-        {/* Booking Button */}
-        {mounted && (
+        {/* Booking Button - Only show if bookings are enabled */}
+        {mounted && bookingsEnabled && (
           <Dialog open={bookingOpen} onOpenChange={handleBookingOpenChange}>
             <DialogTrigger className="hidden lg:flex items-center gap-3 text-white/80 hover:text-white transition-colors mr-1 sm:mr-2 md:mr-3 lg:mr-0" aria-label="Open Booking">
             <div className="flex items-center justify-center w-10 h-10 lg:w-12 lg:h-12 3xl:w-14 3xl:h-14 4xl:w-16 4xl:h-16 5xl:w-20 5xl:h-20 rounded-full bg-white border-2 border-[var(--hell-dusty-blue)]">

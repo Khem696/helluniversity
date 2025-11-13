@@ -907,50 +907,47 @@ function generateStatusChangeEmailHTML(
     ? `${siteUrl}/booking/deposit/${responseToken}`
     : null
 
+  // Determine if this is a successful upload (check changeReason) or a rejection
+  const isSuccessfulUpload = changeReason?.toLowerCase().includes('uploaded successfully') || 
+                             changeReason?.toLowerCase().includes('upload successfully')
+  const isRejection = booking.depositEvidenceUrl && !isSuccessfulUpload
+  
   const statusMessages: Record<string, { title: string; message: string; color: string }> = {
-    accepted: {
-      title: 'Reservation Accepted - Deposit Required',
-      message: 'Great news! Your reservation request has been accepted. Please upload your deposit evidence to complete the booking process.',
-      color: '#10b981',
+    pending_deposit: {
+      title: isRejection
+        ? 'Deposit Evidence Required - Re-upload Needed'
+        : 'Reservation Accepted - Deposit Required',
+      message: isRejection
+        ? 'The previous deposit evidence you uploaded did not meet our requirements. Please upload a new deposit evidence using the link below. Please send a deposit evidence before start date.'
+        : 'Great news! Your reservation request has been accepted. Please upload your deposit evidence to complete the booking process. Please send a deposit evidence before start date.',
+      color: isRejection ? '#f59e0b' : '#10b981',
     },
     paid_deposit: {
-      title: 'Deposit Received',
-      message: 'Thank you! We have received your deposit evidence. Our admin team will verify it and confirm your check-in shortly.',
-      color: '#3b82f6',
+      title: 'Deposit Evidence Uploaded Successfully',
+      message: 'Your deposit evidence has been uploaded successfully. Our admin team will review it and confirm your booking shortly. You will receive an email notification once the verification is complete.',
+      color: '#10b981',
     },
-    pending_deposit: {
-      title: 'Deposit Evidence Required - Re-upload Needed',
-      message: 'We need you to re-upload your deposit evidence. The previous upload did not meet our requirements. Please upload a new deposit evidence using the link below.',
-      color: '#f59e0b',
-    },
-    rejected: {
-      title: 'Reservation Not Available',
-      message: 'We regret to inform you that your reservation request could not be accommodated at this time.',
-      color: '#ef4444',
+    confirmed: {
+      title: 'Booking Confirmed',
+      message: changeReason?.toLowerCase().includes('other channel')
+        ? 'Your booking has been confirmed! Your deposit was verified through other channels (phone, in-person verification, etc.). Your reservation is now confirmed. We look forward to hosting your event!'
+        : 'Your booking has been confirmed! Your deposit has been verified and your reservation is now confirmed. We look forward to hosting your event!',
+      color: '#10b981',
     },
     cancelled: {
       title: 'Reservation Cancelled',
       message: 'Your reservation has been cancelled. We hope to see you at another opportunity in the future.',
       color: '#6b7280',
     },
-    postponed: {
-      title: 'Reservation Postponed',
-      message: proposedDate 
-        ? 'You have proposed a new date for your reservation. Our admin team will review your proposal and respond shortly.'
-        : 'Your reservation has been postponed. Please propose an alternative date or cancel your reservation.',
-      color: '#f59e0b',
-    },
-    pending: {
-      title: proposedDate ? 'Proposal Received' : 'Reservation Status Update',
-      message: proposedDate 
-        ? 'Thank you for your proposal. We have received your request for a new date and will review it shortly.'
-        : 'Your reservation status has been updated.',
+    finished: {
+      title: 'Booking Completed',
+      message: 'Your booking has been completed. Thank you for choosing Hell University!',
       color: '#3b82f6',
     },
-    'checked-in': {
-      title: 'Check-In Confirmed',
-      message: 'Your check-in has been confirmed by our admin team. We look forward to hosting your event!',
-      color: '#10b981',
+    pending: {
+      title: 'Reservation Status Update',
+      message: 'Your reservation status has been updated.',
+      color: '#3b82f6',
     },
   }
 
@@ -1173,21 +1170,43 @@ function generateStatusChangeEmailHTML(
               </div>
               ` : ''}
               
-              ${status === 'pending_deposit' ? `
+              ${status === 'paid_deposit' ? `
+              <div style="margin: 30px 0; text-align: center; background-color: #f0fdf4; border: 2px solid #10b981; border-radius: 8px; padding: 20px;">
+                <p style="margin: 0 0 20px 0; color: #065f46; font-size: 16px; line-height: 1.6; font-weight: 600;">
+                  ✅ Deposit Evidence Uploaded Successfully
+                </p>
+                <p style="margin: 0 0 20px 0; color: #047857; font-size: 16px; line-height: 1.6;">
+                  Your deposit evidence has been uploaded successfully. Our admin team will review it and confirm your booking shortly. You will receive an email notification once the verification is complete.
+                </p>
+              </div>
+              ` : ''}
+              
+              ${status === 'pending_deposit' ? (() => {
+                const isRejection = booking.depositEvidenceUrl !== null && booking.depositEvidenceUrl !== ''
+                return `
               <div style="margin: 30px 0; text-align: center;">
                 <p style="margin: 0 0 20px 0; color: #333333; font-size: 16px; line-height: 1.6; font-weight: 600;">
-                  ⚠️ IMPORTANT: Deposit Re-upload Required
+                  ⚠️ IMPORTANT: ${isRejection ? 'Deposit Re-upload Required' : 'Deposit Required'}
                 </p>
                 <p style="margin: 0 0 20px 0; color: #333333; font-size: 16px; line-height: 1.6;">
-                  The previous deposit evidence you uploaded did not meet our requirements. Please upload a new deposit evidence to complete the booking process. The deposit must be uploaded before the reservation start date and time.
+                  ${isRejection
+                    ? 'The previous deposit evidence you uploaded did not meet our requirements. Please upload a new deposit evidence using the link below. The deposit must be uploaded before the reservation start date and time.'
+                    : 'Your reservation has been accepted! Please upload your deposit evidence to complete the booking process. The deposit must be uploaded before the reservation start date and time.'}
                 </p>
+              `
+              })() : ''}
+              
+              ${status === 'pending_deposit' ? `
                 ${depositUploadUrl ? `
                 <a href="${depositUploadUrl}" style="display: inline-block; background-color: ${statusInfo.color}; color: #ffffff; text-decoration: none; padding: 14px 28px; border-radius: 6px; font-size: 16px; font-weight: 600; margin-bottom: 15px;">
-                  Upload Deposit Evidence
+                  ${booking.depositEvidenceUrl ? 'Re-upload Deposit Evidence' : 'Upload Deposit Evidence'}
                 </a>
                 <p style="margin: 20px 0 0 0; color: #6b7280; font-size: 12px; line-height: 1.6;">
                   Or copy and paste this link into your browser:<br>
                   <a href="${depositUploadUrl}" style="color: #3b82f6; word-break: break-all;">${depositUploadUrl}</a>
+                </p>
+                <p style="margin: 15px 0 0 0; color: #6b7280; font-size: 12px; line-height: 1.6;">
+                  ⚠️ This link will expire at the start date and time of your booking (Bangkok timezone). Please upload your deposit before then.
                 </p>
                 ` : responseUrl ? `
                 <p style="margin: 0 0 15px 0; color: #ef4444; font-size: 14px; line-height: 1.6;">
@@ -1208,61 +1227,6 @@ function generateStatusChangeEmailHTML(
               </div>
               ` : ''}
               
-              ${responseUrl && status === 'checked-in' ? `
-              <div style="margin: 30px 0; text-align: center;">
-                <p style="margin: 0 0 20px 0; color: #333333; font-size: 16px; line-height: 1.6;">
-                  Your check-in has been confirmed! You can view your reservation details or propose a new date if needed:
-                </p>
-                <a href="${responseUrl}" style="display: inline-block; background-color: ${statusInfo.color}; color: #ffffff; text-decoration: none; padding: 14px 28px; border-radius: 6px; font-size: 16px; font-weight: 600;">
-                  View Reservation
-                </a>
-                <p style="margin: 20px 0 0 0; color: #6b7280; font-size: 12px; line-height: 1.6;">
-                  Or copy and paste this link into your browser:<br>
-                  <a href="${responseUrl}" style="color: #3b82f6; word-break: break-all;">${responseUrl}</a>
-                </p>
-              </div>
-              ` : ''}
-              
-              ${responseUrl && status === 'postponed' ? `
-              <div style="margin: 30px 0; text-align: center;">
-                <p style="margin: 0 0 20px 0; color: #333333; font-size: 16px; line-height: 1.6;">
-                  You can propose a new date, accept the proposed date, or cancel your reservation:
-                </p>
-                <a href="${responseUrl}" style="display: inline-block; background-color: ${statusInfo.color}; color: #ffffff; text-decoration: none; padding: 14px 28px; border-radius: 6px; font-size: 16px; font-weight: 600; margin-bottom: 15px;">
-                  Manage Reservation
-                </a>
-                ${depositUploadUrl && !booking.depositEvidenceUrl ? `
-                <p style="margin: 20px 0; color: #333333; font-size: 16px; line-height: 1.6; font-weight: 600;">
-                  ⚠️ Deposit Still Required
-                </p>
-                <p style="margin: 0 0 20px 0; color: #333333; font-size: 16px; line-height: 1.6;">
-                  Your reservation has been postponed, but you still need to upload your deposit evidence. You can upload it using the link below:
-                </p>
-                <a href="${depositUploadUrl}" style="display: inline-block; background-color: #10b981; color: #ffffff; text-decoration: none; padding: 14px 28px; border-radius: 6px; font-size: 16px; font-weight: 600; margin-bottom: 15px;">
-                  Upload Deposit Evidence
-                </a>
-                <p style="margin: 20px 0 0 0; color: #6b7280; font-size: 12px; line-height: 1.6;">
-                  Or copy and paste this link into your browser:<br>
-                  <a href="${depositUploadUrl}" style="color: #3b82f6; word-break: break-all;">${depositUploadUrl}</a>
-                </p>
-                ` : ''}
-                <p style="margin: ${depositUploadUrl && !booking.depositEvidenceUrl ? '20px' : '20px'} 0 0 0; color: #6b7280; font-size: 12px; line-height: 1.6;">
-                  Or copy and paste this link into your browser:<br>
-                  <a href="${responseUrl}" style="color: #3b82f6; word-break: break-all;">${responseUrl}</a>
-                </p>
-              </div>
-              ` : ''}
-              
-              ${status === 'paid_deposit' ? `
-              <div style="margin: 30px 0; text-align: center;">
-                <p style="margin: 0 0 20px 0; color: #333333; font-size: 16px; line-height: 1.6;">
-                  Our admin team is currently reviewing your deposit evidence. Once verified, you will receive a confirmation email with access to your reservation management page.
-                </p>
-                <p style="margin: 0; color: #6b7280; font-size: 14px; line-height: 1.6;">
-                  Please wait for our team to complete the verification process.
-                </p>
-              </div>
-              ` : ''}
               
               ${status === 'cancelled' ? `
               <p style="margin: 30px 0 0 0; color: #6b7280; font-size: 14px; line-height: 1.6;">
@@ -1304,18 +1268,21 @@ function generateStatusChangeEmailText(
     || 'https://huculturehub.com'
   const depositUploadUrl = responseUrl?.replace('/booking/response/', '/booking/deposit/') || null
 
+  // Determine if this is a successful upload (check changeReason) or a rejection
+  const isSuccessfulUpload = changeReason?.toLowerCase().includes('uploaded successfully') || 
+                             changeReason?.toLowerCase().includes('upload successfully')
+  const isRejection = booking.depositEvidenceUrl && !isSuccessfulUpload
+
   const statusMessages: Record<string, string> = {
-    accepted: 'Great news! Your reservation request has been accepted. Please upload your deposit evidence to complete the booking process.',
-    paid_deposit: 'Thank you! We have received your deposit evidence. Our admin team will verify it and confirm your check-in shortly.',
-    pending_deposit: 'The previous deposit evidence you uploaded did not meet our requirements. Please upload a new deposit evidence to complete the booking process.',
-    'checked-in': 'Your check-in has been confirmed by our admin team. We look forward to hosting your event!',
-    rejected: 'We regret to inform you that your reservation request could not be accommodated at this time.',
-    postponed: proposedDate 
-      ? 'You have proposed a new date for your reservation. Our admin team will review your proposal and respond shortly.'
-      : 'Your reservation has been postponed. Please propose an alternative date or cancel your reservation.',
-    pending: proposedDate 
-      ? 'Thank you for your proposal. We have received your request for a new date and will review it shortly.'
-      : 'Your reservation status has been updated.',
+    pending_deposit: isSuccessfulUpload
+      ? 'Your deposit evidence has been uploaded successfully. Our admin team will review it and confirm your booking shortly. You will receive an email notification once the verification is complete.'
+      : isRejection
+      ? 'The previous deposit evidence you uploaded did not meet our requirements. Please upload a new deposit evidence to complete the booking process. Please send a deposit evidence before start date.'
+      : 'Great news! Your reservation request has been accepted. Please upload your deposit evidence to complete the booking process. Please send a deposit evidence before start date.',
+    confirmed: 'Your booking has been confirmed! Your deposit has been verified and your reservation is now confirmed. We look forward to hosting your event!',
+    cancelled: 'Your reservation has been cancelled. We hope to see you at another opportunity in the future.',
+    finished: 'Your booking has been completed. Thank you for choosing Hell University!',
+    pending: 'Your reservation status has been updated.',
   }
 
   const message = statusMessages[status] || 'Your reservation status has been updated.'
@@ -1353,48 +1320,37 @@ function generateStatusChangeEmailText(
     text += `ADDITIONAL NOTES:\n${changeReason}\n\n`
   }
 
-  if (status === 'pending_deposit') {
-    text += `\n⚠️ IMPORTANT: Deposit Re-upload Required\n\n`
-    text += `The previous deposit evidence you uploaded did not meet our requirements. Please upload a new deposit evidence to complete the booking process. The deposit must be uploaded before the reservation start date and time.\n\n`
-    if (depositUploadUrl) {
-      text += `Upload Deposit Evidence: ${depositUploadUrl}\n\n`
-    } else if (responseUrl) {
-      text += `Please visit the booking page to upload your deposit evidence:\n${responseUrl}\n\n`
-    } else {
-      text += `Please contact us to receive your deposit upload link.\n\n`
-    }
-  }
-
-  if (status === 'accepted') {
-    text += `\n⚠️ IMPORTANT: Deposit Required\n\n`
-    text += `Your reservation has been accepted! Please upload your deposit evidence to complete the booking process. The deposit must be uploaded before the reservation start date and time.\n\n`
-    if (depositUploadUrl) {
-      text += `Upload Deposit Evidence: ${depositUploadUrl}\n\n`
-    } else if (responseUrl) {
-      text += `Please visit the booking page to upload your deposit evidence:\n${responseUrl}\n\n`
-    } else {
-      text += `Please contact us to receive your deposit upload link.\n\n`
-    }
-  }
-
-  if (responseUrl && status === 'checked-in') {
-    text += `Your check-in has been confirmed! You can view your reservation details or propose a new date if needed:\n`
-    text += `${responseUrl}\n\n`
-  }
-
-  if (responseUrl && status === 'postponed') {
-    text += `You can propose a new date, accept the proposed date, or cancel your reservation:\n`
-    text += `${responseUrl}\n\n`
-    if (depositUploadUrl && !booking.depositEvidenceUrl) {
-      text += `⚠️ IMPORTANT: Deposit Still Required\n\n`
-      text += `Your reservation has been postponed, but you still need to upload your deposit evidence. You can upload it using the link below:\n\n`
-      text += `Upload Deposit Evidence: ${depositUploadUrl}\n\n`
-    }
+  if (status === 'paid_deposit') {
+    text += `\n✅ Deposit Evidence Uploaded Successfully\n\n`
+    text += `Your deposit evidence has been uploaded successfully. Our admin team will review it and confirm your booking shortly. You will receive an email notification once the verification is complete.\n\n`
   }
   
-  if (status === 'paid_deposit') {
-    text += `\nOur admin team is currently reviewing your deposit evidence. Once verified, you will receive a confirmation email with access to your reservation management page.\n`
-    text += `Please wait for our team to complete the verification process.\n\n`
+  if (status === 'pending_deposit') {
+    const isRejection = booking.depositEvidenceUrl !== null && booking.depositEvidenceUrl !== ''
+    text += `\n⚠️ IMPORTANT: ${isRejection ? 'Deposit Re-upload Required' : 'Deposit Required'}\n\n`
+    text += isRejection
+      ? `The previous deposit evidence you uploaded did not meet our requirements. Please upload a new deposit evidence to complete the booking process. Please send a deposit evidence before start date.\n\n`
+      : `Your reservation has been accepted! Please upload your deposit evidence to complete the booking process. Please send a deposit evidence before start date.\n\n`
+    if (depositUploadUrl) {
+      text += `Upload Deposit Evidence: ${depositUploadUrl}\n\n`
+      text += `⚠️ This link will expire at the start date and time of your booking (Bangkok timezone). Please upload your deposit before then.\n\n`
+    } else if (responseUrl) {
+      text += `Please visit the booking page to upload your deposit evidence:\n${responseUrl}\n\n`
+    } else {
+      text += `Please contact us to receive your deposit upload link.\n\n`
+    }
+  }
+
+  if (status === 'confirmed') {
+    if (changeReason?.toLowerCase().includes('other channel')) {
+      text += `\nYour booking has been confirmed! Your deposit was verified through other channels (phone, in-person verification, etc.). Your reservation is now confirmed. We look forward to hosting your event!\n\n`
+    } else {
+      text += `\nYour booking has been confirmed! Your deposit has been verified and your reservation is now confirmed. We look forward to hosting your event!\n\n`
+    }
+  }
+
+  if (status === 'finished') {
+    text += `\nYour booking has been completed. Thank you for choosing Hell University!\n\n`
   }
 
   if (status === 'cancelled') {
@@ -2008,22 +1964,14 @@ export async function sendAdminStatusChangeNotification(
     endTime: booking.endTime,
   } as ReservationData)
 
+  // Determine if this is a deposit upload (user action) or rejection (admin action)
+  const isDepositUpload = changeReason?.toLowerCase().includes('uploaded') || 
+                          changeReason?.toLowerCase().includes('user uploaded')
+  const isDepositRejection = changeReason?.toLowerCase().includes('rejected') ||
+                             changeReason?.toLowerCase().includes('reject') ||
+                             (oldStatus === 'pending_deposit' && newStatus === 'pending_deposit' && !isDepositUpload && changedBy && changedBy !== 'system')
+
   const statusMessages: Record<string, { title: string; message: string; color: string }> = {
-    accepted: {
-      title: 'Booking Accepted',
-      message: 'A booking has been accepted.',
-      color: '#10b981',
-    },
-    rejected: {
-      title: 'Booking Rejected',
-      message: 'A booking has been rejected.',
-      color: '#ef4444',
-    },
-    postponed: {
-      title: 'Booking Postponed',
-      message: 'A booking has been postponed.',
-      color: '#f59e0b',
-    },
     cancelled: {
       title: 'Booking Cancelled',
       message: 'A booking has been cancelled.',
@@ -2034,19 +1982,31 @@ export async function sendAdminStatusChangeNotification(
       message: 'A booking has been marked as finished.',
       color: '#3b82f6',
     },
+    pending_deposit: {
+      title: oldStatus === 'pending' 
+        ? 'Booking Accepted - Deposit Required'
+        : 'Deposit Evidence Rejected',
+      message: oldStatus === 'pending'
+        ? 'A booking has been accepted. User needs to upload deposit evidence. A deposit upload link has been sent to the user.'
+        : 'Deposit evidence has been rejected. User will re-upload deposit evidence with a new token (expires at booking start date/time).',
+      color: oldStatus === 'pending' ? '#10b981' : '#f59e0b',
+    },
     paid_deposit: {
       title: 'Deposit Evidence Uploaded',
-      message: 'The user has uploaded deposit evidence. Please verify the deposit.',
-      color: '#8b5cf6',
+      message: 'User has uploaded deposit evidence. Please review and verify the deposit to confirm the booking.',
+      color: '#10b981',
     },
-    pending_deposit: {
-      title: 'Deposit Evidence Rejected',
-      message: 'Deposit evidence has been rejected. User will re-upload deposit evidence.',
-      color: '#f59e0b',
-    },
-    'checked-in': {
-      title: 'Booking Checked In',
-      message: 'The booking has been checked in and deposit verified.',
+    confirmed: {
+      title: oldStatus === 'pending_deposit' && changeReason?.toLowerCase().includes('other channel')
+        ? 'Booking Confirmed (Other Channel)'
+        : oldStatus === 'paid_deposit' && changeReason?.toLowerCase().includes('other channel')
+        ? 'Booking Confirmed (Other Channel)'
+        : 'Booking Confirmed',
+      message: oldStatus === 'pending_deposit' && changeReason?.toLowerCase().includes('other channel')
+        ? 'A booking has been confirmed. Deposit was verified through other channels (phone, in-person, etc.), not through system upload.'
+        : oldStatus === 'paid_deposit' && changeReason?.toLowerCase().includes('other channel')
+        ? 'A booking has been confirmed. Deposit was verified through other channels instead of reviewing the uploaded evidence.'
+        : 'A booking has been confirmed. Deposit has been verified.',
       color: '#10b981',
     },
   }
@@ -2169,7 +2129,7 @@ export async function sendAdminStatusChangeNotification(
               </div>
               ` : ''}
               
-              ${newStatus === 'paid_deposit' ? `
+              ${newStatus === 'pending_deposit' && oldStatus === 'pending_deposit' && booking.depositEvidenceUrl ? `
               <div style="margin: 30px 0; text-align: center; background-color: #f3f4f6; padding: 25px; border-radius: 8px;">
                 <p style="margin: 0 0 20px 0; color: #111827; font-size: 16px; line-height: 1.6; font-weight: 600;">
                   ⚠️ Action Required: Verify Deposit Evidence
@@ -2224,12 +2184,35 @@ New Status: ${newStatus}
 ${proposedDateText ? `Proposed Date: ${proposedDateText}\n` : ''}${changedBy ? `Changed By: ${changedBy}\n` : ''}
 ${changeReason ? `\nCHANGE REASON:\n${changeReason}\n` : ''}`
 
-  if (newStatus === 'paid_deposit') {
-    textContent += `\n⚠️ ACTION REQUIRED: VERIFY DEPOSIT EVIDENCE\n\n`
-    textContent += `The user has uploaded deposit evidence. Please review and verify the deposit in the admin panel.\n\n`
+  if (newStatus === 'pending_deposit' && oldStatus === 'pending') {
+    textContent += `\n✅ BOOKING ACCEPTED - DEPOSIT UPLOAD LINK SENT\n\n`
+    textContent += `The booking has been accepted. A deposit upload link has been sent to the user. The token expires at the booking start date/time (Bangkok timezone).\n\n`
     textContent += `Admin Panel: ${adminBookingsUrl}\n`
     textContent += `Booking ID: ${booking.referenceNumber || booking.id}\n`
     textContent += `Or search by email: ${booking.email}\n\n`
+  } else if (newStatus === 'pending_deposit' && oldStatus === 'pending_deposit') {
+    // Determine if this is a deposit upload or rejection
+    const isDepositUpload = changeReason?.toLowerCase().includes('uploaded') || 
+                           changeReason?.toLowerCase().includes('user uploaded')
+    
+    if (isDepositUpload) {
+      textContent += `\n✅ DEPOSIT EVIDENCE UPLOADED - REVIEW REQUIRED\n\n`
+      textContent += `User has uploaded deposit evidence. Please review and verify the deposit to confirm the booking.\n\n`
+      textContent += `Admin Panel: ${adminBookingsUrl}\n`
+      textContent += `Booking ID: ${booking.referenceNumber || booking.id}\n`
+      textContent += `Or search by email: ${booking.email}\n\n`
+    } else {
+    textContent += `\n⚠️ DEPOSIT EVIDENCE REJECTED - NEW TOKEN GENERATED\n\n`
+    textContent += `The deposit evidence has been rejected. A new token has been generated for the user to re-upload. The new token expires at the booking start date/time (Bangkok timezone).\n\n`
+    textContent += `Admin Panel: ${adminBookingsUrl}\n`
+    textContent += `Booking ID: ${booking.referenceNumber || booking.id}\n`
+    textContent += `Or search by email: ${booking.email}\n\n`
+    }
+  } else if (newStatus === 'confirmed' && oldStatus === 'pending_deposit') {
+    textContent += `\n✅ DEPOSIT VERIFIED - BOOKING CONFIRMED\n\n`
+    textContent += `The deposit has been verified and the booking is now confirmed.\n\n`
+    textContent += `Admin Panel: ${adminBookingsUrl}\n`
+    textContent += `Booking ID: ${booking.referenceNumber || booking.id}\n\n`
   }
 
   textContent += `This is an automated notification of a booking status change.
@@ -2520,7 +2503,7 @@ export async function sendAdminBookingDeletionNotification(
               </div>
               
               <p style="margin: 30px 0 0 0; color: #6b7280; font-size: 14px; line-height: 1.6;">
-                This booking has been permanently removed from the system. ${booking.status !== "rejected" && booking.status !== "cancelled" && booking.status !== "finished" ? (booking.status === "accepted" || booking.status === "checked-in" ? "A cancellation notification has been sent to the user." : "A rejection notification has been sent to the user.") : booking.status === "finished" ? "No user notification was sent as the booking was already finished (event has passed)." : "No user notification was sent as the booking was already rejected or cancelled."}
+                This booking has been permanently removed from the system. ${booking.status !== "cancelled" && booking.status !== "finished" ? "A cancellation notification has been sent to the user." : booking.status === "finished" ? "No user notification was sent as the booking was already finished (event has passed)." : "No user notification was sent as the booking was already cancelled."}
               </p>
               
               <p style="margin: 20px 0 0 0; color: #6b7280; font-size: 14px; line-height: 1.6;">
@@ -2550,7 +2533,7 @@ Date & Time: ${formattedDateRange}
 Previous Status: ${booking.status}
 ${deletedBy ? `Deleted By: ${deletedBy}\n` : ''}
 
-This booking has been permanently removed from the system. ${booking.status !== "rejected" && booking.status !== "cancelled" && booking.status !== "finished" ? (booking.status === "accepted" || booking.status === "checked-in" ? "A cancellation notification has been sent to the user." : "A rejection notification has been sent to the user.") : booking.status === "finished" ? "No user notification was sent as the booking was already finished (event has passed)." : "No user notification was sent as the booking was already rejected or cancelled."}
+This booking has been permanently removed from the system. ${booking.status !== "cancelled" && booking.status !== "finished" ? "A cancellation notification has been sent to the user." : booking.status === "finished" ? "No user notification was sent as the booking was already finished (event has passed)." : "No user notification was sent as the booking was already cancelled."}
 
 Best regards,
 Hell University Reservation System

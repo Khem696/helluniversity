@@ -50,7 +50,7 @@ export async function GET(
       sql: `
         SELECT 
           e.id, e.title, e.description, e.image_id, e.event_date,
-          e.start_date, e.end_date, e.location, e.created_at, e.updated_at,
+          e.start_date, e.end_date, e.created_at, e.updated_at,
           i.blob_url as image_url, i.title as image_title
         FROM events e
         LEFT JOIN images i ON e.image_id = i.id
@@ -113,14 +113,13 @@ export async function PATCH(
     }
     
     const body = await request.json()
-    const { title, description, image_id, event_date, start_date, end_date, location } = body
+    const { title, description, image_id, event_date, start_date, end_date } = body
     
     await logger.debug('Event update data', {
       eventId: id,
       hasTitle: title !== undefined,
       hasDescription: description !== undefined,
       hasImageId: image_id !== undefined,
-      hasLocation: location !== undefined
     })
 
     const db = getTursoClient()
@@ -140,7 +139,18 @@ export async function PATCH(
       args.push(description || null)
     }
 
+    // Handle poster image replacement - check for orphaned old image
+    let oldImageId: string | null = null
     if (image_id !== undefined) {
+      // Get the old image_id before updating
+      const oldEventResult = await db.execute({
+        sql: "SELECT image_id FROM events WHERE id = ?",
+        args: [id],
+      })
+      if (oldEventResult.rows.length > 0) {
+        oldImageId = (oldEventResult.rows[0] as any).image_id
+      }
+      
       updates.push("image_id = ?")
       args.push(image_id || null)
     }
@@ -182,11 +192,6 @@ export async function PATCH(
       args.push(convertToTimestamp(end_date))
     }
 
-    if (location !== undefined) {
-      updates.push("location = ?")
-      args.push(location || null)
-    }
-
     if (updates.length === 0) {
       await logger.warn('Event update rejected: no fields to update', { eventId: id })
       return errorResponse(
@@ -209,12 +214,86 @@ export async function PATCH(
     
     await logger.info('Event updated in database', { eventId: id })
 
+    // If poster image was replaced, check if old image is orphaned and delete it
+    if (image_id !== undefined && oldImageId && oldImageId !== image_id) {
+      await logger.info('Poster image replaced, checking if old image is orphaned', { 
+        eventId: id, 
+        oldImageId, 
+        newImageId: image_id 
+      })
+      
+      // Check if old image is still used elsewhere
+      const usageCheck = await db.execute({
+        sql: `
+          SELECT 
+            (SELECT COUNT(*) FROM events WHERE image_id = ?) as event_count,
+            (SELECT COUNT(*) FROM event_images WHERE image_id = ?) as event_image_count
+        `,
+        args: [oldImageId, oldImageId],
+      })
+
+      const usage = usageCheck.rows[0] as any
+      const isStillUsed = (usage.event_count > 0) || (usage.event_image_count > 0)
+
+      if (!isStillUsed) {
+        // Old image is orphaned - delete it and its blob
+        await logger.info('Old poster image is orphaned, deleting image record and blob', { imageId: oldImageId })
+        
+        try {
+          // Get blob URL before deleting
+          const imageResult = await db.execute({
+            sql: "SELECT blob_url FROM images WHERE id = ?",
+            args: [oldImageId],
+          })
+
+          if (imageResult.rows.length > 0) {
+            const blobUrl = (imageResult.rows[0] as any).blob_url
+            
+            // Delete blob from storage
+            if (blobUrl) {
+              try {
+                const { deleteImage } = await import("@/lib/blob")
+                await deleteImage(blobUrl)
+                await logger.info('Deleted orphaned poster image blob', { imageId: oldImageId, blobUrl })
+              } catch (blobError) {
+                await logger.error('Failed to delete orphaned poster image blob', 
+                  blobError instanceof Error ? blobError : new Error(String(blobError)),
+                  { imageId: oldImageId, blobUrl }
+                )
+                // Continue with database deletion even if blob deletion fails
+              }
+            }
+          }
+
+          // Delete image record
+          await db.execute({
+            sql: "DELETE FROM images WHERE id = ?",
+            args: [oldImageId],
+          })
+          
+          await logger.info('Deleted orphaned poster image record', { imageId: oldImageId })
+        } catch (deleteError) {
+          await logger.error('Failed to delete orphaned poster image', 
+            deleteError instanceof Error ? deleteError : new Error(String(deleteError)),
+            { imageId: oldImageId }
+          )
+          // Don't fail the request - the event update succeeded
+        }
+      } else {
+        await logger.info('Old poster image is still in use, keeping image record', { 
+          imageId: oldImageId,
+          eventCount: usage.event_count,
+          eventImageCount: usage.event_image_count
+        })
+      }
+    }
+
     // Fetch updated event with poster image
     const eventResult = await db.execute({
       sql: `
         SELECT 
           e.id, e.title, e.description, e.image_id, e.event_date,
-          e.start_date, e.end_date, e.location, e.created_at, e.updated_at,
+          e.start_date, e.end_date, e.created_at, e.updated_at,
           i.blob_url as image_url, i.title as image_title
         FROM events e
         LEFT JOIN images i ON e.image_id = i.id

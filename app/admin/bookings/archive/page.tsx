@@ -81,7 +81,7 @@ interface Booking {
   introduction: string | null
   biography: string | null
   special_requests: string | null
-  status: "pending" | "accepted" | "rejected" | "postponed" | "cancelled" | "finished" | "checked-in"
+  status: "pending" | "pending_deposit" | "confirmed" | "cancelled" | "finished"
   admin_notes: string | null
   response_token: string | null
   token_expires_at: number | null
@@ -89,6 +89,7 @@ interface Booking {
   proposed_end_date: number | null
   user_response: string | null
   response_date: number | null
+  deposit_evidence_url: string | null
   created_at: number
   updated_at: number
 }
@@ -113,6 +114,12 @@ export default function BookingsArchivePage() {
   const [statusDialogOpen, setStatusDialogOpen] = useState(false)
   const [statusFilter, setStatusFilter] = useState<string>("all")
   const [emailFilter, setEmailFilter] = useState("")
+  const [referenceNumberFilter, setReferenceNumberFilter] = useState("")
+  const [nameFilter, setNameFilter] = useState("")
+  const [phoneFilter, setPhoneFilter] = useState("")
+  const [eventTypeFilter, setEventTypeFilter] = useState<string>("all")
+  const [sortBy, setSortBy] = useState<"created_at" | "start_date" | "name" | "updated_at">("created_at")
+  const [sortOrder, setSortOrder] = useState<"ASC" | "DESC">("DESC")
   const [saving, setSaving] = useState(false)
   const [newStatus, setNewStatus] = useState<string>("")
   const [proposedDateRange, setProposedDateRange] = useState<"single" | "multiple">("single")
@@ -148,6 +155,16 @@ export default function BookingsArchivePage() {
     }
   }, [status])
 
+  // Event types for filter dropdown
+  const eventTypes = [
+    { value: "all", label: "All Event Types" },
+    { value: "Arts & Design Coaching", label: "Arts & Design Coaching Workshop" },
+    { value: "Seminar & Workshop", label: "Seminar & Workshop" },
+    { value: "Family Gathering", label: "Family Gathering" },
+    { value: "Holiday Festive", label: "Holiday Festive" },
+    { value: "Other", label: "Other" },
+  ]
+
   // Fetch bookings
   const fetchBookings = async () => {
     try {
@@ -160,6 +177,20 @@ export default function BookingsArchivePage() {
       if (emailFilter) {
         params.append("email", emailFilter)
       }
+      if (referenceNumberFilter) {
+        params.append("referenceNumber", referenceNumberFilter)
+      }
+      if (nameFilter) {
+        params.append("name", nameFilter)
+      }
+      if (phoneFilter) {
+        params.append("phone", phoneFilter)
+      }
+      if (eventTypeFilter !== "all") {
+        params.append("eventType", eventTypeFilter)
+      }
+      params.append("sortBy", sortBy)
+      params.append("sortOrder", sortOrder)
       params.append("limit", "1000")
 
       const response = await fetch(`/api/admin/bookings?${params.toString()}`)
@@ -184,7 +215,7 @@ export default function BookingsArchivePage() {
     if (session) {
       fetchBookings()
     }
-  }, [session, statusFilter, emailFilter])
+  }, [session, statusFilter, emailFilter, referenceNumberFilter, nameFilter, phoneFilter, eventTypeFilter, sortBy, sortOrder])
 
   // Fetch booking details and history
   const fetchBookingDetails = async (bookingId: string) => {
@@ -216,7 +247,7 @@ export default function BookingsArchivePage() {
   const handleDeleteBooking = async (bookingId: string) => {
     // Find the booking to check its status
     const booking = bookings.find(b => b.id === bookingId)
-    const statusText = booking?.status === "rejected" || booking?.status === "cancelled" || booking?.status === "finished"
+    const statusText = booking?.status === "cancelled" || booking?.status === "finished"
       ? booking?.status === "finished"
         ? "Only admin will be notified. No user email will be sent as the event has already finished."
         : "Only admin will be notified of this deletion."
@@ -296,8 +327,8 @@ export default function BookingsArchivePage() {
     // Get available actions from state machine
     const availableActions = getAvailableActions(
       selectedBooking.status as any,
-      Boolean(selectedBooking.proposed_date),
-      Boolean(selectedBooking.deposit_evidence_url)
+      Boolean(selectedBooking.deposit_evidence_url),
+      false // isDateInPast - not relevant for archive restoration
     )
     
     // Find the action that matches the target status
@@ -479,17 +510,15 @@ export default function BookingsArchivePage() {
   const getStatusBadge = (status: string) => {
     const variants: Record<string, "default" | "secondary" | "destructive" | "outline"> = {
       finished: "default",
-      rejected: "destructive",
       cancelled: "destructive",
     }
     const colors: Record<string, string> = {
       finished: "bg-gray-100 text-gray-800 border-gray-300",
-      rejected: "bg-red-100 text-red-800 border-red-300",
       cancelled: "bg-orange-100 text-orange-800 border-orange-300",
     }
     return (
       <Badge className={colors[status] || ""} variant={variants[status] || "default"}>
-        {status.charAt(0).toUpperCase() + status.slice(1)}
+        {status === "pending_deposit" ? "Pending Deposit" : status === "confirmed" ? "Confirmed" : status.charAt(0).toUpperCase() + status.slice(1)}
       </Badge>
     )
   }
@@ -558,31 +587,86 @@ export default function BookingsArchivePage() {
         <div className="flex items-center gap-3">
           <Archive className="w-8 h-8 text-gray-600" />
           <div>
-            <h1 className="text-4xl font-bold text-gray-900 mb-2">Booking Archive</h1>
-            <p className="text-gray-600">View finished, rejected, and cancelled reservations</p>
+            <h1 className="text-2xl sm:text-3xl lg:text-4xl font-bold text-gray-900 mb-2">Booking Archive</h1>
+            <p className="text-gray-600">View finished and cancelled reservations</p>
           </div>
         </div>
       </div>
 
       {/* Filters */}
-      <div className="mb-6 flex gap-4">
+      <div className="mb-6 space-y-4">
+        {/* First Row: Status, Event Type, Sort By, Sort Order */}
+        <div className="flex flex-col sm:flex-row gap-4">
         <Select value={statusFilter} onValueChange={setStatusFilter}>
-          <SelectTrigger className="w-48">
+            <SelectTrigger className="w-full sm:w-48">
             <SelectValue placeholder="Filter by status" />
           </SelectTrigger>
           <SelectContent>
             <SelectItem value="all">All Statuses</SelectItem>
             <SelectItem value="finished">Finished</SelectItem>
-            <SelectItem value="rejected">Rejected</SelectItem>
             <SelectItem value="cancelled">Cancelled</SelectItem>
           </SelectContent>
         </Select>
+          <Select value={eventTypeFilter} onValueChange={setEventTypeFilter}>
+            <SelectTrigger className="w-full sm:w-48">
+              <SelectValue placeholder="Filter by event type" />
+            </SelectTrigger>
+            <SelectContent>
+              {eventTypes.map((type) => (
+                <SelectItem key={type.value} value={type.value}>
+                  {type.label}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          <Select value={sortBy} onValueChange={(value) => setSortBy(value as typeof sortBy)}>
+            <SelectTrigger className="w-full sm:w-48">
+              <SelectValue placeholder="Sort by" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="created_at">Created Date</SelectItem>
+              <SelectItem value="start_date">Start Date</SelectItem>
+              <SelectItem value="name">Name</SelectItem>
+              <SelectItem value="updated_at">Updated Date</SelectItem>
+            </SelectContent>
+          </Select>
+          <Select value={sortOrder} onValueChange={(value) => setSortOrder(value as typeof sortOrder)}>
+            <SelectTrigger className="w-full sm:w-32">
+              <SelectValue placeholder="Order" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="DESC">Descending</SelectItem>
+              <SelectItem value="ASC">Ascending</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
+        {/* Second Row: Search Fields */}
+        <div className="flex flex-col sm:flex-row gap-4">
+          <Input
+            placeholder="Search by reference number..."
+            value={referenceNumberFilter}
+            onChange={(e) => setReferenceNumberFilter(e.target.value)}
+            className="w-full sm:w-48"
+          />
+          <Input
+            placeholder="Search by name..."
+            value={nameFilter}
+            onChange={(e) => setNameFilter(e.target.value)}
+            className="w-full sm:w-48"
+          />
+          <Input
+            placeholder="Search by phone..."
+            value={phoneFilter}
+            onChange={(e) => setPhoneFilter(e.target.value)}
+            className="w-full sm:w-48"
+          />
         <Input
           placeholder="Filter by email..."
           value={emailFilter}
           onChange={(e) => setEmailFilter(e.target.value)}
-          className="w-64"
+            className="w-full sm:w-64"
         />
+        </div>
       </div>
 
       {/* Bookings Table */}
@@ -708,7 +792,7 @@ export default function BookingsArchivePage() {
 
       {/* View Booking Dialog */}
       <Dialog open={viewDialogOpen} onOpenChange={setViewDialogOpen}>
-        <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
+        <DialogContent className="max-w-[95vw] sm:max-w-4xl max-h-[90vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>Booking Details</DialogTitle>
             <DialogDescription>
@@ -723,7 +807,7 @@ export default function BookingsArchivePage() {
                   {getStatusBadge(selectedBooking.status)}
                 </div>
                 <div className="flex items-center gap-2">
-                  {/* Only show Update Status for cancelled/rejected (can re-open) */}
+                  {/* Only show Update Status for cancelled (can restore) */}
                   {selectedBooking.status !== "finished" && (
                     <Button
                       onClick={() => {
@@ -752,7 +836,7 @@ export default function BookingsArchivePage() {
               {/* Contact Information */}
               <div>
                 <h3 className="text-lg font-semibold mb-3">Contact Information</h3>
-                <div className="grid grid-cols-2 gap-4">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                   <div>
                     <Label>Name</Label>
                     <div className="text-sm text-gray-900">{selectedBooking.name}</div>
@@ -775,7 +859,7 @@ export default function BookingsArchivePage() {
               {/* Event Details */}
               <div>
                 <h3 className="text-lg font-semibold mb-3">Event Details</h3>
-                <div className="grid grid-cols-2 gap-4">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                   <div>
                     <Label>Event Type</Label>
                     <div className="text-sm text-gray-900">
@@ -893,7 +977,7 @@ export default function BookingsArchivePage() {
 
       {/* Update Status Dialog */}
       <Dialog open={statusDialogOpen} onOpenChange={setStatusDialogOpen}>
-        <DialogContent className="max-w-2xl">
+        <DialogContent className="max-w-[95vw] sm:max-w-2xl max-h-[90vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>Update Booking Status</DialogTitle>
             <DialogDescription>
@@ -911,12 +995,12 @@ export default function BookingsArchivePage() {
                 </div>
               )}
               
-              {/* Show available actions for cancelled/rejected */}
+              {/* Show available actions for cancelled (archive restoration) */}
               {selectedBooking.status !== "finished" && (() => {
                 const availableActions = getAvailableActions(
                   selectedBooking.status as any,
-                  Boolean(selectedBooking.proposed_date),
-                  Boolean(selectedBooking.deposit_evidence_url)
+                  Boolean(selectedBooking.deposit_evidence_url),
+                  false // isDateInPast - not relevant for archive restoration
                 )
                 
                 if (availableActions.length === 0) {

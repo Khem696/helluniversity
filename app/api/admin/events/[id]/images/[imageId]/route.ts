@@ -112,12 +112,91 @@ export async function DELETE(
 
     const db = getTursoClient()
 
+    // Get the image_id before deleting the event_images record
+    const eventImageResult = await db.execute({
+      sql: "SELECT image_id FROM event_images WHERE id = ?",
+      args: [imageId],
+    })
+
+    if (eventImageResult.rows.length === 0) {
+      await logger.warn('Event image not found', { eventId, imageId })
+      return notFoundResponse('Event image', { requestId })
+    }
+
+    const linkedImageId = (eventImageResult.rows[0] as any).image_id
+
+    // Delete the event_images link
     await db.execute({
       sql: "DELETE FROM event_images WHERE id = ?",
       args: [imageId],
     })
     
-    await logger.info('Event image deleted successfully', { eventId, imageId })
+    await logger.info('Event image link deleted', { eventId, imageId, linkedImageId })
+
+    // Check if the image is still used elsewhere (other events or event_images)
+    const usageCheck = await db.execute({
+      sql: `
+        SELECT 
+          (SELECT COUNT(*) FROM events WHERE image_id = ?) as event_count,
+          (SELECT COUNT(*) FROM event_images WHERE image_id = ?) as event_image_count
+      `,
+      args: [linkedImageId, linkedImageId],
+    })
+
+    const usage = usageCheck.rows[0] as any
+    const isStillUsed = (usage.event_count > 0) || (usage.event_image_count > 0)
+
+    if (!isStillUsed) {
+      // Image is orphaned - delete it and its blob
+      await logger.info('Image is orphaned, deleting image record and blob', { imageId: linkedImageId })
+      
+      try {
+        // Get blob URL before deleting
+        const imageResult = await db.execute({
+          sql: "SELECT blob_url FROM images WHERE id = ?",
+          args: [linkedImageId],
+        })
+
+        if (imageResult.rows.length > 0) {
+          const blobUrl = (imageResult.rows[0] as any).blob_url
+          
+          // Delete blob from storage
+          if (blobUrl) {
+            try {
+              const { deleteImage } = await import("@/lib/blob")
+              await deleteImage(blobUrl)
+              await logger.info('Deleted orphaned image blob', { imageId: linkedImageId, blobUrl })
+            } catch (blobError) {
+              await logger.error('Failed to delete orphaned image blob', 
+                blobError instanceof Error ? blobError : new Error(String(blobError)),
+                { imageId: linkedImageId, blobUrl }
+              )
+              // Continue with database deletion even if blob deletion fails
+            }
+          }
+        }
+
+        // Delete image record
+        await db.execute({
+          sql: "DELETE FROM images WHERE id = ?",
+          args: [linkedImageId],
+        })
+        
+        await logger.info('Deleted orphaned image record', { imageId: linkedImageId })
+      } catch (deleteError) {
+        await logger.error('Failed to delete orphaned image', 
+          deleteError instanceof Error ? deleteError : new Error(String(deleteError)),
+          { imageId: linkedImageId }
+        )
+        // Don't fail the request - the link is already deleted
+      }
+    } else {
+      await logger.info('Image is still in use, keeping image record', { 
+        imageId: linkedImageId,
+        eventCount: usage.event_count,
+        eventImageCount: usage.event_image_count
+      })
+    }
 
     return successResponse(
       {

@@ -43,13 +43,21 @@ export async function GET(request: Request) {
     const archive = searchParams.get("archive") === "true"
     const status = searchParams.get("status") as
       | "pending"
-      | "accepted"
-      | "rejected"
-      | "postponed"
+      | "pending_deposit"
+      | "confirmed"
+      | "cancelled"
+      | "finished"
       | null
     const limit = parseInt(searchParams.get("limit") || "50")
     const offset = parseInt(searchParams.get("offset") || "0")
     const email = searchParams.get("email") || undefined
+    const referenceNumber = searchParams.get("referenceNumber") || undefined
+    const name = searchParams.get("name") || undefined
+    const phone = searchParams.get("phone") || undefined
+    const eventType = searchParams.get("eventType") || undefined
+    const sortBy = (searchParams.get("sortBy") as "created_at" | "start_date" | "name" | "updated_at") || undefined
+    const sortOrder = (searchParams.get("sortOrder") as "ASC" | "DESC") || undefined
+    const showOverlappingOnly = searchParams.get("showOverlappingOnly") === "true"
 
     // Parse date filters (Unix timestamps)
     const startDateFrom = searchParams.get("startDateFrom")
@@ -65,18 +73,31 @@ export async function GET(request: Request) {
       limit,
       offset,
       hasEmail: !!email,
-      hasDateFilters: !!(startDateFrom || startDateTo)
+      hasReferenceNumber: !!referenceNumber,
+      hasName: !!name,
+      hasPhone: !!phone,
+      hasEventType: !!eventType,
+      hasDateFilters: !!(startDateFrom || startDateTo),
+      sortBy,
+      sortOrder
     })
     
     const result = await listBookings({
       status: status || undefined,
-      statuses: archive ? ["finished", "rejected", "cancelled"] : undefined,
+      statuses: archive ? ["finished", "cancelled"] : undefined,
       excludeArchived: !archive, // Exclude archived when not requesting archive
       limit,
       offset,
       email,
+      referenceNumber,
+      name,
+      phone,
+      eventType,
       startDateFrom,
       startDateTo,
+      sortBy,
+      sortOrder,
+      showOverlappingOnly,
     })
     
     await logger.info('Bookings list retrieved', { 
@@ -116,6 +137,7 @@ export async function GET(request: Request) {
       deposit_evidence_url: booking.depositEvidenceUrl,
       deposit_verified_at: booking.depositVerifiedAt,
       deposit_verified_by: booking.depositVerifiedBy,
+      deposit_verified_from_other_channel: booking.depositVerifiedFromOtherChannel || false,
       created_at: booking.createdAt,
       updated_at: booking.updatedAt,
     }))

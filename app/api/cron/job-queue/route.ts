@@ -9,7 +9,7 @@
 
 import { NextResponse } from 'next/server'
 import { processJobQueue } from '@/lib/job-queue'
-import { successResponse, errorResponse, ErrorCodes } from '@/lib/api-response'
+import { withErrorHandling, successResponse, errorResponse, ErrorCodes } from '@/lib/api-response'
 import { createRequestLogger } from '@/lib/logger'
 import { registerAllJobHandlers } from '@/lib/job-handlers'
 
@@ -32,10 +32,10 @@ export async function POST(request: Request) {
 }
 
 async function handleJobQueue(request: Request) {
-  const requestId = crypto.randomUUID()
-  const logger = createRequestLogger(requestId, '/api/cron/job-queue')
-  
-  try {
+  return withErrorHandling(async () => {
+    const requestId = crypto.randomUUID()
+    const logger = createRequestLogger(requestId, '/api/cron/job-queue')
+    
     await logger.info('Job queue cron job started')
     
     // Verify Vercel cron secret
@@ -102,21 +102,6 @@ async function handleJobQueue(request: Request) {
       },
       { requestId }
     )
-  } catch (error) {
-    await logger.error(
-      'Job queue processing failed',
-      error instanceof Error ? error : new Error(String(error))
-    )
-    
-    console.error(`[job-queue] Job queue processing failed:`, error)
-    
-    return errorResponse(
-      ErrorCodes.INTERNAL_ERROR,
-      'Failed to process job queue',
-      error instanceof Error ? error.message : undefined,
-      500,
-      { requestId }
-    )
-  }
+  }, { endpoint: '/api/cron/job-queue' })
 }
 

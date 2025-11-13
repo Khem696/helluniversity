@@ -84,7 +84,7 @@ export async function GET() {
       'event_images',
       'email_queue',
       'email_sent_log',
-      'email_event_log'
+      'settings'
     ]
     
     // SQLite IN clause with string literals
@@ -101,12 +101,41 @@ export async function GET() {
       tablesStatus[table] = existingTables.includes(table)
     })
     
+    // Check bookings table CHECK constraint if it exists
+    let checkConstraintValid = true
+    let checkConstraintMessage = ""
+    
+    if (existingTables.includes('bookings')) {
+      const tableInfo = await db.execute(`
+        SELECT sql FROM sqlite_master 
+        WHERE type='table' AND name='bookings'
+      `)
+      
+      const createSql = tableInfo.rows[0] ? (tableInfo.rows[0] as any).sql : ""
+      const hasNewStatuses = createSql.includes("'pending_deposit'") && 
+                             createSql.includes("'confirmed'") && 
+                             !createSql.includes("'accepted'") && 
+                             !createSql.includes("'rejected'") && 
+                             !createSql.includes("'checked-in'") &&
+                             !createSql.includes("'postponed'") &&
+                             !createSql.includes("'paid_deposit'")
+      
+      if (!hasNewStatuses && createSql.includes("CHECK")) {
+        checkConstraintValid = false
+        checkConstraintMessage = "Bookings table has old CHECK constraint (needs migration)"
+      } else if (hasNewStatuses) {
+        checkConstraintMessage = "CHECK constraint is valid"
+      }
+    }
+    
     const allTablesExist = existingTables.length === requiredTables.length
     const missingTables = requiredTables.filter(table => !existingTables.includes(table))
     
     await logger.info('Database status checked', {
       allTablesExist,
-      missingTablesCount: missingTables.length
+      missingTablesCount: missingTables.length,
+      checkConstraintValid,
+      checkConstraintMessage
     })
     
     return successResponse(
@@ -114,6 +143,8 @@ export async function GET() {
         tables: tablesStatus,
         allTablesExist,
         missingTables,
+        checkConstraintValid,
+        checkConstraintMessage,
       },
       { requestId }
     )

@@ -24,7 +24,6 @@ interface EventData {
   image_url: string | null
   start_date: number | null
   end_date: number | null
-  location: string | null
   in_event_photos: Array<{
     id: string
     blob_url: string
@@ -152,7 +151,6 @@ export function EventModalViewer({ eventId, isOpen, onClose }: EventModalViewerP
                 {eventData.start_date && (
                   <span>📅 {formatDate(eventData.start_date)}</span>
                 )}
-                {eventData.location && <span>📍 {eventData.location}</span>}
               </div>
             </div>
 

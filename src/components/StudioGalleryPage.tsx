@@ -1,7 +1,7 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
-import { ChevronDown } from "lucide-react";
+import { useEffect, useMemo, useRef, useState, type CSSProperties, lazy, Suspense, useCallback } from "react";
+import { ChevronDown, Loader2 } from "lucide-react";
 import { ImageWithFallback } from "./figma/ImageWithFallback";
 import { withBasePath } from "@/lib/utils";
 import { ARTWORK_STUDIO_IMAGES, BUILDING_STUDIO_IMAGES, GALLERY_IMAGES_PUBLIC } from "@/lib/imageManifests";
@@ -14,7 +14,29 @@ import {
   CarouselPrevious,
   type CarouselApi,
 } from "./ui/carousel";
-import { AISpaceGenerator } from "./AISpaceGenerator";
+
+// Lazy load AISpaceGenerator component for better performance
+const AISpaceGenerator = lazy(() => import("./AISpaceGenerator").then(module => ({ default: module.AISpaceGenerator })));
+
+// Skeleton loader component for progressive loading
+function AISpaceGeneratorSkeleton() {
+  return (
+    <div className="flex flex-col animate-pulse" style={{ gap: 'clamp(0.75rem, 0.9vw, 1rem)' }}>
+      {/* reCAPTCHA skeleton */}
+      <div className="flex flex-col" style={{ gap: 'clamp(0.375rem, 0.5vw, 0.5rem)' }}>
+        <div className="h-4 bg-gray-200 rounded w-3/4"></div>
+        <div className="h-20 bg-gray-200 rounded"></div>
+      </div>
+      {/* Event type selector skeleton */}
+      <div className="flex flex-col" style={{ gap: 'clamp(0.25rem, 0.3vw, 0.375rem)' }}>
+        <div className="h-4 bg-gray-200 rounded w-2/3"></div>
+        <div className="h-12 bg-gray-200 rounded"></div>
+      </div>
+      {/* Generate button skeleton */}
+      <div className="h-10 bg-gray-200 rounded w-24"></div>
+    </div>
+  )
+}
 
 type Indices = { a: number; b: number; c: number };
 
@@ -23,6 +45,18 @@ export function StudioGalleryPage() {
   const [buildingImages, setBuildingImages] = useState<string[]>([]);
   const [galleryImages, setGalleryImages] = useState<string[]>([]);
   const [isLoadingImages, setIsLoadingImages] = useState(true);
+  const [aiSpaceGenOpen, setAiSpaceGenOpen] = useState(false);
+  const [isPreloadingAI, setIsPreloadingAI] = useState(false);
+  const preloadTimerRef = useRef<NodeJS.Timeout | null>(null);
+
+  // Cleanup preload timer on unmount
+  useEffect(() => {
+    return () => {
+      if (preloadTimerRef.current) {
+        clearTimeout(preloadTimerRef.current);
+      }
+    };
+  }, []);
 
   // Fetch images from API, fallback to static arrays
   useEffect(() => {
@@ -199,7 +233,6 @@ export function StudioGalleryPage() {
   const [viewerIndex, setViewerIndex] = useState(0);
   const [viewerMode, setViewerMode] = useState<"studio" | "gallery">("studio");
   const [carouselApi, setCarouselApi] = useState<CarouselApi | null>(null);
-  const [aiSpaceGenOpen, setAiSpaceGenOpen] = useState(false);
 
   // Measure header blocks above each grid so tiles can grow to the largest
   // 16:9 size that still fits inside the stripe height.
@@ -466,6 +499,25 @@ export function StudioGalleryPage() {
                   type="button"
                   aria-label="Tailor Your Reservation"
                   className="font-comfortaa inline-flex items-center justify-center w-auto whitespace-nowrap rounded-full bg-[#5B9AB8] text-white px-5 sm:px-6 md:px-8 py-2 md:py-3 text-[clamp(1.00rem,3.2vw,1.25rem)] shadow-sm hover:bg-[#4d8ea7] focus:outline-hidden focus-visible:ring-2 focus-visible:ring-white/70 transition-colors"
+                  onMouseEnter={() => {
+                    // Preload component on hover (after 100ms delay to avoid unnecessary loads)
+                    if (!isPreloadingAI && !aiSpaceGenOpen) {
+                      preloadTimerRef.current = setTimeout(() => {
+                        setIsPreloadingAI(true);
+                        // Preload the component module
+                        import("./AISpaceGenerator").catch(() => {
+                          // Silently handle preload errors
+                        });
+                      }, 100);
+                    }
+                  }}
+                  onMouseLeave={() => {
+                    // Clear preload timer if user moves away quickly
+                    if (preloadTimerRef.current) {
+                      clearTimeout(preloadTimerRef.current);
+                      preloadTimerRef.current = null;
+                    }
+                  }}
                 >
                   Tailor Your Reservation
                 </button>
@@ -509,7 +561,9 @@ export function StudioGalleryPage() {
                           </p>
                         </div>
                         <div className="flex-1 overflow-y-auto">
-                          <AISpaceGenerator />
+                          <Suspense fallback={<AISpaceGeneratorSkeleton />}>
+                            <AISpaceGenerator />
+                          </Suspense>
                         </div>
                       </div>
                     </div>

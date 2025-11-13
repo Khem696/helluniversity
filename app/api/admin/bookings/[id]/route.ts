@@ -55,6 +55,11 @@ export async function GET(
       return authError
     }
 
+    // Invalidate cache to ensure fresh data when admin views booking
+    // This prevents showing stale status (e.g., pending_deposit when it should be paid_deposit)
+    const { invalidateCache, CacheKeys } = await import("@/lib/cache")
+    invalidateCache(CacheKeys.booking(id))
+    
     const booking = await getBookingById(id)
 
     if (!booking) {
@@ -70,6 +75,27 @@ export async function GET(
     await logger.debug('Booking status history retrieved', { 
       bookingId: id, 
       historyCount: statusHistory.length 
+    })
+
+    // Find all overlapping bookings for warning display
+    const { findAllOverlappingBookings } = await import('@/lib/booking-validations')
+    const startDate = booking.startDate ? createBangkokTimestamp(booking.startDate) : 0
+    const endDate = booking.endDate ? createBangkokTimestamp(booking.endDate) : null
+    const overlappingBookings = await findAllOverlappingBookings(
+      id,
+      startDate,
+      endDate,
+      booking.startTime || null,
+      booking.endTime || null
+    )
+    
+    // Check if any overlapping booking is confirmed (blocks status changes)
+    const hasConfirmedOverlap = overlappingBookings.some(b => b.status === 'confirmed')
+    
+    await logger.debug('Overlap check completed', {
+      bookingId: id,
+      overlapCount: overlappingBookings.length,
+      hasConfirmedOverlap,
     })
 
     // Transform booking to match frontend interface (convert date strings to Unix timestamps)
@@ -103,6 +129,7 @@ export async function GET(
       deposit_evidence_url: booking.depositEvidenceUrl,
       deposit_verified_at: booking.depositVerifiedAt,
       deposit_verified_by: booking.depositVerifiedBy,
+      deposit_verified_from_other_channel: booking.depositVerifiedFromOtherChannel || false,
       created_at: booking.createdAt,
       updated_at: booking.updatedAt,
     }
@@ -111,6 +138,19 @@ export async function GET(
       {
         booking: transformedBooking,
         statusHistory,
+        overlappingBookings: overlappingBookings.map(b => ({
+          id: b.id,
+          name: b.name,
+          email: b.email,
+          reference_number: b.reference_number,
+          start_date: b.start_date,
+          end_date: b.end_date,
+          start_time: b.start_time,
+          end_time: b.end_time,
+          status: b.status,
+          created_at: b.created_at,
+        })),
+        hasConfirmedOverlap,
       },
       { requestId }
     )
@@ -135,7 +175,7 @@ export async function PATCH(
     }
 
     const body = await request.json()
-    const { status, changeReason, adminNotes, proposedDate, depositVerifiedBy } = body
+    const { status, changeReason, adminNotes, proposedDate, depositVerifiedBy, newStartDate, newEndDate, newStartTime, newEndTime, action } = body
     
     await logger.debug('Booking update data', {
       bookingId: id,
@@ -144,11 +184,15 @@ export async function PATCH(
       hasAdminNotes: !!adminNotes,
       hasProposedDate: !!proposedDate,
       hasDepositVerifiedBy: !!depositVerifiedBy,
+      hasNewStartDate: !!newStartDate,
+      hasNewEndDate: !!newEndDate,
+      hasNewStartTime: !!newStartTime,
+      hasNewEndTime: !!newEndTime,
       depositVerifiedBy: depositVerifiedBy || '(not provided)'
     })
 
     // Validate status
-    const validStatuses = ["pending", "accepted", "rejected", "postponed", "cancelled", "paid_deposit", "checked-in", "pending_deposit"]
+    const validStatuses = ["pending", "pending_deposit", "paid_deposit", "confirmed", "cancelled", "finished"]
     if (!status || !validStatuses.includes(status)) {
       await logger.warn('Admin update booking rejected: invalid status', { bookingId: id, status, validStatuses })
       return errorResponse(
@@ -182,8 +226,208 @@ export async function PATCH(
       await logger.warn("Could not get session for admin action logging", { error: sessionError instanceof Error ? sessionError.message : String(sessionError) })
     }
 
-    // If rejecting deposit (paid_deposit -> pending_deposit), delete the deposit evidence blob
-    if (status === "pending_deposit" && currentBooking.status === "paid_deposit" && currentBooking.depositEvidenceUrl) {
+    // Handle date change for confirmed bookings (before status update)
+    if (newStartDate || newEndDate || newStartTime !== undefined || newEndTime !== undefined) {
+      // Date changes are only allowed for confirmed bookings
+      if (currentBooking.status !== "confirmed") {
+        await logger.warn('Date change rejected: booking not confirmed', { bookingId: id, status: currentBooking.status })
+        return errorResponse(
+          ErrorCodes.VALIDATION_ERROR,
+          "Date changes are only allowed for confirmed bookings.",
+          undefined,
+          400,
+          { requestId }
+        )
+      }
+
+      // Validate new dates
+      const { checkBookingOverlap } = await import('@/lib/booking-validations')
+      const { getBangkokTime } = await import('@/lib/timezone')
+      
+      // Use new dates if provided, otherwise use current dates
+      const checkStartDate = newStartDate 
+        ? (typeof newStartDate === 'string' ? createBangkokTimestamp(newStartDate) : newStartDate)
+        : (typeof currentBooking.startDate === 'number' ? currentBooking.startDate : createBangkokTimestamp(String(currentBooking.startDate)))
+      const checkEndDate = newEndDate
+        ? (typeof newEndDate === 'string' ? createBangkokTimestamp(newEndDate) : newEndDate)
+        : (currentBooking.endDate ? (typeof currentBooking.endDate === 'number' ? currentBooking.endDate : createBangkokTimestamp(String(currentBooking.endDate))) : null)
+      const checkStartTime = newStartTime !== undefined ? newStartTime : (currentBooking.startTime || null)
+      const checkEndTime = newEndTime !== undefined ? newEndTime : (currentBooking.endTime || null)
+
+      // Check for overlaps with other confirmed bookings
+      const overlapCheck = await checkBookingOverlap(
+        id, // Exclude current booking
+        checkStartDate,
+        checkEndDate,
+        checkStartTime,
+        checkEndTime
+      )
+
+      if (overlapCheck.overlaps) {
+        const overlappingNames = overlapCheck.overlappingBookings
+          ?.map((b: any) => b.name || "Unknown")
+          .join(", ") || "existing booking"
+        await logger.warn('Date change rejected: overlap detected', {
+          bookingId: id,
+          overlappingNames
+        })
+        return errorResponse(
+          ErrorCodes.BOOKING_OVERLAP,
+          `Cannot change date: the new date and time overlaps with an existing confirmed booking (${overlappingNames}). Please choose a different date.`,
+          { overlappingBookings: overlapCheck.overlappingBookings },
+          409,
+          { requestId }
+        )
+      }
+
+      // Check if new dates are in the past (warning only, not blocking)
+      const bangkokNow = getBangkokTime()
+      const { calculateStartTimestamp } = await import('@/lib/booking-validations')
+      const newStartTimestamp = calculateStartTimestamp(checkStartDate, checkStartTime)
+      
+      if (newStartTimestamp < bangkokNow) {
+        await logger.info('Date change warning: new start date is in the past', {
+          bookingId: id,
+          newStartTimestamp,
+          bangkokNow
+        })
+        // Note: We allow past dates for historical corrections, but log it
+      }
+
+      // Update booking dates directly in database
+      const db = getTursoClient()
+      const now = Math.floor(Date.now() / 1000)
+      
+      const updateFields: string[] = ["updated_at = ?"]
+      const updateArgs: any[] = [now]
+      
+      if (newStartDate) {
+        const startDateValue = typeof newStartDate === 'string' ? createBangkokTimestamp(newStartDate) : newStartDate
+        updateFields.push("start_date = ?")
+        updateArgs.push(startDateValue)
+      }
+      
+      if (newEndDate !== undefined) {
+        if (newEndDate === null) {
+          updateFields.push("end_date = NULL")
+          updateFields.push("date_range = 0")
+        } else {
+          const endDateValue = typeof newEndDate === 'string' ? createBangkokTimestamp(newEndDate) : newEndDate
+          updateFields.push("end_date = ?")
+          updateArgs.push(endDateValue)
+          updateFields.push("date_range = 1")
+        }
+      }
+      
+      if (newStartTime !== undefined) {
+        updateFields.push("start_time = ?")
+        updateArgs.push(newStartTime || null)
+      }
+      
+      if (newEndTime !== undefined) {
+        updateFields.push("end_time = ?")
+        updateArgs.push(newEndTime || null)
+      }
+
+      await db.execute({
+        sql: `UPDATE bookings SET ${updateFields.join(", ")} WHERE id = ?`,
+        args: [...updateArgs, id],
+      })
+
+      await logger.info('Booking dates updated successfully', {
+        bookingId: id,
+        newStartDate: checkStartDate,
+        newEndDate: checkEndDate,
+        newStartTime: checkStartTime,
+        newEndTime: checkEndTime
+      })
+
+      // Log admin action
+      try {
+        await logAdminAction({
+          actionType: "change_booking_date",
+          resourceType: "booking",
+          resourceId: id,
+          adminEmail,
+          adminName,
+          description: `Changed booking dates`,
+          metadata: {
+            oldStartDate: currentBooking.startDate,
+            oldEndDate: currentBooking.endDate,
+            oldStartTime: currentBooking.startTime,
+            oldEndTime: currentBooking.endTime,
+            newStartDate: checkStartDate,
+            newEndDate: checkEndDate,
+            newStartTime: checkStartTime,
+            newEndTime: checkEndTime,
+            changeReason,
+          },
+        })
+      } catch (logError) {
+        await logger.error("Failed to log admin action", logError instanceof Error ? logError : new Error(String(logError)), { bookingId: id })
+      }
+
+      // Get updated booking
+      const updatedBooking = await getBookingById(id)
+      if (!updatedBooking) {
+        await logger.error('Failed to retrieve updated booking after date change', new Error('Booking not found after date change'), { bookingId: id })
+        return errorResponse(
+          ErrorCodes.INTERNAL_ERROR,
+          "Failed to retrieve updated booking",
+          undefined,
+          500,
+          { requestId }
+        )
+      }
+
+      // Transform and return
+      const transformedBooking = {
+        id: updatedBooking.id,
+        name: updatedBooking.name,
+        email: updatedBooking.email,
+        phone: updatedBooking.phone,
+        participants: updatedBooking.participants,
+        event_type: updatedBooking.eventType,
+        other_event_type: updatedBooking.otherEventType,
+        date_range: updatedBooking.dateRange ? 1 : 0,
+        start_date: updatedBooking.startDate ? createBangkokTimestamp(updatedBooking.startDate) : 0,
+        end_date: updatedBooking.endDate ? createBangkokTimestamp(updatedBooking.endDate) : null,
+        start_time: updatedBooking.startTime || "",
+        end_time: updatedBooking.endTime || "",
+        organization_type: updatedBooking.organizationType,
+        organized_person: updatedBooking.organizedPerson,
+        introduction: updatedBooking.introduction,
+        biography: updatedBooking.biography,
+        special_requests: updatedBooking.specialRequests,
+        status: updatedBooking.status,
+        admin_notes: updatedBooking.adminNotes,
+        response_token: updatedBooking.responseToken,
+        token_expires_at: updatedBooking.tokenExpiresAt,
+        proposed_date: updatedBooking.proposedDate ? createBangkokTimestamp(updatedBooking.proposedDate) : null,
+        proposed_end_date: updatedBooking.proposedEndDate ? createBangkokTimestamp(updatedBooking.proposedEndDate) : null,
+        user_response: updatedBooking.userResponse,
+        response_date: updatedBooking.responseDate,
+        deposit_evidence_url: updatedBooking.depositEvidenceUrl,
+        deposit_verified_at: updatedBooking.depositVerifiedAt,
+        deposit_verified_by: updatedBooking.depositVerifiedBy,
+        deposit_verified_from_other_channel: updatedBooking.depositVerifiedFromOtherChannel || false,
+        created_at: updatedBooking.createdAt,
+        updated_at: updatedBooking.updatedAt,
+      }
+
+      await logger.info('Booking dates updated successfully', { bookingId: id })
+      
+      return successResponse(
+        {
+          booking: transformedBooking,
+        },
+        { requestId }
+      )
+    }
+
+    // If rejecting deposit (pending_deposit -> pending_deposit), delete the deposit evidence blob
+    // This happens when admin rejects deposit and user needs to re-upload
+    if (status === "pending_deposit" && currentBooking.status === "pending_deposit" && currentBooking.depositEvidenceUrl) {
       try {
         await deleteImage(currentBooking.depositEvidenceUrl)
         await logger.info(`Deleted deposit evidence blob`, { blobUrl: currentBooking.depositEvidenceUrl })
@@ -250,9 +494,9 @@ export async function PATCH(
       }
     }
 
-    // Only set depositVerifiedBy when explicitly verifying deposit (status is checked-in)
+    // Only set depositVerifiedBy when explicitly verifying deposit (status is confirmed)
     // Check if depositVerifiedBy is provided (not undefined, not null, and not empty string)
-    const shouldVerifyDeposit = status === "checked-in" && 
+    const shouldVerifyDeposit = status === "confirmed" && 
       depositVerifiedBy !== undefined && 
       depositVerifiedBy !== null && 
       typeof depositVerifiedBy === 'string' && 
@@ -267,52 +511,23 @@ export async function PATCH(
       adminEmail: adminEmail || '(not available)'
     })
 
-    // ENHANCED OVERLAP CHECK: Check for overlaps before updating to checked-in or accepting proposed dates
-    // This prevents admin from creating overlapping bookings
-    if (status === "checked-in" || (status === "accepted" && currentBooking.proposedDate)) {
+    // ENHANCED OVERLAP CHECK: Check for overlaps before updating to confirmed
+    // This prevents admin from creating overlapping confirmed bookings
+    if (status === "confirmed") {
       const { checkBookingOverlap } = await import('@/lib/booking-validations')
       
-      // Determine which dates to check
-      let checkStartDate: number
-      let checkEndDate: number | null
-      let checkStartTime: string | null
-      let checkEndTime: string | null
-      
-      if (currentBooking.proposedDate && status === "accepted") {
-        // Accepting a proposed date - check proposed dates
+      // Use current booking dates (no proposed dates in new flow)
         // CRITICAL: Use createBangkokTimestamp to handle date strings in Bangkok timezone
-        checkStartDate = typeof currentBooking.proposedDate === 'number' 
-          ? currentBooking.proposedDate 
-          : createBangkokTimestamp(String(currentBooking.proposedDate))
-        checkEndDate = currentBooking.proposedEndDate
-          ? (typeof currentBooking.proposedEndDate === 'number'
-              ? currentBooking.proposedEndDate
-              : createBangkokTimestamp(String(currentBooking.proposedEndDate)))
-          : null
-        // Parse times from user_response if available
-        if (currentBooking.userResponse) {
-          const startTimeMatch = currentBooking.userResponse.match(/Start Time: ([^,)]+)/)
-          const endTimeMatch = currentBooking.userResponse.match(/End Time: ([^,)]+)/)
-          checkStartTime = startTimeMatch ? startTimeMatch[1].trim() : (currentBooking.startTime || null)
-          checkEndTime = endTimeMatch ? endTimeMatch[1].trim() : (currentBooking.endTime || null)
-        } else {
-          checkStartTime = currentBooking.startTime || null
-          checkEndTime = currentBooking.endTime || null
-        }
-      } else {
-        // Checking in with original dates
-        // CRITICAL: Use createBangkokTimestamp to handle date strings in Bangkok timezone
-        checkStartDate = typeof currentBooking.startDate === 'number'
+      const checkStartDate = typeof currentBooking.startDate === 'number'
           ? currentBooking.startDate
           : createBangkokTimestamp(String(currentBooking.startDate))
-        checkEndDate = currentBooking.endDate
+      const checkEndDate = currentBooking.endDate
           ? (typeof currentBooking.endDate === 'number'
               ? currentBooking.endDate
               : createBangkokTimestamp(String(currentBooking.endDate)))
           : null
-        checkStartTime = currentBooking.startTime || null
-        checkEndTime = currentBooking.endTime || null
-      }
+      const checkStartTime = currentBooking.startTime || null
+      const checkEndTime = currentBooking.endTime || null
       
       await logger.info('Checking overlap before admin status update', {
         bookingId: id,
@@ -340,7 +555,7 @@ export async function PATCH(
         })
         return errorResponse(
           ErrorCodes.BOOKING_OVERLAP,
-          `Cannot ${status === "checked-in" ? "check in" : "accept"} this booking: the selected date and time overlaps with an existing checked-in booking (${overlappingNames}). Please resolve the conflict first.`,
+          `Cannot confirm this booking: the selected date and time overlaps with an existing confirmed booking (${overlappingNames}). Please resolve the conflict first.`,
           { overlappingBookings: overlapCheck.overlappingBookings },
           409,
           { requestId }
@@ -368,11 +583,24 @@ export async function PATCH(
         })
         return errorResponse(
           ErrorCodes.BOOKING_OVERLAP,
-          `The selected date and time is no longer available. It overlaps with a recently checked-in booking (${overlappingNames}). Please refresh and resolve the conflict.`,
+          `The selected date and time is no longer available. It overlaps with a recently confirmed booking (${overlappingNames}). Please refresh and resolve the conflict.`,
           { overlappingBookings: finalOverlapCheck.overlappingBookings },
           409,
           { requestId }
         )
+      }
+    }
+
+    // Determine if this is an "other channel" verification
+    const isOtherChannelVerification = action === "confirm_other_channel" || action === "accept_deposit_other_channel"
+    
+    // Update changeReason to include "other channel" indication if needed
+    let finalChangeReason = changeReason
+    if (isOtherChannelVerification && status === "confirmed") {
+      if (!finalChangeReason || !finalChangeReason.toLowerCase().includes('other channel')) {
+        finalChangeReason = finalChangeReason 
+          ? `${finalChangeReason} (Verified via other channel)`
+          : 'Deposit verified through other channels (phone, in-person, etc.)'
       }
     }
 
@@ -381,10 +609,11 @@ export async function PATCH(
     try {
       updatedBooking = await updateBookingStatus(id, status, {
         changedBy: adminEmail,
-        changeReason,
+        changeReason: finalChangeReason,
         adminNotes,
         proposedDate: proposedDate || undefined,
         depositVerifiedBy: shouldVerifyDeposit ? (typeof depositVerifiedBy === 'string' ? depositVerifiedBy.trim() : depositVerifiedBy) || adminEmail || undefined : undefined,
+        depositVerifiedFromOtherChannel: isOtherChannelVerification,
         sendNotification: true, // Always send notification on status change
       })
     } catch (error) {
@@ -426,92 +655,35 @@ export async function PATCH(
 
     // Send email notification to user (don't fail request if email fails)
     // Use updatedBooking.status instead of status, because updateBookingStatus may change the status
-    // (e.g., "accepted" -> "checked-in" for previously checked-in bookings)
     // This ensures emails reflect the actual final status, not just what was requested
     const actualStatus = updatedBooking.status
     if (updatedBooking.responseToken || actualStatus !== "pending") {
       try {
-        // Send response form link (responseToken) for:
-        // - "checked-in": User can view reservation and propose new date
-        // - "postponed": User can propose new date or cancel
-        // - "accepted" and "pending_deposit": For deposit upload link only
-        // - "paid_deposit": No links (just confirmation message)
-        const tokenToUse = actualStatus === "checked-in" ? updatedBooking.responseToken : 
-                          actualStatus === "postponed" ? updatedBooking.responseToken : // User can propose new date or cancel
-                          (actualStatus === "accepted" || actualStatus === "pending_deposit") ? updatedBooking.responseToken : // For deposit upload link only
-                          undefined
+        // Send response token for pending_deposit status (deposit upload link)
+        // Token expires at booking start date/time
+        const tokenToUse = actualStatus === "pending_deposit" ? updatedBooking.responseToken : undefined
         
-        // Skip duplicate check when admin postpones again (postponed -> postponed) to ensure user gets email
-        const isAdminPostponingAgain = actualStatus === "postponed" && currentBooking.status === "postponed" && !updatedBooking.proposedDate
-        
-        // When admin postpones again, capture previous proposed dates and times before they were cleared
-        let previousProposedDate: string | null = null
-        let previousProposedEndDate: string | null = null
-        let previousProposedStartTime: string | null = null
-        let previousProposedEndTime: string | null = null
-        if (isAdminPostponingAgain && currentBooking.proposedDate) {
-          // CRITICAL: Convert date string (YYYY-MM-DD) or timestamp to date string in Bangkok timezone
-          // Don't use toISOString() as it converts to UTC which can shift dates
-          const { TZDate } = await import('@date-fns/tz')
-          const { format } = await import('date-fns')
-          const BANGKOK_TIMEZONE = 'Asia/Bangkok'
-          
-          const proposedDateValue = typeof currentBooking.proposedDate === 'number' 
-            ? currentBooking.proposedDate 
-            : createBangkokTimestamp(String(currentBooking.proposedDate))
-          const utcDate = new Date(proposedDateValue * 1000)
-          const tzDate = new TZDate(utcDate.getTime(), BANGKOK_TIMEZONE)
-          previousProposedDate = format(tzDate, 'yyyy-MM-dd')
-          
-          if (currentBooking.proposedEndDate) {
-            const proposedEndDateValue = typeof currentBooking.proposedEndDate === 'number'
-              ? currentBooking.proposedEndDate
-              : createBangkokTimestamp(String(currentBooking.proposedEndDate))
-            const utcEndDate = new Date(proposedEndDateValue * 1000)
-            const tzEndDate = new TZDate(utcEndDate.getTime(), BANGKOK_TIMEZONE)
-            previousProposedEndDate = format(tzEndDate, 'yyyy-MM-dd')
-          }
-          
-          // Parse times from user_response if available
-          if (currentBooking.userResponse) {
-            const startTimeMatch = currentBooking.userResponse.match(/Start Time: ([^,)]+)/)
-            const endTimeMatch = currentBooking.userResponse.match(/End Time: ([^,)]+)/)
-            if (startTimeMatch) {
-              previousProposedStartTime = startTimeMatch[1].trim()
-            }
-            if (endTimeMatch) {
-              previousProposedEndTime = endTimeMatch[1].trim()
-            }
-          }
-        }
-        
-        // When admin accepts a proposed date, the proposed dates are moved to actual dates
-        // So we need to check if this was an acceptance of a user's proposal
-        const wasProposalAccepted = Boolean(
-          (status === "accepted" || actualStatus === "accepted" || actualStatus === "checked-in" || actualStatus === "paid_deposit") && 
-          currentBooking.status === "postponed" && 
-          currentBooking.proposedDate
-        )
-        
-        // If accepting a proposal, provide a clear confirmation message about the date change
-        let finalChangeReason = changeReason
-        if (wasProposalAccepted && !changeReason) {
-          finalChangeReason = "Your proposed date has been accepted and confirmed. The reservation details below reflect your new confirmed date."
-        } else if (wasProposalAccepted && changeReason) {
-          finalChangeReason = `${changeReason}\n\nYour proposed date has been accepted and confirmed. The reservation details below reflect your new confirmed date.`
+        // Log warning if token is missing for pending_deposit status
+        if (actualStatus === "pending_deposit" && !tokenToUse) {
+          await logger.warn(`WARNING: No token available for pending_deposit booking`, { 
+            bookingId: id, 
+            actualStatus, 
+            hasResponseToken: !!updatedBooking.responseToken,
+            responseToken: updatedBooking.responseToken || '(null)'
+          })
         }
         
         await sendBookingStatusNotification(updatedBooking, actualStatus, {
-          changeReason: finalChangeReason,
-          proposedDate: updatedBooking.proposedDate, // This will be null after acceptance, but we pass it anyway
+          changeReason: changeReason,
           responseToken: tokenToUse,
-          previousProposedDate: previousProposedDate,
-          previousProposedEndDate: previousProposedEndDate,
-          previousProposedStartTime: previousProposedStartTime,
-          previousProposedEndTime: previousProposedEndTime,
-          skipDuplicateCheck: isAdminPostponingAgain || wasProposalAccepted, // Skip duplicate check for admin postpone again OR when accepting a proposal
         })
-        await logger.info(`Booking status notification email sent successfully`, { bookingId: id, actualStatus, requestedStatus: status, hasToken: !!tokenToUse, skipDuplicate: isAdminPostponingAgain || wasProposalAccepted, wasProposalAccepted })
+        await logger.info(`Booking status notification email sent successfully`, { 
+          bookingId: id, 
+          actualStatus, 
+          requestedStatus: status, 
+          hasToken: !!tokenToUse,
+          tokenPrefix: tokenToUse ? tokenToUse.substring(0, 8) + '...' : '(no token)'
+        })
       } catch (emailError) {
         await logger.error("Failed to send booking status notification email", emailError instanceof Error ? emailError : new Error(String(emailError)), { bookingId: id })
         // Don't fail the request - email is secondary
@@ -624,6 +796,26 @@ export async function DELETE(
       await logger.warn("Could not get session for admin action logging", { error: sessionError instanceof Error ? sessionError.message : String(sessionError) })
     }
 
+    // Delete deposit evidence image from blob storage before deleting booking
+    if (booking.depositEvidenceUrl) {
+      try {
+        const { deleteImage } = await import("@/lib/blob")
+        await deleteImage(booking.depositEvidenceUrl)
+        await logger.info('Deleted deposit evidence blob before booking deletion', { blobUrl: booking.depositEvidenceUrl })
+      } catch (blobError) {
+        // Log error but don't fail the deletion - queue cleanup job as fallback
+        await logger.error("Failed to delete deposit evidence blob before booking deletion", blobError instanceof Error ? blobError : new Error(String(blobError)), { blobUrl: booking.depositEvidenceUrl })
+        
+        // Queue cleanup job for retry (fail-safe approach)
+        try {
+          await enqueueJob("cleanup-orphaned-blob", { blobUrl: booking.depositEvidenceUrl }, { priority: 1 })
+          await logger.info('Queued orphaned blob cleanup job for deposit evidence', { blobUrl: booking.depositEvidenceUrl })
+        } catch (queueError) {
+          await logger.error("Failed to queue orphaned blob cleanup", queueError instanceof Error ? queueError : new Error(String(queueError)), { blobUrl: booking.depositEvidenceUrl })
+        }
+      }
+    }
+
     // Delete booking (status history will cascade automatically due to foreign key)
     await db.execute({
       sql: "DELETE FROM bookings WHERE id = ?",
@@ -652,14 +844,13 @@ export async function DELETE(
     }
 
     // Send user notification based on booking status
-    // Only send if booking was not already rejected, cancelled, or finished
+    // Only send if booking was not already cancelled or finished
     if (
-      booking.status !== "rejected" &&
       booking.status !== "cancelled" &&
       booking.status !== "finished"
     ) {
       try {
-        // For all active bookings (accepted, checked-in, pending, postponed), send cancellation notification
+        // For all active bookings (pending, pending_deposit, confirmed), send cancellation notification
         await sendBookingStatusNotification(
           { ...booking, status: "cancelled" as const },
           "cancelled",

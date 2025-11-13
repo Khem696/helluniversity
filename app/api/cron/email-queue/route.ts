@@ -3,7 +3,7 @@
  * 
  * This endpoint is called by Vercel cron jobs
  * Processes failed emails for critical status changes
- * Handles status_change emails with status: accepted, postponed, cancelled, rejected
+ * Handles status_change emails with status: pending_deposit, confirmed, cancelled
  */
 
 import { NextResponse } from "next/server"
@@ -44,7 +44,7 @@ export async function GET(request: Request) {
       )
     }
 
-    // Process critical status change emails (accepted/postponed/cancelled/rejected)
+    // Process critical status change emails (pending_deposit/confirmed/cancelled)
     const startTime = Date.now()
     const limit = 20
     await logger.info('Processing critical status emails', {
@@ -79,7 +79,7 @@ export async function GET(request: Request) {
       
       return successResponse(
         {
-          message: "Critical status email queue processed (accepted/postponed/cancelled/rejected)",
+          message: "Critical status email queue processed (pending_deposit/confirmed/cancelled)",
           result: {
             processed: result.processed,
             sent: result.sent,

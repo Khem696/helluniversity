@@ -4,6 +4,7 @@ import Link from "next/link"
 import { SignOutButton } from "@/components/SignOutButton"
 import { InitDatabaseButton } from "./components/InitDatabaseButton"
 import { MigrateImagesButton } from "./components/MigrateImagesButton"
+import { BookingToggle } from "./components/BookingToggle"
 
 // Mark as dynamic to prevent static export issues
 export const dynamic = 'force-dynamic'
@@ -88,6 +89,11 @@ export default async function AdminDashboard() {
 
           <InitDatabaseButton />
           <MigrateImagesButton />
+      </div>
+
+      {/* Booking Toggle */}
+      <div className="mt-8">
+        <BookingToggle />
       </div>
 
       <div className="mt-8 p-6 bg-white rounded-lg shadow-md">

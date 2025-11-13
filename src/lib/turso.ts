@@ -195,12 +195,15 @@ export async function initializeDatabase(options?: { cleanupOrphanedImages?: boo
   const db = getTursoClient()
 
   try {
+    // Enable foreign key constraints (SQLite requires this to be set per connection)
+    await db.execute(`PRAGMA foreign_keys = ON`)
+    
     // Check if tables already exist
     const checkTables = await db.execute(`
       SELECT name FROM sqlite_master 
       WHERE type='table' AND name IN (
         'images', 'events', 'rate_limits', 'bookings', 
-        'booking_status_history', 'admin_actions', 'event_images', 'email_queue', 'email_sent_log', 'email_event_log', 'error_logs', 'job_queue'
+        'booking_status_history', 'admin_actions', 'event_images', 'email_queue', 'email_sent_log', 'error_logs', 'job_queue', 'settings'
       )
     `)
 
@@ -249,17 +252,56 @@ export async function initializeDatabase(options?: { cleanupOrphanedImages?: boo
           event_date INTEGER,
           start_date INTEGER,
           end_date INTEGER,
-          location TEXT,
           created_at INTEGER DEFAULT (unixepoch()),
           updated_at INTEGER DEFAULT (unixepoch()),
           FOREIGN KEY (image_id) REFERENCES images(id) ON DELETE SET NULL
         )
       `)
       
-      // Create index for end_date queries (for slider logic)
+      // Create indexes for common queries and admin UI search
+      // Search indexes for admin UI
+      await db.execute(`
+        CREATE INDEX idx_events_title ON events(title)
+      `)
+      
+      // Date indexes for filtering and sorting
+      await db.execute(`
+        CREATE INDEX idx_events_event_date ON events(event_date)
+      `)
+      await db.execute(`
+        CREATE INDEX idx_events_start_date ON events(start_date)
+      `)
       await db.execute(`
         CREATE INDEX idx_events_end_date ON events(end_date)
       `)
+      
+      // Composite indexes for common query patterns
+      // (start_date, end_date) - For date range queries
+      await db.execute(`
+        CREATE INDEX idx_events_date_range ON events(start_date, end_date)
+      `)
+      // (end_date, created_at) - For sorting upcoming events by date, then by creation
+      await db.execute(`
+        CREATE INDEX idx_events_end_date_created_at ON events(end_date, created_at)
+      `)
+      // (start_date, created_at) - For sorting by start date, then creation
+      await db.execute(`
+        CREATE INDEX idx_events_start_date_created_at ON events(start_date, created_at)
+      `)
+      
+      // Timestamp indexes for sorting
+      await db.execute(`
+        CREATE INDEX idx_events_created_at ON events(created_at)
+      `)
+      await db.execute(`
+        CREATE INDEX idx_events_updated_at ON events(updated_at)
+      `)
+      
+      // Foreign key index for image lookups
+      await db.execute(`
+        CREATE INDEX idx_events_image_id ON events(image_id)
+      `)
+      
       console.log("✓ Created events table")
     }
 
@@ -305,7 +347,7 @@ export async function initializeDatabase(options?: { cleanupOrphanedImages?: boo
           introduction TEXT,
           biography TEXT,
           special_requests TEXT,
-          status TEXT DEFAULT 'pending' CHECK(status IN ('pending', 'accepted', 'rejected', 'postponed', 'cancelled', 'finished', 'checked-in', 'paid_deposit')),
+          status TEXT DEFAULT 'pending' CHECK(status IN ('pending', 'pending_deposit', 'paid_deposit', 'confirmed', 'cancelled', 'finished')),
           admin_notes TEXT,
           response_token TEXT,
           token_expires_at INTEGER,
@@ -319,6 +361,7 @@ export async function initializeDatabase(options?: { cleanupOrphanedImages?: boo
       `)
       
       // Create indexes for common queries
+      // Single column indexes for direct lookups and search
       await db.execute(`
         CREATE INDEX idx_bookings_status ON bookings(status)
       `)
@@ -326,17 +369,56 @@ export async function initializeDatabase(options?: { cleanupOrphanedImages?: boo
         CREATE INDEX idx_bookings_email ON bookings(email)
       `)
       await db.execute(`
+        CREATE INDEX idx_bookings_response_token ON bookings(response_token)
+      `)
+      // Search indexes for admin UI
+      await db.execute(`
+        CREATE INDEX idx_bookings_name ON bookings(name)
+      `)
+      await db.execute(`
+        CREATE INDEX idx_bookings_phone ON bookings(phone)
+      `)
+      await db.execute(`
+        CREATE INDEX idx_bookings_event_type ON bookings(event_type)
+      `)
+      
+      // Composite indexes for common query patterns
+      // (status, start_date) - For overlap checks and date filtering with status (most common pattern)
+      await db.execute(`
+        CREATE INDEX idx_bookings_status_start_date ON bookings(status, start_date)
+      `)
+      // (status, created_at) - For listing bookings by status ordered by creation date
+      await db.execute(`
+        CREATE INDEX idx_bookings_status_created_at ON bookings(status, created_at)
+      `)
+      // (event_type, status, start_date) - For filtering by event type with status and date sorting
+      await db.execute(`
+        CREATE INDEX idx_bookings_event_type_status_start_date ON bookings(event_type, status, start_date)
+      `)
+      // (start_date, end_date) - For date range queries and overlap checks
+      await db.execute(`
+        CREATE INDEX idx_bookings_date_range ON bookings(start_date, end_date)
+      `)
+      
+      // Single column indexes for ordering and filtering
+      await db.execute(`
         CREATE INDEX idx_bookings_start_date ON bookings(start_date)
+      `)
+      await db.execute(`
+        CREATE INDEX idx_bookings_end_date ON bookings(end_date)
       `)
       await db.execute(`
         CREATE INDEX idx_bookings_created_at ON bookings(created_at)
       `)
       await db.execute(`
-        CREATE INDEX idx_bookings_response_token ON bookings(response_token)
+        CREATE INDEX idx_bookings_updated_at ON bookings(updated_at)
       `)
       await db.execute(`
-        CREATE INDEX idx_bookings_reference_number ON bookings(reference_number)
+        CREATE INDEX idx_bookings_token_expires_at ON bookings(token_expires_at)
       `)
+      
+      // Note: reference_number already has UNIQUE constraint which creates an index automatically
+      // No need for separate index on reference_number
       console.log("✓ Created bookings table")
     }
 
@@ -440,14 +522,33 @@ export async function initializeDatabase(options?: { cleanupOrphanedImages?: boo
       `)
       
       // Create indexes for queue processing
+      // Core processing indexes
       await db.execute(`
-        CREATE INDEX idx_email_queue_status ON email_queue(status, next_retry_at)
+        CREATE INDEX IF NOT EXISTS idx_email_queue_status ON email_queue(status, next_retry_at)
       `)
       await db.execute(`
-        CREATE INDEX idx_email_queue_retry ON email_queue(status, retry_count, next_retry_at)
+        CREATE INDEX IF NOT EXISTS idx_email_queue_retry ON email_queue(status, retry_count, next_retry_at)
       `)
       await db.execute(`
-        CREATE INDEX idx_email_queue_created ON email_queue(created_at)
+        CREATE INDEX IF NOT EXISTS idx_email_queue_created ON email_queue(created_at)
+      `)
+      // Critical status emails query optimization (status + email_type + ordering)
+      await db.execute(`
+        CREATE INDEX IF NOT EXISTS idx_email_queue_critical ON email_queue(status, email_type, created_at)
+      `)
+      // Admin UI filtering and search
+      await db.execute(`
+        CREATE INDEX IF NOT EXISTS idx_email_queue_type ON email_queue(email_type)
+      `)
+      await db.execute(`
+        CREATE INDEX IF NOT EXISTS idx_email_queue_recipient ON email_queue(recipient_email)
+      `)
+      await db.execute(`
+        CREATE INDEX IF NOT EXISTS idx_email_queue_scheduled ON email_queue(scheduled_at)
+      `)
+      // Composite index for common admin UI queries (status + email_type filtering with date sorting)
+      await db.execute(`
+        CREATE INDEX IF NOT EXISTS idx_email_queue_status_type_created ON email_queue(status, email_type, created_at)
       `)
       console.log("✓ Created email_queue table")
     }
@@ -463,16 +564,33 @@ export async function initializeDatabase(options?: { cleanupOrphanedImages?: boo
           status TEXT NOT NULL,
           sent_at INTEGER NOT NULL,
           created_at INTEGER DEFAULT (unixepoch()),
-          UNIQUE(booking_id, email_type, status, sent_at)
+          UNIQUE(booking_id, email_type, status, sent_at),
+          FOREIGN KEY (booking_id) REFERENCES bookings(id) ON DELETE SET NULL
         )
       `)
       
       // Create indexes for faster lookups
+      // Primary lookup: booking + type + status (for duplicate prevention)
       await db.execute(`
-        CREATE INDEX idx_email_sent_log_booking ON email_sent_log(booking_id, email_type, status)
+        CREATE INDEX IF NOT EXISTS idx_email_sent_log_booking ON email_sent_log(booking_id, email_type, status)
+      `)
+      // Recipient lookup with time filtering
+      await db.execute(`
+        CREATE INDEX IF NOT EXISTS idx_email_sent_log_recipient ON email_sent_log(recipient_email, sent_at)
+      `)
+      // Single column indexes for filtering
+      await db.execute(`
+        CREATE INDEX IF NOT EXISTS idx_email_sent_log_type ON email_sent_log(email_type)
       `)
       await db.execute(`
-        CREATE INDEX idx_email_sent_log_recipient ON email_sent_log(recipient_email, sent_at)
+        CREATE INDEX IF NOT EXISTS idx_email_sent_log_status ON email_sent_log(status)
+      `)
+      await db.execute(`
+        CREATE INDEX IF NOT EXISTS idx_email_sent_log_created ON email_sent_log(created_at)
+      `)
+      // Composite index for type + status filtering
+      await db.execute(`
+        CREATE INDEX IF NOT EXISTS idx_email_sent_log_type_status ON email_sent_log(email_type, status)
       `)
       console.log("✓ Created email_sent_log table")
     }
@@ -596,6 +714,47 @@ export async function initializeDatabase(options?: { cleanupOrphanedImages?: boo
       }
     }
 
+    // Create settings table for application settings (e.g., booking enabled/disabled)
+    if (!existingTables.has("settings")) {
+      await db.execute(`
+        CREATE TABLE settings (
+          key TEXT PRIMARY KEY,
+          value TEXT NOT NULL,
+          description TEXT,
+          updated_at INTEGER DEFAULT (unixepoch()),
+          updated_by TEXT
+        )
+      `)
+      
+      // Create index for faster lookups
+      await db.execute(`
+        CREATE INDEX idx_settings_key ON settings(key)
+      `)
+      
+      // Insert default settings
+      const now = Math.floor(Date.now() / 1000)
+      await db.execute(`
+        INSERT INTO settings (key, value, description, updated_at) 
+        VALUES ('bookings_enabled', '1', 'Enable or disable booking submissions. 1 = enabled, 0 = disabled', ?)
+      `, [now])
+      
+      console.log("✓ Created settings table with default values")
+    } else {
+      // Ensure bookings_enabled setting exists (for existing databases)
+      const settingCheck = await db.execute(`
+        SELECT key FROM settings WHERE key = 'bookings_enabled'
+      `)
+      
+      if (settingCheck.rows.length === 0) {
+        const now = Math.floor(Date.now() / 1000)
+        await db.execute(`
+          INSERT INTO settings (key, value, description, updated_at) 
+          VALUES ('bookings_enabled', '1', 'Enable or disable booking submissions. 1 = enabled, 0 = disabled', ?)
+        `, [now])
+        console.log("✓ Added bookings_enabled setting to existing database")
+      }
+    }
+
     console.log("✓ Database initialization complete")
   } catch (error) {
     console.error("Database initialization error:", error)
@@ -684,10 +843,232 @@ async function migrateExistingTables(
         `)
         console.log("✓ Added end_date column to events table")
       }
+
+      // Ensure all search and date indexes exist for admin UI (add if missing)
+      // Check existing indexes
+      const existingEventIndexes = await db.execute(`
+        SELECT name FROM sqlite_master 
+        WHERE type='index' AND tbl_name='events' AND name LIKE 'idx_events_%'
+      `)
+      const eventIndexNames = new Set(
+        existingEventIndexes.rows.map((row: any) => row.name)
+      )
+
+      // Create search indexes if they don't exist
+      if (!eventIndexNames.has("idx_events_title")) {
+        await db.execute(`CREATE INDEX IF NOT EXISTS idx_events_title ON events(title)`)
+        console.log("✓ Added idx_events_title index")
+      }
+      
+      // Create date indexes if they don't exist
+      if (!eventIndexNames.has("idx_events_event_date")) {
+        await db.execute(`CREATE INDEX IF NOT EXISTS idx_events_event_date ON events(event_date)`)
+        console.log("✓ Added idx_events_event_date index")
+      }
+      if (!eventIndexNames.has("idx_events_start_date")) {
+        await db.execute(`CREATE INDEX IF NOT EXISTS idx_events_start_date ON events(start_date)`)
+        console.log("✓ Added idx_events_start_date index")
+      }
+      
+      // Create composite indexes if they don't exist
+      if (!eventIndexNames.has("idx_events_date_range")) {
+        await db.execute(`CREATE INDEX IF NOT EXISTS idx_events_date_range ON events(start_date, end_date)`)
+        console.log("✓ Added idx_events_date_range composite index")
+      }
+      if (!eventIndexNames.has("idx_events_end_date_created_at")) {
+        await db.execute(`CREATE INDEX IF NOT EXISTS idx_events_end_date_created_at ON events(end_date, created_at)`)
+        console.log("✓ Added idx_events_end_date_created_at composite index")
+      }
+      if (!eventIndexNames.has("idx_events_start_date_created_at")) {
+        await db.execute(`CREATE INDEX IF NOT EXISTS idx_events_start_date_created_at ON events(start_date, created_at)`)
+        console.log("✓ Added idx_events_start_date_created_at composite index")
+      }
+      
+      // Create timestamp indexes if they don't exist
+      if (!eventIndexNames.has("idx_events_created_at")) {
+        await db.execute(`CREATE INDEX IF NOT EXISTS idx_events_created_at ON events(created_at)`)
+        console.log("✓ Added idx_events_created_at index")
+      }
+      if (!eventIndexNames.has("idx_events_updated_at")) {
+        await db.execute(`CREATE INDEX IF NOT EXISTS idx_events_updated_at ON events(updated_at)`)
+        console.log("✓ Added idx_events_updated_at index")
+      }
+      
+      // Create foreign key index if it doesn't exist
+      if (!eventIndexNames.has("idx_events_image_id")) {
+        await db.execute(`CREATE INDEX IF NOT EXISTS idx_events_image_id ON events(image_id)`)
+        console.log("✓ Added idx_events_image_id index")
+      }
     }
 
-    // Migrate bookings table: add response fields
+    // Migrate bookings table: check and update CHECK constraint if needed
     if (existingTables.has("bookings")) {
+      // Check current CHECK constraint
+      const tableInfo = await db.execute(`
+        SELECT sql FROM sqlite_master 
+        WHERE type='table' AND name='bookings'
+      `)
+      
+      const createSql = tableInfo.rows[0] ? (tableInfo.rows[0] as any).sql : ""
+      const hasNewStatuses = createSql.includes("'pending_deposit'") && 
+                             createSql.includes("'paid_deposit'") &&
+                             createSql.includes("'confirmed'") && 
+                             !createSql.includes("'accepted'") && 
+                             !createSql.includes("'rejected'") && 
+                             !createSql.includes("'checked-in'") &&
+                             !createSql.includes("'postponed'")
+      
+      // If CHECK constraint has old statuses, migrate by creating new table and copying data
+      if (!hasNewStatuses && createSql.includes("CHECK")) {
+        console.log("⚠️ Migrating bookings table to update CHECK constraint (preserving data)...")
+        
+        // Check if there are any bookings
+        const bookingCount = await db.execute(`SELECT COUNT(*) as count FROM bookings`)
+        const count = (bookingCount.rows[0] as any)?.count || 0
+        
+        if (count > 0) {
+          console.log(`✓ Found ${count} existing bookings. Will preserve all data during migration.`)
+        } else {
+          console.log("✓ No existing bookings found. Safe to recreate table.")
+        }
+        
+        // Step 1: Enable foreign keys to ensure proper constraint handling
+        await db.execute(`PRAGMA foreign_keys = ON`)
+        
+        // Step 2: Create new table with updated CHECK constraint
+        await db.execute(`
+          CREATE TABLE bookings_new (
+            id TEXT PRIMARY KEY,
+            reference_number TEXT UNIQUE NOT NULL,
+            name TEXT NOT NULL,
+            email TEXT NOT NULL,
+            phone TEXT NOT NULL,
+            participants TEXT,
+            event_type TEXT NOT NULL,
+            other_event_type TEXT,
+            date_range INTEGER DEFAULT 0,
+            start_date INTEGER NOT NULL,
+            end_date INTEGER,
+            start_time TEXT,
+            end_time TEXT,
+            organization_type TEXT,
+            organized_person TEXT,
+            introduction TEXT,
+            biography TEXT,
+            special_requests TEXT,
+            status TEXT DEFAULT 'pending' CHECK(status IN ('pending', 'pending_deposit', 'paid_deposit', 'confirmed', 'cancelled', 'finished')),
+            admin_notes TEXT,
+            response_token TEXT,
+            token_expires_at INTEGER,
+            proposed_date INTEGER,
+            proposed_end_date INTEGER,
+            user_response TEXT,
+            response_date INTEGER,
+            deposit_evidence_url TEXT,
+            deposit_verified_at INTEGER,
+            deposit_verified_by TEXT,
+            deposit_verified_from_other_channel INTEGER DEFAULT 0,
+            created_at INTEGER DEFAULT (unixepoch()),
+            updated_at INTEGER DEFAULT (unixepoch())
+          )
+        `)
+        console.log("✓ Created new bookings table with updated CHECK constraint")
+        
+        // Step 3: Copy all data from old table to new table (if there's data)
+        if (count > 0) {
+          // Get column names from old table to handle missing columns gracefully
+          const oldTableInfo = await db.execute(`PRAGMA table_info(bookings)`)
+          const oldColumns = oldTableInfo.rows.map((row: any) => row.name)
+          const hasDepositVerifiedFromOtherChannel = oldColumns.includes('deposit_verified_from_other_channel')
+          
+          if (hasDepositVerifiedFromOtherChannel) {
+            // All columns exist, copy everything
+            await db.execute(`
+              INSERT INTO bookings_new 
+              SELECT 
+                id, reference_number, name, email, phone, participants, event_type, other_event_type,
+                date_range, start_date, end_date, start_time, end_time,
+                organization_type, organized_person, introduction, biography, special_requests,
+                status, admin_notes, response_token, token_expires_at,
+                proposed_date, proposed_end_date, user_response, response_date,
+                deposit_evidence_url, deposit_verified_at, deposit_verified_by,
+                deposit_verified_from_other_channel,
+                created_at, updated_at
+              FROM bookings
+            `)
+          } else {
+            // Missing deposit_verified_from_other_channel column, use default value
+            await db.execute(`
+              INSERT INTO bookings_new 
+              SELECT 
+                id, reference_number, name, email, phone, participants, event_type, other_event_type,
+                date_range, start_date, end_date, start_time, end_time,
+                organization_type, organized_person, introduction, biography, special_requests,
+                status, admin_notes, response_token, token_expires_at,
+                proposed_date, proposed_end_date, user_response, response_date,
+                deposit_evidence_url, deposit_verified_at, deposit_verified_by,
+                0 as deposit_verified_from_other_channel,
+                created_at, updated_at
+              FROM bookings
+            `)
+          }
+          console.log(`✓ Copied ${count} bookings to new table`)
+        }
+        
+        // Step 4: Drop old table and dependent tables
+        if (existingTables.has("booking_status_history")) {
+          await db.execute(`DROP TABLE IF EXISTS booking_status_history`)
+          console.log("✓ Dropped booking_status_history table (will be recreated)")
+        }
+        
+        // Step 5: Drop old bookings table
+        await db.execute(`DROP TABLE bookings`)
+        console.log("✓ Dropped old bookings table")
+        
+        // Step 6: Rename new table to bookings
+        await db.execute(`ALTER TABLE bookings_new RENAME TO bookings`)
+        console.log("✓ Renamed new table to bookings")
+        
+        // Step 7: Recreate all indexes
+        await db.execute(`CREATE INDEX IF NOT EXISTS idx_bookings_status ON bookings(status)`)
+        await db.execute(`CREATE INDEX IF NOT EXISTS idx_bookings_email ON bookings(email)`)
+        await db.execute(`CREATE INDEX IF NOT EXISTS idx_bookings_response_token ON bookings(response_token)`)
+        await db.execute(`CREATE INDEX IF NOT EXISTS idx_bookings_name ON bookings(name)`)
+        await db.execute(`CREATE INDEX IF NOT EXISTS idx_bookings_phone ON bookings(phone)`)
+        await db.execute(`CREATE INDEX IF NOT EXISTS idx_bookings_event_type ON bookings(event_type)`)
+        await db.execute(`CREATE INDEX IF NOT EXISTS idx_bookings_status_start_date ON bookings(status, start_date)`)
+        await db.execute(`CREATE INDEX IF NOT EXISTS idx_bookings_status_created_at ON bookings(status, created_at)`)
+        await db.execute(`CREATE INDEX IF NOT EXISTS idx_bookings_event_type_status_start_date ON bookings(event_type, status, start_date)`)
+        await db.execute(`CREATE INDEX IF NOT EXISTS idx_bookings_date_range ON bookings(date_range)`)
+        await db.execute(`CREATE INDEX IF NOT EXISTS idx_bookings_start_date ON bookings(start_date)`)
+        await db.execute(`CREATE INDEX IF NOT EXISTS idx_bookings_end_date ON bookings(end_date)`)
+        await db.execute(`CREATE INDEX IF NOT EXISTS idx_bookings_created_at ON bookings(created_at)`)
+        await db.execute(`CREATE INDEX IF NOT EXISTS idx_bookings_token_expires_at ON bookings(token_expires_at)`)
+        await db.execute(`CREATE INDEX IF NOT EXISTS idx_bookings_reference_number ON bookings(reference_number)`)
+        await db.execute(`CREATE UNIQUE INDEX IF NOT EXISTS idx_bookings_reference_number_unique ON bookings(reference_number)`)
+        console.log("✓ Recreated all indexes")
+        
+        console.log("✓ Migration completed successfully - all booking data preserved")
+        
+        // Step 8: Recreate booking_status_history table with foreign key constraint
+        await db.execute(`
+          CREATE TABLE booking_status_history (
+            id TEXT PRIMARY KEY,
+            booking_id TEXT NOT NULL,
+            old_status TEXT,
+            new_status TEXT NOT NULL,
+            changed_by TEXT,
+            change_reason TEXT,
+            created_at INTEGER DEFAULT (unixepoch()),
+            FOREIGN KEY (booking_id) REFERENCES bookings(id) ON DELETE CASCADE
+          )
+        `)
+        
+        await db.execute(`CREATE INDEX IF NOT EXISTS idx_status_history_booking_id ON booking_status_history(booking_id)`)
+        await db.execute(`CREATE INDEX IF NOT EXISTS idx_status_history_created_at ON booking_status_history(created_at)`)
+        console.log("✓ Recreated booking_status_history table with foreign key constraint")
+      }
+      
       const bookingColumns = await db.execute(`
         PRAGMA table_info(bookings)
       `)
@@ -760,6 +1141,13 @@ async function migrateExistingTables(
           ALTER TABLE bookings ADD COLUMN deposit_verified_by TEXT
         `)
         console.log("✓ Added deposit_verified_by column to bookings table")
+      }
+
+      if (!columnNames.has("deposit_verified_from_other_channel")) {
+        await db.execute(`
+          ALTER TABLE bookings ADD COLUMN deposit_verified_from_other_channel INTEGER DEFAULT 0
+        `)
+        console.log("✓ Added deposit_verified_from_other_channel column to bookings table")
       }
 
       // Add reference_number column for short booking IDs
@@ -839,183 +1227,42 @@ async function migrateExistingTables(
         }
       }
 
-      // Update status check constraint to include 'paid_deposit', 'checked-in', and 'pending_deposit'
-      // SQLite doesn't support modifying CHECK constraints directly, so we need to recreate the table
-      // Check if we need to migrate the CHECK constraint
-      try {
-        // Get the current table definition
-        const tableInfo = await db.execute(`
-          SELECT sql FROM sqlite_master 
-          WHERE type='table' AND name='bookings'
-        `)
-        
-        if (tableInfo.rows.length > 0) {
-          const createSql = (tableInfo.rows[0] as any).sql as string
-          // Check if the constraint includes 'paid_deposit', 'checked-in', and 'pending_deposit'
-          const hasPaidDeposit = createSql.includes("'paid_deposit'")
-          const hasCheckedIn = createSql.includes("'checked-in'")
-          const hasPendingDeposit = createSql.includes("'pending_deposit'")
-          
-          if (!hasPaidDeposit || !hasCheckedIn || !hasPendingDeposit) {
-            console.log("⚠️ Migrating bookings table to update CHECK constraint...")
-            
-            // Step 1: Create new table with correct constraint
-            await db.execute(`
-              CREATE TABLE bookings_new (
-                id TEXT PRIMARY KEY,
-                reference_number TEXT UNIQUE NOT NULL,
-                name TEXT NOT NULL,
-                email TEXT NOT NULL,
-                phone TEXT NOT NULL,
-                participants TEXT,
-                event_type TEXT NOT NULL,
-                other_event_type TEXT,
-                date_range INTEGER DEFAULT 0,
-                start_date INTEGER NOT NULL,
-                end_date INTEGER,
-                start_time TEXT,
-                end_time TEXT,
-                organization_type TEXT,
-                organized_person TEXT,
-                introduction TEXT,
-                biography TEXT,
-                special_requests TEXT,
-                status TEXT DEFAULT 'pending' CHECK(status IN ('pending', 'accepted', 'rejected', 'postponed', 'cancelled', 'finished', 'checked-in', 'paid_deposit', 'pending_deposit')),
-                admin_notes TEXT,
-                response_token TEXT,
-                token_expires_at INTEGER,
-                proposed_date INTEGER,
-                proposed_end_date INTEGER,
-                user_response TEXT,
-                response_date INTEGER,
-                deposit_evidence_url TEXT,
-                deposit_verified_at INTEGER,
-                deposit_verified_by TEXT,
-                created_at INTEGER DEFAULT (unixepoch()),
-                updated_at INTEGER DEFAULT (unixepoch())
-              )
-            `)
-            
-            // Step 2: Copy all data from old table to new table
-            // Check if reference_number column exists in old table
-            const oldTableColumns = await db.execute(`PRAGMA table_info(bookings)`)
-            const hasReferenceNumber = oldTableColumns.rows.some((row: any) => row.name === 'reference_number')
-            
-            if (hasReferenceNumber) {
-              // Old table has reference_number - copy it
-            await db.execute(`
-              INSERT INTO bookings_new 
-              SELECT 
-                  id, reference_number, name, email, phone, participants, event_type, other_event_type,
-                date_range, start_date, end_date, start_time, end_time,
-                organization_type, organized_person, introduction, biography, special_requests,
-                status, admin_notes, response_token, token_expires_at,
-                proposed_date, proposed_end_date, user_response, response_date,
-                deposit_evidence_url, deposit_verified_at, deposit_verified_by,
-                created_at, updated_at
-              FROM bookings
-            `)
-            } else {
-              // Old table doesn't have reference_number - generate it during migration
-              const { randomBytes } = await import('crypto')
-              const generateReferenceNumber = () => {
-                const timestamp = Math.floor(Date.now() / 1000)
-                const randomBytesData = randomBytes(3)
-                const randomValue = parseInt(randomBytesData.toString('hex'), 16)
-                const timestampPart = (timestamp % 46656).toString(36).toUpperCase().padStart(3, '0')
-                const randomPart = (randomValue % 1296).toString(36).toUpperCase().padStart(2, '0')
-                return `HU-${timestampPart}${randomPart}`
-              }
-              
-              // Get all bookings from old table
-              const allBookings = await db.execute(`SELECT * FROM bookings`)
-              
-              // Insert each booking with generated reference_number
-              for (const booking of allBookings.rows as any[]) {
-                const referenceNumber = generateReferenceNumber()
-                await db.execute({
-                  sql: `
-                    INSERT INTO bookings_new (
-                      id, reference_number, name, email, phone, participants, event_type, other_event_type,
-                      date_range, start_date, end_date, start_time, end_time,
-                      organization_type, organized_person, introduction, biography, special_requests,
-                      status, admin_notes, response_token, token_expires_at,
-                      proposed_date, proposed_end_date, user_response, response_date,
-                      deposit_evidence_url, deposit_verified_at, deposit_verified_by,
-                      created_at, updated_at
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                  `,
-                  args: [
-                    booking.id,
-                    referenceNumber,
-                    booking.name,
-                    booking.email,
-                    booking.phone,
-                    booking.participants,
-                    booking.event_type,
-                    booking.other_event_type,
-                    booking.date_range,
-                    booking.start_date,
-                    booking.end_date,
-                    booking.start_time,
-                    booking.end_time,
-                    booking.organization_type,
-                    booking.organized_person,
-                    booking.introduction,
-                    booking.biography,
-                    booking.special_requests,
-                    booking.status,
-                    booking.admin_notes,
-                    booking.response_token,
-                    booking.token_expires_at,
-                    booking.proposed_date,
-                    booking.proposed_end_date,
-                    booking.user_response,
-                    booking.response_date,
-                    booking.deposit_evidence_url,
-                    booking.deposit_verified_at,
-                    booking.deposit_verified_by,
-                    booking.created_at,
-                    booking.updated_at,
-                  ],
-                })
-              }
-            }
-            
-            // Step 3: Drop old table
-            await db.execute(`DROP TABLE bookings`)
-            
-            // Step 4: Rename new table to original name
-            await db.execute(`ALTER TABLE bookings_new RENAME TO bookings`)
-            
-            // Step 5: Recreate indexes
-            await db.execute(`
-              CREATE INDEX IF NOT EXISTS idx_bookings_status ON bookings(status)
-            `)
-            await db.execute(`
-              CREATE INDEX IF NOT EXISTS idx_bookings_email ON bookings(email)
-            `)
-            await db.execute(`
-              CREATE INDEX IF NOT EXISTS idx_bookings_start_date ON bookings(start_date)
-            `)
-            await db.execute(`
-              CREATE INDEX IF NOT EXISTS idx_bookings_created_at ON bookings(created_at)
-            `)
-            await db.execute(`
-              CREATE INDEX IF NOT EXISTS idx_bookings_response_token ON bookings(response_token)
-            `)
-            await db.execute(`
-              CREATE INDEX IF NOT EXISTS idx_bookings_reference_number ON bookings(reference_number)
-            `)
-            
-            console.log("✓ Successfully migrated bookings table with updated CHECK constraint")
-          }
-        }
-      } catch (migrationError) {
-        console.error("⚠️ Error migrating bookings table CHECK constraint:", migrationError)
-        // Don't throw - allow application to continue
-        // The constraint might not be strictly enforced in some SQLite configurations
+      // Ensure all search indexes exist for admin UI (add if missing)
+      // Check existing indexes
+      const existingIndexes = await db.execute(`
+        SELECT name FROM sqlite_master 
+        WHERE type='index' AND tbl_name='bookings' AND name LIKE 'idx_bookings_%'
+      `)
+      const indexNames = new Set(
+        existingIndexes.rows.map((row: any) => row.name)
+      )
+
+      // Create search indexes if they don't exist
+      if (!indexNames.has("idx_bookings_name")) {
+        await db.execute(`CREATE INDEX idx_bookings_name ON bookings(name)`)
+        console.log("✓ Added idx_bookings_name index")
       }
+      if (!indexNames.has("idx_bookings_phone")) {
+        await db.execute(`CREATE INDEX idx_bookings_phone ON bookings(phone)`)
+        console.log("✓ Added idx_bookings_phone index")
+      }
+      if (!indexNames.has("idx_bookings_event_type")) {
+        await db.execute(`CREATE INDEX idx_bookings_event_type ON bookings(event_type)`)
+        console.log("✓ Added idx_bookings_event_type index")
+      }
+      if (!indexNames.has("idx_bookings_event_type_status_start_date")) {
+        await db.execute(`CREATE INDEX idx_bookings_event_type_status_start_date ON bookings(event_type, status, start_date)`)
+        console.log("✓ Added idx_bookings_event_type_status_start_date composite index")
+      }
+      if (!indexNames.has("idx_bookings_updated_at")) {
+        await db.execute(`CREATE INDEX idx_bookings_updated_at ON bookings(updated_at)`)
+        console.log("✓ Added idx_bookings_updated_at index")
+      }
+      if (!indexNames.has("idx_bookings_token_expires_at")) {
+        await db.execute(`CREATE INDEX idx_bookings_token_expires_at ON bookings(token_expires_at)`)
+        console.log("✓ Added idx_bookings_token_expires_at index")
+      }
+
     }
 
     // Migrate email_sent_log table: add if it doesn't exist
@@ -1029,7 +1276,8 @@ async function migrateExistingTables(
           status TEXT NOT NULL,
           sent_at INTEGER NOT NULL,
           created_at INTEGER DEFAULT (unixepoch()),
-          UNIQUE(booking_id, email_type, status, sent_at)
+          UNIQUE(booking_id, email_type, status, sent_at),
+          FOREIGN KEY (booking_id) REFERENCES bookings(id) ON DELETE SET NULL
         )
       `)
       
@@ -1039,7 +1287,77 @@ async function migrateExistingTables(
       await db.execute(`
         CREATE INDEX IF NOT EXISTS idx_email_sent_log_recipient ON email_sent_log(recipient_email, sent_at)
       `)
+      await db.execute(`
+        CREATE INDEX IF NOT EXISTS idx_email_sent_log_type ON email_sent_log(email_type)
+      `)
+      await db.execute(`
+        CREATE INDEX IF NOT EXISTS idx_email_sent_log_status ON email_sent_log(status)
+      `)
+      await db.execute(`
+        CREATE INDEX IF NOT EXISTS idx_email_sent_log_created ON email_sent_log(created_at)
+      `)
+      await db.execute(`
+        CREATE INDEX IF NOT EXISTS idx_email_sent_log_type_status ON email_sent_log(email_type, status)
+      `)
       console.log("✓ Added email_sent_log table")
+    } else {
+      // Ensure all indexes exist for existing email_sent_log table
+      const existingEmailLogIndexes = await db.execute(`
+        SELECT name FROM sqlite_master 
+        WHERE type='index' AND tbl_name='email_sent_log' AND name LIKE 'idx_email_sent_log_%'
+      `)
+      const emailLogIndexNames = new Set(
+        existingEmailLogIndexes.rows.map((row: any) => row.name)
+      )
+      
+      if (!emailLogIndexNames.has("idx_email_sent_log_type")) {
+        await db.execute(`CREATE INDEX IF NOT EXISTS idx_email_sent_log_type ON email_sent_log(email_type)`)
+        console.log("✓ Added idx_email_sent_log_type index")
+      }
+      if (!emailLogIndexNames.has("idx_email_sent_log_status")) {
+        await db.execute(`CREATE INDEX IF NOT EXISTS idx_email_sent_log_status ON email_sent_log(status)`)
+        console.log("✓ Added idx_email_sent_log_status index")
+      }
+      if (!emailLogIndexNames.has("idx_email_sent_log_created")) {
+        await db.execute(`CREATE INDEX IF NOT EXISTS idx_email_sent_log_created ON email_sent_log(created_at)`)
+        console.log("✓ Added idx_email_sent_log_created index")
+      }
+      if (!emailLogIndexNames.has("idx_email_sent_log_type_status")) {
+        await db.execute(`CREATE INDEX IF NOT EXISTS idx_email_sent_log_type_status ON email_sent_log(email_type, status)`)
+        console.log("✓ Added idx_email_sent_log_type_status index")
+      }
+    }
+
+    // Ensure all indexes exist for email_queue table
+    if (existingTables.has("email_queue")) {
+      const existingEmailQueueIndexes = await db.execute(`
+        SELECT name FROM sqlite_master 
+        WHERE type='index' AND tbl_name='email_queue' AND name LIKE 'idx_email_queue_%'
+      `)
+      const emailQueueIndexNames = new Set(
+        existingEmailQueueIndexes.rows.map((row: any) => row.name)
+      )
+      
+      if (!emailQueueIndexNames.has("idx_email_queue_critical")) {
+        await db.execute(`CREATE INDEX IF NOT EXISTS idx_email_queue_critical ON email_queue(status, email_type, created_at)`)
+        console.log("✓ Added idx_email_queue_critical index")
+      }
+      if (!emailQueueIndexNames.has("idx_email_queue_type")) {
+        await db.execute(`CREATE INDEX IF NOT EXISTS idx_email_queue_type ON email_queue(email_type)`)
+        console.log("✓ Added idx_email_queue_type index")
+      }
+      if (!emailQueueIndexNames.has("idx_email_queue_recipient")) {
+        await db.execute(`CREATE INDEX IF NOT EXISTS idx_email_queue_recipient ON email_queue(recipient_email)`)
+        console.log("✓ Added idx_email_queue_recipient index")
+      }
+      if (!emailQueueIndexNames.has("idx_email_queue_scheduled")) {
+        await db.execute(`CREATE INDEX IF NOT EXISTS idx_email_queue_scheduled ON email_queue(scheduled_at)`)
+        console.log("✓ Added idx_email_queue_scheduled index")
+      }
+      if (!emailQueueIndexNames.has("idx_email_queue_status_type_created")) {
+        await db.execute(`CREATE INDEX IF NOT EXISTS idx_email_queue_status_type_created ON email_queue(status, email_type, created_at)`)
+        console.log("✓ Added idx_email_queue_status_type_created index")
+      }
     }
 
     // Migrate error_logs table: add if it doesn't exist

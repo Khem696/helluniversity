@@ -21,14 +21,11 @@ function timestampToBangkokDateString(timestamp: number): string {
 
 // Valid status transitions matrix
 const VALID_STATUS_TRANSITIONS: Record<string, string[]> = {
-  pending: ["accepted", "rejected", "postponed", "cancelled"],
-  accepted: ["paid_deposit", "postponed", "cancelled", "finished"],
-  paid_deposit: ["checked-in", "postponed", "cancelled", "pending_deposit"], // pending_deposit if deposit rejected
-  pending_deposit: ["paid_deposit", "postponed", "cancelled"], // User can re-upload deposit
-  rejected: ["pending", "accepted", "cancelled"], // Allow re-opening rejected bookings or cancelling
-  postponed: ["accepted", "rejected", "cancelled", "pending"], // User can propose, admin accepts
-  cancelled: ["pending", "accepted"], // Allow re-opening cancelled bookings
-  "checked-in": ["finished", "postponed", "cancelled"], // User can propose new date (postponed)
+  pending: ["pending_deposit", "cancelled"], // Accept -> pending_deposit, Reject -> cancelled
+  pending_deposit: ["paid_deposit", "confirmed", "cancelled"], // User uploads deposit -> paid_deposit, Admin confirms via other channel -> confirmed, Cancel -> cancelled
+  paid_deposit: ["confirmed", "pending_deposit", "cancelled"], // Accept deposit -> confirmed, Reject deposit -> pending_deposit (user re-uploads), Cancel -> cancelled
+  confirmed: ["finished", "cancelled"], // Past end date -> finished, Cancel -> cancelled (date change doesn't change status)
+  cancelled: ["pending_deposit", "paid_deposit", "confirmed"], // Archive restoration: determined by deposit state
   finished: [], // Finished bookings cannot be changed (except deletion)
 }
 
@@ -232,27 +229,32 @@ export async function checkBookingOverlap(
     }
 
   // Find overlapping bookings that occupy time on the calendar:
-  // 1. Currently checked-in bookings (status = 'checked-in')
-  // 2. Postponed bookings that were previously checked-in (status = 'postponed' AND deposit_verified_at IS NOT NULL)
-  //    - These keep their ORIGINAL dates (start_date, end_date) blocking the calendar until admin accepts the proposed date
-  //    - The proposed dates do NOT block the calendar (they're just proposals)
+  // Only confirmed bookings block the calendar (they have verified deposits and confirmed dates)
+  // Optimized: Uses idx_bookings_status_start_date composite index for status filtering
+  const { getBangkokTime } = await import("./timezone")
+  const bangkokNow = getBangkokTime()
+  
+  // Determine if we should filter past bookings:
+  // - If the NEW booking is in the FUTURE: only check against future/current bookings (past bookings don't block)
+  // - If the NEW booking is in the PAST (historical correction): check ALL bookings including past ones (maintain data integrity)
+  // This ensures:
+  //   1. Future bookings are only blocked by future/current bookings (correct behavior)
+  //   2. Historical corrections maintain data integrity (no overlapping past bookings allowed)
+  const isNewBookingInPast = endTimestamp < bangkokNow
+  
   const query = bookingId
     ? `
       SELECT id, name, email, start_date, end_date, start_time, end_time, status
       FROM bookings
       WHERE id != ?
-        AND (
-          status = 'checked-in'
-          OR (status = 'postponed' AND deposit_verified_at IS NOT NULL)
-        )
+        AND status = 'confirmed'
+      ORDER BY start_date ASC
     `
     : `
       SELECT id, name, email, start_date, end_date, start_time, end_time, status
       FROM bookings
-      WHERE (
-        status = 'checked-in'
-        OR (status = 'postponed' AND deposit_verified_at IS NOT NULL)
-      )
+      WHERE status = 'confirmed'
+      ORDER BY start_date ASC
     `
 
   const args = bookingId ? [bookingId] : []
@@ -260,6 +262,7 @@ export async function checkBookingOverlap(
   const result = await db.execute({ sql: query, args })
 
   // Check each booking for actual time overlap
+  // Filter out past bookings (bookings that have already ended)
   const overlappingBookings: any[] = []
   
   for (const booking of result.rows) {
@@ -320,9 +323,18 @@ export async function checkBookingOverlap(
       }
     }
     
+    // Filter past bookings based on whether the NEW booking is in the past or future:
+    // - If NEW booking is in FUTURE: skip past bookings (they don't block future bookings)
+    // - If NEW booking is in PAST: check ALL bookings including past ones (maintain data integrity for historical corrections)
+    if (!isNewBookingInPast && existingEndTimestamp < bangkokNow) {
+      continue // Skip this past booking - it doesn't block future bookings
+    }
+    // If isNewBookingInPast is true, we check ALL bookings (including past ones) to maintain data integrity
+    
     // Check for time overlap: two time ranges overlap if:
-    // newStart < existingEnd AND newEnd > existingStart
-    if (startTimestamp < existingEndTimestamp && endTimestamp > existingStartTimestamp) {
+    // newStart <= existingEnd AND newEnd >= existingStart
+    // This includes boundary touches (e.g., 21-25 overlaps with 25-26)
+    if (startTimestamp <= existingEndTimestamp && endTimestamp >= existingStartTimestamp) {
       overlappingBookings.push(existingBooking)
     }
   }
@@ -338,11 +350,185 @@ export async function checkBookingOverlap(
 }
 
 /**
+ * Find ALL overlapping bookings for a given booking (not just confirmed)
+ * Used for showing overlap warnings and overlap filter
+ */
+export async function findAllOverlappingBookings(
+  bookingId: string,
+  startDate: number,
+  endDate: number | null,
+  startTime: string | null,
+  endTime: string | null
+): Promise<Array<{
+  id: string
+  name: string
+  email: string
+  reference_number: string | null
+  start_date: number
+  end_date: number | null
+  start_time: string | null
+  end_time: string | null
+  status: string
+  created_at: number
+}>> {
+  const db = getTursoClient()
+  
+  // Calculate actual start and end timestamps
+  const startTimestamp = calculateStartTimestamp(startDate, startTime)
+  
+  let endTimestamp: number
+  if (endDate) {
+    // Multiple day booking
+    if (endTime) {
+      const parsed = parseTimeString(endTime)
+      if (parsed) {
+        try {
+          const utcDate = new Date(endDate * 1000)
+          const tzDate = new TZDate(utcDate.getTime(), BANGKOK_TIMEZONE)
+          const year = tzDate.getFullYear()
+          const month = tzDate.getMonth()
+          const day = tzDate.getDate()
+          const tzDateWithTime = new TZDate(year, month, day, parsed.hour24, parsed.minutes, 0, BANGKOK_TIMEZONE)
+          endTimestamp = Math.floor(tzDateWithTime.getTime() / 1000)
+        } catch (error) {
+          endTimestamp = endDate
+        }
+      } else {
+        endTimestamp = endDate
+      }
+    } else {
+      endTimestamp = endDate
+    }
+  } else {
+    // Single day booking
+    if (endTime) {
+      const parsed = parseTimeString(endTime)
+      if (parsed) {
+        try {
+          const utcDate = new Date(startDate * 1000)
+          const tzDate = new TZDate(utcDate.getTime(), BANGKOK_TIMEZONE)
+          const year = tzDate.getFullYear()
+          const month = tzDate.getMonth()
+          const day = tzDate.getDate()
+          const tzDateWithTime = new TZDate(year, month, day, parsed.hour24, parsed.minutes, 0, BANGKOK_TIMEZONE)
+          endTimestamp = Math.floor(tzDateWithTime.getTime() / 1000)
+        } catch (error) {
+          endTimestamp = startTimestamp
+        }
+      } else {
+        endTimestamp = startTimestamp
+      }
+    } else {
+      endTimestamp = startTimestamp
+    }
+  }
+
+  // Get all bookings (except cancelled and finished) that might overlap
+  // We check all active statuses to show full overlap context
+  const query = `
+    SELECT id, name, email, reference_number, start_date, end_date, start_time, end_time, status, created_at
+    FROM bookings
+    WHERE id != ?
+      AND status NOT IN ('cancelled', 'finished')
+    ORDER BY created_at DESC
+  `
+
+  const result = await db.execute({ sql: query, args: [bookingId] })
+
+  const overlappingBookings: Array<{
+    id: string
+    name: string
+    email: string
+    reference_number: string | null
+    start_date: number
+    end_date: number | null
+    start_time: string | null
+    end_time: string | null
+    status: string
+    created_at: number
+  }> = []
+  
+  for (const booking of result.rows) {
+    const existingBooking = booking as any
+    
+    // Calculate existing booking's start and end timestamps
+    const existingStartTimestamp = calculateStartTimestamp(
+      existingBooking.start_date,
+      existingBooking.start_time
+    )
+    
+    let existingEndTimestamp: number
+    if (existingBooking.end_date) {
+      if (existingBooking.end_time) {
+        const parsed = parseTimeString(existingBooking.end_time)
+        if (parsed) {
+          try {
+            const utcDate = new Date(existingBooking.end_date * 1000)
+            const tzDate = new TZDate(utcDate.getTime(), BANGKOK_TIMEZONE)
+            const year = tzDate.getFullYear()
+            const month = tzDate.getMonth()
+            const day = tzDate.getDate()
+            const tzDateWithTime = new TZDate(year, month, day, parsed.hour24, parsed.minutes, 0, BANGKOK_TIMEZONE)
+            existingEndTimestamp = Math.floor(tzDateWithTime.getTime() / 1000)
+          } catch (error) {
+            existingEndTimestamp = existingBooking.end_date
+          }
+        } else {
+          existingEndTimestamp = existingBooking.end_date
+        }
+      } else {
+        existingEndTimestamp = existingBooking.end_date
+      }
+    } else {
+      if (existingBooking.end_time) {
+        const parsed = parseTimeString(existingBooking.end_time)
+        if (parsed) {
+          try {
+            const utcDate = new Date(existingBooking.start_date * 1000)
+            const tzDate = new TZDate(utcDate.getTime(), BANGKOK_TIMEZONE)
+            const year = tzDate.getFullYear()
+            const month = tzDate.getMonth()
+            const day = tzDate.getDate()
+            const tzDateWithTime = new TZDate(year, month, day, parsed.hour24, parsed.minutes, 0, BANGKOK_TIMEZONE)
+            existingEndTimestamp = Math.floor(tzDateWithTime.getTime() / 1000)
+          } catch (error) {
+            existingEndTimestamp = existingStartTimestamp
+          }
+        } else {
+          existingEndTimestamp = existingStartTimestamp
+        }
+      } else {
+        existingEndTimestamp = existingStartTimestamp
+      }
+    }
+    
+    // Check for time overlap: two time ranges overlap if:
+    // newStart <= existingEnd AND newEnd >= existingStart
+    // This includes boundary touches (e.g., 21-25 overlaps with 25-26)
+    if (startTimestamp <= existingEndTimestamp && endTimestamp >= existingStartTimestamp) {
+      overlappingBookings.push({
+        id: existingBooking.id,
+        name: existingBooking.name,
+        email: existingBooking.email,
+        reference_number: existingBooking.reference_number,
+        start_date: existingBooking.start_date,
+        end_date: existingBooking.end_date,
+        start_time: existingBooking.start_time,
+        end_time: existingBooking.end_time,
+        status: existingBooking.status,
+        created_at: existingBooking.created_at,
+      })
+    }
+  }
+
+  return overlappingBookings
+}
+
+/**
  * Get unavailable dates and time ranges for calendar
- * Returns dates that have checked-in bookings
+ * Returns dates that have confirmed bookings
  * 
  * @param excludeBookingId - Optional booking ID to exclude from unavailable dates
- *                          (allows users to select their own original dates when proposing)
  */
 export async function getUnavailableDates(excludeBookingId?: string | null): Promise<{
   unavailableDates: string[] // ISO date strings (YYYY-MM-DD)
@@ -355,132 +541,30 @@ export async function getUnavailableDates(excludeBookingId?: string | null): Pro
   }>
 }> {
   const db = getTursoClient()
+  const { getBangkokTime } = await import("./timezone")
+  const bangkokNow = getBangkokTime()
   
-  // Get all bookings that occupy time on the calendar:
-  // 1. Currently checked-in bookings (status = 'checked-in')
-  // 2. Postponed bookings that were previously checked-in (status = 'postponed' AND deposit_verified_at IS NOT NULL)
-  //    - These use their ORIGINAL dates (start_date, end_date), not proposed dates
-  //    - The original dates remain blocked until admin accepts the proposed date
-  // First, let's check all bookings to see what statuses exist
-  const allBookingsCheck = await db.execute({
-    sql: `
-      SELECT id, status, start_date, end_date, deposit_verified_at
+  // Get all confirmed bookings that occupy time on the calendar
+  // Only future/current bookings block the calendar (past bookings are already finished)
+  // Optimized: Uses idx_bookings_status_start_date composite index for status filtering and ordering
+  const query = excludeBookingId
+    ? `
+      SELECT start_date, end_date, start_time, end_time, status, id
       FROM bookings
-      WHERE start_date >= ? OR end_date >= ?
-      ORDER BY start_date DESC
-      LIMIT 10
-    `,
-    args: [Math.floor(Date.now() / 1000) - 86400 * 365, Math.floor(Date.now() / 1000) - 86400 * 365], // Last year
-  })
-  
-  console.log(`[getUnavailableDates] Recent bookings check:`, allBookingsCheck.rows.map((row: any) => ({
-    id: row.id,
-    status: row.status,
-    start_date: row.start_date,
-    deposit_verified_at: row.deposit_verified_at
-  })))
-  
-  // Query for checked-in bookings - try multiple variations
-  // SQLite/Turso might store status differently, so we check multiple formats
-  // CRITICAL: Must select deposit_verified_at to check if postponed bookings were previously checked-in
-  const result = await db.execute({
-    sql: `
-      SELECT start_date, end_date, start_time, end_time, status, id, deposit_verified_at
-      FROM bookings
-      WHERE (
-        status = 'checked-in'
-        OR status = 'Checked In'
-        OR status LIKE '%checked%'
-        OR (status = 'postponed' AND deposit_verified_at IS NOT NULL)
-      )
+      WHERE status = 'confirmed' AND id != ?
       ORDER BY start_date ASC
-    `,
-    args: [],
-  })
+    `
+    : `
+      SELECT start_date, end_date, start_time, end_time, status, id
+      FROM bookings
+      WHERE status = 'confirmed'
+      ORDER BY start_date ASC
+    `
   
-  console.log(`[getUnavailableDates] Query found ${result.rows.length} bookings with status variations`)
+  const args = excludeBookingId ? [excludeBookingId] : []
+  const result = await db.execute({ sql: query, args })
   
-  // Filter in JavaScript to ensure we get the right statuses
-  const filteredRows = result.rows.filter((row: any) => {
-    const status = String(row.status || '').toLowerCase().trim()
-    const isCheckedIn = status === 'checked-in' || status === 'checked in'
-    const isPostponedWithDeposit = status === 'postponed' && row.deposit_verified_at
-    const shouldInclude = isCheckedIn || isPostponedWithDeposit
-    
-    // Debug logging for postponed bookings
-    if (status === 'postponed') {
-      console.log(`[getUnavailableDates] Postponed booking check:`, {
-        id: row.id,
-        status: row.status,
-        deposit_verified_at: row.deposit_verified_at,
-        start_date: row.start_date,
-        end_date: row.end_date,
-        shouldInclude,
-        reason: isPostponedWithDeposit ? 'Has deposit_verified_at' : 'Missing deposit_verified_at'
-      })
-    }
-    
-    return shouldInclude
-  })
-  
-  console.log(`[getUnavailableDates] After filtering: ${filteredRows.length} bookings`)
-  
-  // Filter out the current booking if excludeBookingId is provided
-  // This allows users to select their own original dates when proposing a new date
-  const rowsToProcess = excludeBookingId
-    ? filteredRows.filter((row: any) => row.id !== excludeBookingId)
-    : filteredRows
-  
-  if (excludeBookingId && filteredRows.length !== rowsToProcess.length) {
-    console.log(`[getUnavailableDates] Excluding booking ${excludeBookingId} from unavailable dates (user can select their own original dates)`)
-  }
-  
-  // Log details of postponed bookings with deposit_verified_at
-  const postponedBookings = rowsToProcess.filter((row: any) => String(row.status || '').toLowerCase().trim() === 'postponed')
-  if (postponedBookings.length > 0) {
-    console.log(`[getUnavailableDates] Found ${postponedBookings.length} postponed bookings with deposit_verified_at (original dates should be blocked):`)
-    postponedBookings.forEach((row: any, idx: number) => {
-      // CRITICAL: Format timestamps in Bangkok timezone for debug logging
-    const startDateStr = row.start_date 
-      ? timestampToBangkokDateString(row.start_date) + ' GMT+7'
-      : 'null'
-    const endDateStr = row.end_date 
-      ? timestampToBangkokDateString(row.end_date) + ' GMT+7'
-      : 'null'
-    
-    console.log(`[getUnavailableDates] Postponed booking ${idx + 1}:`, {
-        id: row.id,
-        start_date: row.start_date,
-        end_date: row.end_date,
-        start_date_str: startDateStr,
-        end_date_str: endDateStr,
-        deposit_verified_at: row.deposit_verified_at
-      })
-    })
-  }
-  
-  // Create a result-like object with filtered rows
-  const finalResult = {
-    rows: rowsToProcess
-  }
-  
-  // Debug: Log found bookings
-  console.log(`[getUnavailableDates] Query executed, found ${finalResult.rows.length} bookings`)
-  if (finalResult.rows.length > 0) {
-    console.log(`[getUnavailableDates] Found ${finalResult.rows.length} bookings blocking calendar`)
-    // CRITICAL: Format timestamps in Bangkok timezone for debug logging
-    finalResult.rows.forEach((row: any, idx: number) => {
-      const startDateStr = row.start_date 
-        ? timestampToBangkokDateString(row.start_date) + ' GMT+7'
-        : 'null'
-      const endDateStr = row.end_date 
-        ? timestampToBangkokDateString(row.end_date) + ' GMT+7'
-        : 'null'
-      console.log(`[getUnavailableDates] Booking ${idx + 1}: id=${row.id}, status="${row.status}", start_date=${row.start_date} (${startDateStr}), end_date=${row.end_date || 'null'}${row.end_date ? ` (${endDateStr})` : ''}`)
-    })
-  } else {
-    console.log(`[getUnavailableDates] No checked-in bookings found. Query: status='checked-in' OR (status='postponed' AND deposit_verified_at IS NOT NULL)`)
-  }
+  console.log(`[getUnavailableDates] Query executed, found ${result.rows.length} confirmed bookings blocking calendar`)
 
   const unavailableDates = new Set<string>()
   const unavailableTimeRanges: Array<{
@@ -491,7 +575,7 @@ export async function getUnavailableDates(excludeBookingId?: string | null): Pro
     endDate: number
   }> = []
 
-  for (const row of finalResult.rows) {
+  for (const row of result.rows) {
     const booking = row as any
     const startTimestamp = calculateStartTimestamp(booking.start_date, booking.start_time)
     
@@ -540,6 +624,12 @@ export async function getUnavailableDates(excludeBookingId?: string | null): Pro
       } else {
         endTimestamp = startTimestamp
       }
+    }
+    
+    // Skip past bookings - only future/current bookings should block the calendar
+    // Past bookings are already finished and shouldn't prevent new bookings
+    if (endTimestamp < bangkokNow) {
+      continue // Skip this booking - it's in the past
     }
 
     // Add all dates in the range to unavailable dates

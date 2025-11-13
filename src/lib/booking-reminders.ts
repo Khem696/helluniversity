@@ -34,26 +34,30 @@ export async function sendBookingReminders(): Promise<{
   let sent24Hour = 0
   let errors = 0
 
-  // Find bookings that need 7-day reminders (accepted or checked-in, start date in 6-8 days)
+  // Find bookings that need 7-day reminders (confirmed bookings, start date in 6-8 days)
+  // Optimized: Uses idx_bookings_status_start_date composite index for status + date range filtering
   const sevenDayBookings = await db.execute({
     sql: `
       SELECT id, start_date, start_time, status, email
       FROM bookings
-      WHERE status IN ('accepted', 'checked-in')
+      WHERE status = 'confirmed'
         AND start_date >= ?
         AND start_date <= ?
+      ORDER BY start_date ASC
     `,
     args: [sevenDaysFromNow - (24 * 60 * 60), sevenDaysWindow],
   })
 
-  // Find bookings that need 24-hour reminders (accepted or checked-in, start date in 23-25 hours)
+  // Find bookings that need 24-hour reminders (confirmed bookings, start date in 23-25 hours)
+  // Optimized: Uses idx_bookings_status_start_date composite index for status + date range filtering
   const oneDayBookings = await db.execute({
     sql: `
       SELECT id, start_date, start_time, status, email
       FROM bookings
-      WHERE status IN ('accepted', 'checked-in')
+      WHERE status = 'confirmed'
         AND start_date >= ?
         AND start_date <= ?
+      ORDER BY start_date ASC
     `,
     args: [oneDayFromNow - (60 * 60), oneDayWindow],
   })

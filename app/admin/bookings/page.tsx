@@ -11,9 +11,11 @@ import {
   Dialog,
   DialogContent,
   DialogDescription,
+  DialogFooter,
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog"
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import {
   Select,
   SelectContent,
@@ -42,6 +44,8 @@ import {
   CalendarX,
   Archive,
   Trash2,
+  MessageCircle,
+  AlertTriangle,
 } from "lucide-react"
 import Link from "next/link"
 import { toast } from "sonner"
@@ -50,10 +54,14 @@ import { TZDate } from '@date-fns/tz'
 import { BookingStateInfo } from "@/components/admin/BookingStateInfo"
 import { ActionConfirmationDialog } from "@/components/admin/ActionConfirmationDialog"
 import { useBookingActions } from "@/hooks/useBookingActions"
-import { getAvailableActions, type ActionDefinition } from "@/lib/booking-state-machine"
+import { getAvailableActions, mapActionToStatus, type ActionDefinition } from "@/lib/booking-state-machine"
 import { calculateStartTimestamp } from "@/lib/booking-validations"
 import { getBangkokTime } from "@/lib/timezone"
 import { useAdminData } from "@/hooks/useAdminData"
+import { SimpleCalendar } from "@/components/ui/simple-calendar"
+import { TimePicker } from "@/components/ui/time-picker"
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
+import { dateToBangkokDateString } from "@/lib/timezone-client"
 
 // Helper function to add AM/PM to 24-hour time format for display
 // Converts "13:00" -> "13:00 PM", "09:30" -> "09:30 AM", "00:00" -> "00:00 AM"
@@ -93,7 +101,7 @@ interface Booking {
   introduction: string | null
   biography: string | null
   special_requests: string | null
-  status: "pending" | "accepted" | "rejected" | "postponed" | "cancelled" | "finished" | "checked-in" | "paid_deposit" | "pending_deposit"
+  status: "pending" | "pending_deposit" | "paid_deposit" | "confirmed" | "cancelled" | "finished"
   admin_notes: string | null
   response_token: string | null
   token_expires_at: number | null
@@ -123,18 +131,47 @@ export default function BookingsPage() {
   const [saving, setSaving] = useState(false)
   const [selectedBooking, setSelectedBooking] = useState<Booking | null>(null)
   const [statusHistory, setStatusHistory] = useState<StatusHistory[]>([])
+  const [overlappingBookings, setOverlappingBookings] = useState<Array<{
+    id: string
+    name: string
+    email: string
+    reference_number: string | null
+    start_date: number
+    end_date: number | null
+    start_time: string | null
+    end_time: string | null
+    status: string
+    created_at: number
+  }>>([])
+  const [hasConfirmedOverlap, setHasConfirmedOverlap] = useState(false)
   const [viewDialogOpen, setViewDialogOpen] = useState(false)
+  const [loadingBookingDetails, setLoadingBookingDetails] = useState(false)
   const [statusDialogOpen, setStatusDialogOpen] = useState(false)
   const [statusFilter, setStatusFilter] = useState<string>("all")
   const [emailFilter, setEmailFilter] = useState("")
+  const [referenceNumberFilter, setReferenceNumberFilter] = useState("")
+  const [nameFilter, setNameFilter] = useState("")
+  const [phoneFilter, setPhoneFilter] = useState("")
+  const [eventTypeFilter, setEventTypeFilter] = useState<string>("all")
+  const [showOverlappingOnly, setShowOverlappingOnly] = useState(false)
+  const [sortBy, setSortBy] = useState<"created_at" | "start_date" | "name" | "updated_at">("created_at")
+  const [sortOrder, setSortOrder] = useState<"ASC" | "DESC">("DESC")
   const [proposedDateRange, setProposedDateRange] = useState<"single" | "multiple">("single")
   const [postponeMode, setPostponeMode] = useState<"user-propose" | "admin-propose">("user-propose")
   const [selectedStatusInForm, setSelectedStatusInForm] = useState<string>("")
-  const [selectedAction, setSelectedAction] = useState<"accept" | "reject" | "postpone" | null>(null)
+  const [selectedAction, setSelectedAction] = useState<"accept" | "reject" | "accept_deposit" | "accept_deposit_other_channel" | "reject_deposit" | "cancel" | "change_date" | "confirm_other_channel" | null>(null)
+  // Date change state
+  const [newStartDate, setNewStartDate] = useState<Date | null>(null)
+  const [newEndDate, setNewEndDate] = useState<Date | null>(null)
+  const [newStartTime, setNewStartTime] = useState<string>("")
+  const [newEndTime, setNewEndTime] = useState<string>("")
+  const [showPastDateWarning, setShowPastDateWarning] = useState(false)
   const [newResponsesCount, setNewResponsesCount] = useState<number>(0)
   const [confirmationDialogOpen, setConfirmationDialogOpen] = useState(false)
   const [pendingAction, setPendingAction] = useState<ActionDefinition | null>(null)
   const [pendingValidation, setPendingValidation] = useState<any>(null)
+  const [otherChannelConfirmText, setOtherChannelConfirmText] = useState("")
+  const [otherChannelDialogOpen, setOtherChannelDialogOpen] = useState(false)
   
   // Use refs to track current values without causing dependency array changes
   const selectedBookingRef = useRef<Booking | null>(null)
@@ -152,6 +189,16 @@ export default function BookingsPage() {
     viewDialogOpenRef.current = viewDialogOpen
   }, [viewDialogOpen])
   
+  // Event types for filter dropdown
+  const eventTypes = [
+    { value: "all", label: "All Event Types" },
+    { value: "Arts & Design Coaching", label: "Arts & Design Coaching Workshop" },
+    { value: "Seminar & Workshop", label: "Seminar & Workshop" },
+    { value: "Family Gathering", label: "Family Gathering" },
+    { value: "Holiday Festive", label: "Holiday Festive" },
+    { value: "Other", label: "Other" },
+  ]
+  
   // Build endpoint with filters (memoized to trigger refetch when filters change)
   const endpoint = useMemo(() => {
     const params = new URLSearchParams()
@@ -161,9 +208,26 @@ export default function BookingsPage() {
     if (emailFilter) {
       params.append("email", emailFilter)
     }
+    if (referenceNumberFilter) {
+      params.append("referenceNumber", referenceNumberFilter)
+    }
+    if (nameFilter) {
+      params.append("name", nameFilter)
+    }
+    if (phoneFilter) {
+      params.append("phone", phoneFilter)
+    }
+    if (eventTypeFilter !== "all") {
+      params.append("eventType", eventTypeFilter)
+    }
+    if (showOverlappingOnly) {
+      params.append("showOverlappingOnly", "true")
+    }
+    params.append("sortBy", sortBy)
+    params.append("sortOrder", sortOrder)
     params.append("limit", "1000")
     return `/api/admin/bookings?${params.toString()}`
-  }, [statusFilter, emailFilter])
+  }, [statusFilter, emailFilter, referenceNumberFilter, nameFilter, phoneFilter, eventTypeFilter, showOverlappingOnly, sortBy, sortOrder])
   
   // Use useAdminData hook for bookings (polling disabled - we have custom polling)
   const {
@@ -193,6 +257,12 @@ export default function BookingsPage() {
     onSuccess: () => {
       setStatusDialogOpen(false)
       setSelectedAction(null)
+      // Reset date change state
+      setNewStartDate(null)
+      setNewEndDate(null)
+      setNewStartTime("")
+      setNewEndTime("")
+      setShowPastDateWarning(false)
       setSelectedStatusInForm("")
       setPostponeMode("user-propose")
       setProposedDateRange("single")
@@ -342,7 +412,7 @@ export default function BookingsPage() {
               const lastKnown = lastStatusCheckRef.current.get(booking.id)
               if (lastKnown && lastKnown.status !== booking.status) {
                 // Special notification for deposit uploads
-                const isDepositUpload = lastKnown.status === "accepted" && booking.status === "paid_deposit"
+                const isDepositUpload = lastKnown.status === "pending_deposit" && booking.status === "pending_deposit" && booking.deposit_evidence_url
                 
                 if (isDepositUpload) {
                   toast.success(`Deposit Evidence Uploaded: ${booking.name}`, {
@@ -421,8 +491,10 @@ export default function BookingsPage() {
 
   // Fetch booking details and history
   const fetchBookingDetails = async (bookingId: string) => {
+    setLoadingBookingDetails(true)
     try {
-      const response = await fetch(`/api/admin/bookings/${bookingId}`)
+      // Add cache-busting parameter to ensure fresh data
+      const response = await fetch(`/api/admin/bookings/${bookingId}?t=${Date.now()}`)
       const json = await response.json()
       
       if (json.success && json.data) {
@@ -434,6 +506,9 @@ export default function BookingsPage() {
         if (booking) {
           setSelectedBooking(booking)
           setStatusHistory(statusHistory)
+          // Store overlapping bookings and confirmed overlap status
+          setOverlappingBookings(json.data.overlappingBookings || [])
+          setHasConfirmedOverlap(json.data.hasConfirmedOverlap || false)
           // Reset postpone mode when opening dialog
           setPostponeMode("user-propose")
           setProposedDateRange("single")
@@ -448,6 +523,8 @@ export default function BookingsPage() {
     } catch (error) {
       toast.error("Failed to load booking details")
       console.error(error)
+    } finally {
+      setLoadingBookingDetails(false)
     }
   }
 
@@ -456,7 +533,7 @@ export default function BookingsPage() {
     // Find the booking to check its status
     const booking = bookings.find(b => b.id === bookingId)
     let statusText = ""
-    if (booking?.status === "rejected" || booking?.status === "cancelled" || booking?.status === "finished") {
+    if (booking?.status === "cancelled" || booking?.status === "finished") {
       statusText = booking?.status === "finished"
         ? "Only admin will be notified. No user email will be sent as the event has already finished."
         : "Only admin will be notified of this deletion."
@@ -520,17 +597,10 @@ export default function BookingsPage() {
     }
   }
 
-  // Map admin action to status
-  const mapActionToStatus = (action: "accept" | "reject" | "postpone", currentStatus: string): string => {
-    if (action === "accept") {
-      // Accept always maps to "accepted" - backend will handle deposit carry-over logic
-      return "accepted"
-    } else if (action === "reject") {
-      return "rejected"
-    } else if (action === "postpone") {
-      return "postponed"
-    }
-    return currentStatus
+  // Map admin action to status (using state machine)
+  const mapActionToStatusLocal = (action: string, currentStatus: string): string => {
+    // Use state machine to get target status
+    return mapActionToStatus(action as any, currentStatus as any) || currentStatus
   }
 
   // Handle action update with validation
@@ -538,40 +608,25 @@ export default function BookingsPage() {
     e.preventDefault()
     if (!selectedBooking) return
 
-    // Prevent action updates for checked-in bookings
-    if ((selectedBooking.status as string) === "checked-in") {
-      toast.error("Cannot update status for checked-in bookings. Only deletion is allowed.")
-      return
-    }
-
     if (!selectedAction) {
-      toast.error("Please select an action (Accept, Reject, or Postpone)")
+      toast.error("Please select an action")
       return
     }
 
     // Check if booking date is in the past
     const now = getBangkokTime()
-    const checkDate = selectedBooking.proposed_date && selectedBooking.status === "postponed" 
-      ? selectedBooking.proposed_date 
-      : selectedBooking.start_date
-    const startTimestamp = calculateStartTimestamp(checkDate, selectedBooking.start_time || null)
+    const startTimestamp = calculateStartTimestamp(selectedBooking.start_date, selectedBooking.start_time || null)
     const isDateInPast = startTimestamp < now
 
     // Get available actions from state machine
     const availableActions = getAvailableActions(
       selectedBooking.status as any,
-      Boolean(selectedBooking.proposed_date),
       Boolean(selectedBooking.deposit_evidence_url),
       isDateInPast
     )
     
     // Find the selected action definition
-    const actionDef = availableActions.find(
-      (a) => 
-        (selectedAction === "accept" && a.id === "accept") ||
-        (selectedAction === "reject" && a.id === "reject") ||
-        (selectedAction === "postpone" && a.id === "postpone")
-    )
+    const actionDef = availableActions.find((a) => a.id === selectedAction)
 
     if (!actionDef) {
       toast.error(`Action "${selectedAction}" is not available for status "${selectedBooking.status}"`)
@@ -617,14 +672,46 @@ export default function BookingsPage() {
     const adminNotes = formData.get("admin_notes") as string
     
     // Map action to status
-    const status = mapActionToStatus(selectedAction!, selectedBooking.status)
+    const status = mapActionToStatusLocal(selectedAction!, selectedBooking.status)
     
-    // For postpone action: Admin requests user to propose - no dates from admin
-    let proposedDate: string | null = null
-    
-    if (selectedAction === "postpone") {
-      proposedDate = null
+    // Handle date change for confirmed bookings
+    let dateChangePayload: any = {}
+    if (selectedAction === "change_date" && selectedBooking.status === "confirmed") {
+      if (!newStartDate) {
+        toast.error("Please select a new start date")
+        setSaving(false)
+        return
+      }
+      
+      // Check for past date warning
+      const bangkokNow = getBangkokTime()
+      const startTimestamp = calculateStartTimestamp(
+        Math.floor(newStartDate.getTime() / 1000),
+        newStartTime || selectedBooking.start_time || null
+      )
+      const isPast = startTimestamp < bangkokNow
+      
+      if (isPast && !showPastDateWarning) {
+        toast.error("Please acknowledge the past date warning before proceeding")
+        setSaving(false)
+        return
+      }
+
+      dateChangePayload = {
+        newStartDate: dateToBangkokDateString(newStartDate),
+        newEndDate: newEndDate ? dateToBangkokDateString(newEndDate) : (selectedBooking.end_date ? null : undefined),
+        newStartTime: newStartTime || selectedBooking.start_time || undefined,
+        newEndTime: newEndTime || selectedBooking.end_time || undefined,
+      }
     }
+
+    // No proposed dates in new flow (date changes handled separately for confirmed bookings)
+    let proposedDate: string | null = null
+
+    // Automatically use admin email for deposit verification when accepting deposit
+    const adminEmail = session?.user?.email || session?.user?.name || "Admin"
+    const shouldVerifyDeposit = (selectedAction === "accept_deposit" && status === "confirmed")
+    const depositVerifiedBy = shouldVerifyDeposit ? adminEmail : undefined
 
     try {
       const response = await fetch(`/api/admin/bookings/${selectedBooking.id}`, {
@@ -632,14 +719,16 @@ export default function BookingsPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           status: status,
+          action: selectedAction, // Pass action to API to detect "other channel" actions
           changeReason: changeReason || null,
           adminNotes: adminNotes || null,
+          depositVerifiedBy: depositVerifiedBy, // Automatically use admin email
           proposedDate: proposedDate,
           proposedStartDate: null,
           proposedEndDate: null,
           proposedStartTime: null,
           proposedEndTime: null,
-          depositVerifiedBy: null,
+          ...dateChangePayload,
         }),
       })
 
@@ -651,7 +740,17 @@ export default function BookingsPage() {
         if (updatedBooking && selectedBooking) {
           replaceItem(selectedBooking.id, updatedBooking)
         }
-        toast.success(`Booking ${selectedAction === "accept" ? "accepted" : selectedAction === "reject" ? "rejected" : "postponed"} successfully. Email notification sent.`)
+        const actionLabels: Record<string, string> = {
+          accept: "accepted",
+          reject: "rejected",
+          accept_deposit: "deposit accepted",
+          accept_deposit_other_channel: "confirmed (other channel)",
+          confirm_other_channel: "confirmed (other channel)",
+          reject_deposit: "deposit rejected",
+          cancel: "cancelled",
+          change_date: "date changed"
+        }
+        toast.success(`Booking ${actionLabels[selectedAction || ""] || "updated"} successfully. Email notification sent.`)
         setStatusDialogOpen(false)
         setSelectedAction(null)
         setSelectedStatusInForm("")
@@ -740,28 +839,21 @@ export default function BookingsPage() {
   const getStatusBadge = (status: string) => {
     const variants: Record<string, "default" | "secondary" | "destructive" | "outline"> = {
       pending: "outline",
-      accepted: "default",
-      paid_deposit: "secondary",
-      rejected: "destructive",
-      postponed: "secondary",
+      pending_deposit: "secondary",
+      confirmed: "default",
       cancelled: "destructive",
       finished: "default",
-      "checked-in": "default",
     }
     const colors: Record<string, string> = {
       pending: "bg-yellow-100 text-yellow-800 border-yellow-300",
-      accepted: "bg-green-100 text-green-800 border-green-300",
-      paid_deposit: "bg-purple-100 text-purple-800 border-purple-300",
       pending_deposit: "bg-orange-100 text-orange-800 border-orange-300",
-      rejected: "bg-red-100 text-red-800 border-red-300",
-      postponed: "bg-blue-100 text-blue-800 border-blue-300",
+      confirmed: "bg-green-100 text-green-800 border-green-300",
       cancelled: "bg-gray-100 text-gray-800 border-gray-300",
       finished: "bg-gray-100 text-gray-800 border-gray-300",
-      "checked-in": "bg-emerald-100 text-emerald-800 border-emerald-300",
     }
     return (
       <Badge className={colors[status] || ""} variant={variants[status] || "default"}>
-        {status === "checked-in" ? "Checked In" : status === "paid_deposit" ? "Paid Deposit" : status === "pending_deposit" ? "Pending Deposit" : status.charAt(0).toUpperCase() + status.slice(1)}
+        {status === "pending_deposit" ? "Pending Deposit" : status === "confirmed" ? "Confirmed" : status.charAt(0).toUpperCase() + status.slice(1)}
       </Badge>
     )
   }
@@ -852,7 +944,9 @@ export default function BookingsPage() {
       </div>
 
       {/* Filters */}
-      <div className="mb-6 flex flex-col sm:flex-row gap-4">
+      <div className="mb-6 space-y-4">
+        {/* First Row: Status, Event Type, Sort By, Sort Order */}
+        <div className="flex flex-col sm:flex-row gap-4">
         <Select value={statusFilter} onValueChange={setStatusFilter}>
           <SelectTrigger className="w-full sm:w-48">
             <SelectValue placeholder="Filter by status" />
@@ -860,16 +954,81 @@ export default function BookingsPage() {
           <SelectContent>
             <SelectItem value="all">All Statuses</SelectItem>
             <SelectItem value="pending">Pending</SelectItem>
-            <SelectItem value="accepted">Accepted</SelectItem>
-            <SelectItem value="postponed">Postponed</SelectItem>
+              <SelectItem value="pending_deposit">Pending Deposit</SelectItem>
+              <SelectItem value="confirmed">Confirmed</SelectItem>
           </SelectContent>
         </Select>
+          <Select value={eventTypeFilter} onValueChange={setEventTypeFilter}>
+            <SelectTrigger className="w-full sm:w-48">
+              <SelectValue placeholder="Filter by event type" />
+            </SelectTrigger>
+            <SelectContent>
+              {eventTypes.map((type) => (
+                <SelectItem key={type.value} value={type.value}>
+                  {type.label}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          <Select value={sortBy} onValueChange={(value) => setSortBy(value as typeof sortBy)}>
+            <SelectTrigger className="w-full sm:w-48">
+              <SelectValue placeholder="Sort by" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="created_at">Created Date</SelectItem>
+              <SelectItem value="start_date">Start Date</SelectItem>
+              <SelectItem value="name">Name</SelectItem>
+              <SelectItem value="updated_at">Updated Date</SelectItem>
+            </SelectContent>
+          </Select>
+          <Select value={sortOrder} onValueChange={(value) => setSortOrder(value as typeof sortOrder)}>
+            <SelectTrigger className="w-full sm:w-32">
+              <SelectValue placeholder="Order" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="DESC">Descending</SelectItem>
+              <SelectItem value="ASC">Ascending</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
+        {/* Second Row: Search Fields */}
+        <div className="flex flex-col sm:flex-row gap-4">
+          <Input
+            placeholder="Search by reference number..."
+            value={referenceNumberFilter}
+            onChange={(e) => setReferenceNumberFilter(e.target.value)}
+            className="w-full sm:w-48"
+          />
+          <Input
+            placeholder="Search by name..."
+            value={nameFilter}
+            onChange={(e) => setNameFilter(e.target.value)}
+            className="w-full sm:w-48"
+          />
+          <Input
+            placeholder="Search by phone..."
+            value={phoneFilter}
+            onChange={(e) => setPhoneFilter(e.target.value)}
+            className="w-full sm:w-48"
+          />
         <Input
           placeholder="Filter by email..."
           value={emailFilter}
           onChange={(e) => setEmailFilter(e.target.value)}
           className="w-full sm:w-64"
         />
+        </div>
+        <div className="flex items-center gap-2 mt-2">
+          <label className="flex items-center gap-2 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={showOverlappingOnly}
+              onChange={(e) => setShowOverlappingOnly(e.target.checked)}
+              className="w-4 h-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500"
+            />
+            <span className="text-sm font-medium text-gray-700">Show Overlapping Bookings Only</span>
+          </label>
+        </div>
       </div>
 
       {/* Bookings Table */}
@@ -1021,10 +1180,10 @@ export default function BookingsPage() {
                         <Button
                           size="sm"
                           variant="outline"
-                          onClick={() => {
-                            setSelectedBooking(booking)
+                          onClick={async () => {
                             setViewDialogOpen(true)
-                            fetchBookingDetails(booking.id)
+                            // Don't set selectedBooking from list - wait for fresh data from API
+                            await fetchBookingDetails(booking.id)
                           }}
                         >
                           <Eye className="w-4 h-4 mr-1" />
@@ -1171,10 +1330,10 @@ export default function BookingsPage() {
                       size="sm"
                       variant="outline"
                       className="flex-1"
-                      onClick={() => {
-                        setSelectedBooking(booking)
+                      onClick={async () => {
                         setViewDialogOpen(true)
-                        fetchBookingDetails(booking.id)
+                        // Don't set selectedBooking from list - wait for fresh data from API
+                        await fetchBookingDetails(booking.id)
                       }}
                     >
                       <Eye className="w-4 h-4 mr-1" />
@@ -1207,7 +1366,12 @@ export default function BookingsPage() {
               View and manage booking information
             </DialogDescription>
           </DialogHeader>
-          {selectedBooking && (
+          {loadingBookingDetails ? (
+            <div className="flex items-center justify-center py-8">
+              <Loader2 className="w-6 h-6 animate-spin text-gray-400" />
+              <span className="ml-2 text-gray-600">Loading booking details...</span>
+            </div>
+          ) : selectedBooking ? (
             <div className="space-y-6">
               {/* Status and Actions */}
               <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
@@ -1220,18 +1384,18 @@ export default function BookingsPage() {
                       Deposit Verified
                     </Badge>
                   )}
-                  {selectedBooking.proposed_date && selectedBooking.status === "postponed" && (
+                  {false && selectedBooking && (
                     <div className="text-sm text-gray-600">
                       <div>
-                      Proposed Date: {formatDate(selectedBooking.proposed_date)}
-                        {selectedBooking.proposed_end_date && selectedBooking.proposed_end_date !== selectedBooking.proposed_date && (
-                          <span> - {formatDate(selectedBooking.proposed_end_date)}</span>
+                      Proposed Date: {formatDate(selectedBooking?.proposed_date)}
+                        {selectedBooking?.proposed_end_date && selectedBooking?.proposed_end_date !== selectedBooking?.proposed_date && selectedBooking && (
+                          <span> - {formatDate(selectedBooking?.proposed_end_date)}</span>
                         )}
                       </div>
                       {/* Parse and display times from user_response */}
-                      {selectedBooking.user_response && (() => {
-                        const startTimeMatch = selectedBooking.user_response.match(/Start Time: ([^,)]+)/)
-                        const endTimeMatch = selectedBooking.user_response.match(/End Time: ([^,)]+)/)
+                      {selectedBooking?.user_response && (() => {
+                        const startTimeMatch = selectedBooking?.user_response?.match(/Start Time: ([^,)]+)/)
+                        const endTimeMatch = selectedBooking?.user_response?.match(/End Time: ([^,)]+)/)
                         if (startTimeMatch || endTimeMatch) {
                           // Parse 24-hour format times from user_response
                           const parseTime = (timeStr: string): string | null => {
@@ -1245,8 +1409,10 @@ export default function BookingsPage() {
                             }
                             return null
                           }
-                          const startTime = startTimeMatch ? parseTime(startTimeMatch[1].trim()) : null
-                          const endTime = endTimeMatch ? parseTime(endTimeMatch[1].trim()) : null
+                          const startTimeStr = startTimeMatch?.[1]
+                          const endTimeStr = endTimeMatch?.[1]
+                          const startTime = startTimeStr ? parseTime(String(startTimeStr).trim()) : null
+                          const endTime = endTimeStr ? parseTime(String(endTimeStr).trim()) : null
                           return (
                             <div className="text-gray-500 mt-1">
                               {startTime && endTime 
@@ -1269,8 +1435,16 @@ export default function BookingsPage() {
                     onClick={() => {
                       setStatusDialogOpen(true)
                     }}
-                    disabled={selectedBooking.status === "checked-in"}
-                    title={selectedBooking.status === "checked-in" ? "Checked-in bookings cannot have their status changed" : ""}
+                    disabled={
+                      selectedBooking.status === "finished"
+                    }
+                    title={
+                      selectedBooking.status === "finished" 
+                        ? "Finished bookings cannot have their status changed" 
+                        : hasConfirmedOverlap && selectedBooking.status !== "cancelled"
+                        ? "This booking is blocked by a confirmed overlap. You can only cancel it."
+                        : ""
+                    }
                     className="w-full sm:w-auto"
                   >
                     Update Status
@@ -1289,6 +1463,66 @@ export default function BookingsPage() {
 
               {/* Booking State Info - Shows warnings and state information */}
               <BookingStateInfo booking={selectedBooking as any} />
+
+              {/* Overlap Warning - Show if there are overlapping bookings */}
+              {overlappingBookings.length > 0 && (
+                <Alert variant={hasConfirmedOverlap ? "destructive" : "default"} className={hasConfirmedOverlap ? "bg-red-50 border-red-200" : "bg-yellow-50 border-yellow-200"}>
+                  <AlertCircle className="h-4 w-4" />
+                  <AlertTitle className={hasConfirmedOverlap ? "text-red-900" : "text-yellow-900"}>
+                    {hasConfirmedOverlap 
+                      ? "⚠️ Booking Blocked by Confirmed Overlap" 
+                      : "ℹ️ Overlapping Bookings Detected"}
+                  </AlertTitle>
+                  <AlertDescription className={hasConfirmedOverlap ? "text-red-800" : "text-yellow-800"}>
+                    {hasConfirmedOverlap ? (
+                      <div className="space-y-2">
+                        <p className="font-semibold">
+                          Another booking with the same date/time is already CONFIRMED. You can only CANCEL this booking until the confirmed booking is cancelled.
+                        </p>
+                        <div className="mt-2 space-y-1">
+                          <p className="text-sm font-medium">Overlapping bookings:</p>
+                          <ul className="list-disc list-inside space-y-1 text-sm">
+                            {overlappingBookings.map((overlap) => (
+                              <li key={overlap.id}>
+                                {overlap.status === "confirmed" && (
+                                  <span className="font-bold text-red-700">[CONFIRMED - BLOCKING]</span>
+                                )}{" "}
+                                {overlap.reference_number ? `${overlap.reference_number} - ` : ""}
+                                {overlap.name} ({overlap.status})
+                                {" - "}
+                                {formatDate(overlap.start_date)}
+                                {overlap.end_date && overlap.end_date !== overlap.start_date && ` - ${formatDate(overlap.end_date)}`}
+                                {overlap.start_time && `, ${formatTimeForDisplay(overlap.start_time)} - ${formatTimeForDisplay(overlap.end_time)}`}
+                              </li>
+                            ))}
+                          </ul>
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="space-y-2">
+                        <p>
+                          This booking overlaps with {overlappingBookings.length} other booking{overlappingBookings.length > 1 ? "s" : ""}. Please review carefully before confirming.
+                        </p>
+                        <div className="mt-2 space-y-1">
+                          <p className="text-sm font-medium">Overlapping bookings:</p>
+                          <ul className="list-disc list-inside space-y-1 text-sm">
+                            {overlappingBookings.map((overlap) => (
+                              <li key={overlap.id}>
+                                {overlap.reference_number ? `${overlap.reference_number} - ` : ""}
+                                {overlap.name} ({overlap.status})
+                                {" - "}
+                                {formatDate(overlap.start_date)}
+                                {overlap.end_date && overlap.end_date !== overlap.start_date && ` - ${formatDate(overlap.end_date)}`}
+                                {overlap.start_time && `, ${formatTimeForDisplay(overlap.start_time)} - ${formatTimeForDisplay(overlap.end_time)}`}
+                              </li>
+                            ))}
+                          </ul>
+                        </div>
+                      </div>
+                    )}
+                  </AlertDescription>
+                </Alert>
+              )}
 
               {/* Contact Information */}
               <div>
@@ -1378,6 +1612,35 @@ export default function BookingsPage() {
                 </div>
               )}
 
+              {/* Deposit Evidence Section - Show for paid_deposit and pending_deposit with evidence */}
+              {(selectedBooking.status === "paid_deposit" || selectedBooking.status === "pending_deposit") && selectedBooking.deposit_evidence_url && (
+                <div>
+                  <h3 className="text-lg font-semibold mb-3">Deposit Evidence</h3>
+                  <div className="bg-purple-50 border border-purple-200 rounded p-4">
+                    <div className="space-y-3">
+                      <div>
+                        <Label>Deposit Evidence Image</Label>
+                        <a 
+                          href={`/api/admin/deposit/${selectedBooking.id}/image`}
+                          target="_blank" 
+                          rel="noopener noreferrer"
+                          className="text-sm text-blue-600 hover:underline block mt-1 font-medium"
+                        >
+                          View Deposit Evidence →
+                        </a>
+                      </div>
+                      {selectedBooking.deposit_verified_at && (
+                        <div className="bg-green-50 border border-green-200 rounded p-3">
+                          <p className="text-sm text-green-800">
+                            ✓ Verified by {selectedBooking.deposit_verified_by || "Admin"} on {formatTimestamp(selectedBooking.deposit_verified_at)}
+                          </p>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              )}
+
               {/* Admin Notes */}
               {selectedBooking.admin_notes && (
                 <div>
@@ -1435,7 +1698,7 @@ export default function BookingsPage() {
                 })()}
               </div>
             </div>
-          )}
+          ) : null}
         </DialogContent>
       </Dialog>
 
@@ -1445,13 +1708,23 @@ export default function BookingsPage() {
           <DialogHeader>
             <DialogTitle>Admin Action</DialogTitle>
             <DialogDescription>
-              {selectedBooking?.status === "checked-in" 
-                ? "This booking is checked-in. Status changes are not allowed."
+              {selectedBooking?.status === "finished" 
+                ? "This booking is finished. Status changes are not allowed."
                 : "Select an action to take on this booking. An email notification will be sent to the user."}
             </DialogDescription>
           </DialogHeader>
           {selectedBooking && (
             <form onSubmit={handleActionUpdate} className="space-y-4" data-booking-form="true">
+              {/* Show warning if blocked by confirmed overlap */}
+              {hasConfirmedOverlap && selectedBooking.status !== "cancelled" && (
+                <Alert variant="destructive" className="bg-red-50 border-red-200">
+                  <AlertCircle className="h-4 w-4" />
+                  <AlertTitle className="text-red-900">⚠️ Booking Blocked by Confirmed Overlap</AlertTitle>
+                  <AlertDescription className="text-red-800">
+                    Another booking with the same date/time is already CONFIRMED. You can only CANCEL this booking until the confirmed booking is cancelled or auto-cancelled.
+                  </AlertDescription>
+                </Alert>
+              )}
               {(selectedBooking.status as string) === "checked-in" ? (
                 <div className="space-y-4">
                 <div className="bg-yellow-50 border border-yellow-200 text-yellow-800 p-4 rounded">
@@ -1470,7 +1743,7 @@ export default function BookingsPage() {
                     </Button>
                 </div>
                 </div>
-              ) : (selectedBooking.status as string) === "paid_deposit" ? (
+              ) : (selectedBooking.status as string) === "pending_deposit" && selectedBooking.deposit_evidence_url ? (
                 // Warning message is shown in the deposit verification section below, so we don't duplicate it here
                 null
               ) : (
@@ -1479,30 +1752,67 @@ export default function BookingsPage() {
                   {(() => {
                     // Get available actions from state machine
                     // Check if booking date is in the past
-                    const checkDate = selectedBooking.proposed_date && selectedBooking.status === "postponed" 
-                      ? selectedBooking.proposed_date 
-                      : selectedBooking.start_date
-                    const startTimestamp = calculateStartTimestamp(checkDate, selectedBooking.start_time || null)
+                    const startTimestamp = calculateStartTimestamp(selectedBooking.start_date, selectedBooking.start_time || null)
                     const now = getBangkokTime()
                     const isDateInPast = startTimestamp < now
 
                     const availableActions = getAvailableActions(
                       selectedBooking.status as any,
-                      Boolean(selectedBooking.proposed_date),
                       Boolean(selectedBooking.deposit_evidence_url),
                       isDateInPast
                     )
                     const acceptAction = availableActions.find(a => a.id === "accept")
                     const rejectAction = availableActions.find(a => a.id === "reject")
-                    const postponeAction = availableActions.find(a => a.id === "postpone")
+                    const acceptDepositAction = availableActions.find(a => a.id === "accept_deposit")
+                    const acceptDepositOtherChannelAction = availableActions.find(a => a.id === "accept_deposit_other_channel")
+                    const confirmOtherChannelAction = availableActions.find(a => a.id === "confirm_other_channel")
+                    const rejectDepositAction = availableActions.find(a => a.id === "reject_deposit")
+                    const cancelAction = availableActions.find(a => a.id === "cancel")
                     
+                    // If blocked by confirmed overlap, only show cancel button
+                    // Always allow cancel when blocked by confirmed overlap, regardless of status
+                    if (hasConfirmedOverlap && selectedBooking.status !== "cancelled") {
+                      return (
+                        <div className="space-y-4">
+                          <Alert variant="destructive" className="bg-red-50 border-red-200">
+                            <AlertCircle className="h-4 w-4" />
+                            <AlertTitle className="text-red-900">Actions Restricted</AlertTitle>
+                            <AlertDescription className="text-red-800">
+                              This booking is blocked by a confirmed overlap. Only cancellation is allowed.
+                            </AlertDescription>
+                          </Alert>
+                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mt-2">
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setSelectedAction("cancel")
+                                setSelectedStatusInForm("cancelled")
+                              }}
+                              className={`p-4 rounded-lg border-2 transition-all text-center ${
+                                selectedAction === "cancel"
+                                  ? "border-red-500 bg-red-50"
+                                  : "border-gray-200 hover:border-red-300"
+                              }`}
+                              disabled={saving}
+                            >
+                              <Ban className={`w-6 h-6 mx-auto mb-2 ${selectedAction === "cancel" ? "text-red-600" : "text-gray-400"}`} />
+                              <div className="font-semibold text-sm">Cancel</div>
+                              <div className="text-xs text-gray-500 mt-1">Cancel booking</div>
+                            </button>
+                          </div>
+                        </div>
+                      )
+                    }
+                    
+                    // Render action buttons based on current status
+                    if (selectedBooking.status === "pending") {
                     return (
-                      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mt-2">
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mt-2">
                         <button
                           type="button"
                           onClick={() => {
                             setSelectedAction("accept")
-                            setSelectedStatusInForm("accepted")
+                              setSelectedStatusInForm("pending_deposit")
                           }}
                           className={`p-4 rounded-lg border-2 transition-all text-center ${
                             selectedAction === "accept"
@@ -1514,13 +1824,13 @@ export default function BookingsPage() {
                         >
                           <CheckCircle2 className={`w-6 h-6 mx-auto mb-2 ${selectedAction === "accept" ? "text-green-600" : "text-gray-400"}`} />
                           <div className="font-semibold text-sm">Accept</div>
-                          <div className="text-xs text-gray-500 mt-1">Approve booking</div>
+                            <div className="text-xs text-gray-500 mt-1">Approve booking (pending deposit)</div>
                         </button>
                         <button
                           type="button"
                           onClick={() => {
                             setSelectedAction("reject")
-                            setSelectedStatusInForm("rejected")
+                              setSelectedStatusInForm("cancelled")
                           }}
                           className={`p-4 rounded-lg border-2 transition-all text-center ${
                             selectedAction === "reject"
@@ -1534,39 +1844,355 @@ export default function BookingsPage() {
                           <div className="font-semibold text-sm">Reject</div>
                           <div className="text-xs text-gray-500 mt-1">Decline booking</div>
                         </button>
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setSelectedAction("postpone")
-                            setSelectedStatusInForm("postponed")
-                          }}
-                          className={`p-4 rounded-lg border-2 transition-all text-center ${
-                            selectedAction === "postpone"
-                              ? "border-orange-500 bg-orange-50"
-                              : "border-gray-200 hover:border-orange-300"
-                          } ${!postponeAction ? "opacity-50 cursor-not-allowed" : ""}`}
-                          disabled={saving || !postponeAction}
-                          title={!postponeAction ? "Postpone action is not available for this status" : ""}
-                        >
-                          <CalendarX className={`w-6 h-6 mx-auto mb-2 ${selectedAction === "postpone" ? "text-orange-600" : "text-gray-400"}`} />
-                          <div className="font-semibold text-sm">Postpone</div>
-                          <div className="text-xs text-gray-500 mt-1">Request new date</div>
-                        </button>
+                        </div>
+                      )
+                    } else if (selectedBooking.status === "pending_deposit") {
+                      return (
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mt-2">
+                          {confirmOtherChannelAction && (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setSelectedAction("confirm_other_channel")
+                                setSelectedStatusInForm("confirmed")
+                                setOtherChannelDialogOpen(true)
+                              }}
+                              className={`p-4 rounded-lg border-2 transition-all text-center ${
+                                selectedAction === "confirm_other_channel"
+                                  ? "border-amber-500 bg-amber-50"
+                                  : "border-amber-300 hover:border-amber-400 bg-amber-50/50"
+                              }`}
+                              disabled={saving}
+                            >
+                              <Phone className={`w-6 h-6 mx-auto mb-2 ${selectedAction === "confirm_other_channel" ? "text-amber-700" : "text-amber-600"}`} />
+                              <div className="font-semibold text-sm text-amber-900">Confirm (Other Channel)</div>
+                              <div className="text-xs text-amber-700 mt-1">Verified via phone/in-person</div>
+                            </button>
+                          )}
+                          {availableActions.find(a => a.id === "cancel") && (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setSelectedAction("cancel")
+                                setSelectedStatusInForm("cancelled")
+                              }}
+                              className={`p-4 rounded-lg border-2 transition-all text-center ${
+                                selectedAction === "cancel"
+                                  ? "border-red-500 bg-red-50"
+                                  : "border-gray-200 hover:border-red-300"
+                              }`}
+                              disabled={saving}
+                            >
+                              <Ban className={`w-6 h-6 mx-auto mb-2 ${selectedAction === "cancel" ? "text-red-600" : "text-gray-400"}`} />
+                              <div className="font-semibold text-sm">Cancel</div>
+                              <div className="text-xs text-gray-500 mt-1">Cancel booking</div>
+                            </button>
+                          )}
                       </div>
                     )
+                    } else if (selectedBooking.status === "paid_deposit") {
+                      return (
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mt-2">
+                          {acceptDepositAction && (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setSelectedAction("accept_deposit")
+                                setSelectedStatusInForm("confirmed")
+                              }}
+                              className={`p-4 rounded-lg border-2 transition-all text-center ${
+                                selectedAction === "accept_deposit"
+                                  ? "border-green-500 bg-green-50"
+                                  : "border-gray-200 hover:border-green-300"
+                              }`}
+                              disabled={saving}
+                            >
+                              <CheckCircle2 className={`w-6 h-6 mx-auto mb-2 ${selectedAction === "accept_deposit" ? "text-green-600" : "text-gray-400"}`} />
+                              <div className="font-semibold text-sm">Accept Deposit</div>
+                              <div className="text-xs text-gray-500 mt-1">Confirm booking</div>
+                            </button>
+                          )}
+                          {acceptDepositOtherChannelAction && (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setSelectedAction("accept_deposit_other_channel")
+                                setSelectedStatusInForm("confirmed")
+                                setOtherChannelDialogOpen(true)
+                              }}
+                              className={`p-4 rounded-lg border-2 transition-all text-center ${
+                                selectedAction === "accept_deposit_other_channel"
+                                  ? "border-amber-500 bg-amber-50"
+                                  : "border-amber-300 hover:border-amber-400 bg-amber-50/50"
+                              }`}
+                              disabled={saving}
+                            >
+                              <Phone className={`w-6 h-6 mx-auto mb-2 ${selectedAction === "accept_deposit_other_channel" ? "text-amber-700" : "text-amber-600"}`} />
+                              <div className="font-semibold text-sm text-amber-900">Confirm (Verified via Other Channel)</div>
+                              <div className="text-xs text-amber-700 mt-1">Verified via phone/in-person</div>
+                            </button>
+                          )}
+                          {rejectDepositAction && (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setSelectedAction("reject_deposit")
+                                setSelectedStatusInForm("pending_deposit")
+                              }}
+                              className={`p-4 rounded-lg border-2 transition-all text-center ${
+                                selectedAction === "reject_deposit"
+                                  ? "border-orange-500 bg-orange-50"
+                                  : "border-gray-200 hover:border-orange-300"
+                              }`}
+                              disabled={saving}
+                            >
+                              <XCircle className={`w-6 h-6 mx-auto mb-2 ${selectedAction === "reject_deposit" ? "text-orange-600" : "text-gray-400"}`} />
+                              <div className="font-semibold text-sm">Reject Deposit</div>
+                              <div className="text-xs text-gray-500 mt-1">Request re-upload</div>
+                            </button>
+                          )}
+                          {availableActions.find(a => a.id === "cancel") && (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setSelectedAction("cancel")
+                                setSelectedStatusInForm("cancelled")
+                              }}
+                              className={`p-4 rounded-lg border-2 transition-all text-center ${
+                                selectedAction === "cancel"
+                                  ? "border-red-500 bg-red-50"
+                                  : "border-gray-200 hover:border-red-300"
+                              }`}
+                              disabled={saving}
+                            >
+                              <Ban className={`w-6 h-6 mx-auto mb-2 ${selectedAction === "cancel" ? "text-red-600" : "text-gray-400"}`} />
+                              <div className="font-semibold text-sm">Cancel</div>
+                              <div className="text-xs text-gray-500 mt-1">Cancel booking</div>
+                            </button>
+                          )}
+                        </div>
+                      )
+                    } else if (selectedBooking.status === "confirmed") {
+                      return (
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mt-2">
+                          {availableActions.find(a => a.id === "change_date") && (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setSelectedAction("change_date")
+                                setSelectedStatusInForm("confirmed")
+                                // Initialize date change state with current booking dates
+                                if (selectedBooking.start_date) {
+                                  setNewStartDate(new Date(selectedBooking.start_date * 1000))
+                                }
+                                if (selectedBooking.end_date) {
+                                  setNewEndDate(new Date(selectedBooking.end_date * 1000))
+                                }
+                                setNewStartTime(selectedBooking.start_time || "")
+                                setNewEndTime(selectedBooking.end_time || "")
+                                setShowPastDateWarning(false)
+                              }}
+                              className={`p-4 rounded-lg border-2 transition-all text-center ${
+                                selectedAction === "change_date"
+                                  ? "border-blue-500 bg-blue-50"
+                                  : "border-gray-200 hover:border-blue-300"
+                              }`}
+                              disabled={saving}
+                            >
+                              <Calendar className={`w-6 h-6 mx-auto mb-2 ${selectedAction === "change_date" ? "text-blue-600" : "text-gray-400"}`} />
+                              <div className="font-semibold text-sm">Change Date</div>
+                              <div className="text-xs text-gray-500 mt-1">Update booking date</div>
+                            </button>
+                          )}
+                          {availableActions.find(a => a.id === "cancel") && (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setSelectedAction("cancel")
+                                setSelectedStatusInForm("cancelled")
+                              }}
+                              className={`p-4 rounded-lg border-2 transition-all text-center ${
+                                selectedAction === "cancel"
+                                  ? "border-red-500 bg-red-50"
+                                  : "border-gray-200 hover:border-red-300"
+                              }`}
+                              disabled={saving}
+                            >
+                              <Ban className={`w-6 h-6 mx-auto mb-2 ${selectedAction === "cancel" ? "text-red-600" : "text-gray-400"}`} />
+                              <div className="font-semibold text-sm">Cancel</div>
+                              <div className="text-xs text-gray-500 mt-1">Cancel booking</div>
+                            </button>
+                          )}
+                        </div>
+                      )
+                    }
+                    return null
                   })()}
                   <input type="hidden" name="action" value={selectedAction || ""} />
-                  {selectedAction === "postpone" && selectedBooking.status === "postponed" && (
-                    <div className="mt-3 bg-orange-50 border border-orange-200 rounded p-3">
-                      <p className="text-sm text-orange-800">
-                        ℹ️ This will clear the user's current proposal and request a new date proposal.
-                      </p>
-                    </div>
-                  )}
                 </div>
               )}
-              {/* Change Reason and Admin Notes - Hide for checked-in bookings */}
-              {selectedBooking.status !== "checked-in" && (
+              {/* Date Change Section for Confirmed Bookings */}
+              {selectedAction === "change_date" && selectedBooking.status === "confirmed" && (
+                <div className="space-y-4 border-t pt-4">
+                  <div className="bg-blue-50 border border-blue-200 rounded p-3 mb-4">
+                    <p className="text-sm text-blue-800">
+                      <strong>Change Booking Date:</strong> Update the booking date and time. The original date will be released and the new date will become the locked date.
+                    </p>
+                  </div>
+                  
+                  <div className="space-y-4">
+                    {/* Date Range Selection */}
+                    <div>
+                      <Label>Date Range</Label>
+                      <Select
+                        value={selectedBooking.end_date ? "multiple" : "single"}
+                        onValueChange={(value) => {
+                          if (value === "single") {
+                            setNewEndDate(null)
+                          } else if (!newEndDate && selectedBooking.end_date) {
+                            // Pre-fill end date from current booking
+                            const endDateTimestamp = selectedBooking.end_date
+                            setNewEndDate(new Date(endDateTimestamp * 1000))
+                          }
+                        }}
+                        disabled={saving}
+                      >
+                        <SelectTrigger>
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="single">Single Day</SelectItem>
+                          <SelectItem value="multiple">Multiple Days</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+
+                    {/* Start Date */}
+                    <div>
+                      <Label htmlFor="new_start_date">New Start Date *</Label>
+                      <Popover>
+                        <PopoverTrigger asChild>
+                          <Button
+                            type="button"
+                            variant="outline"
+                            className="w-full justify-start text-left font-normal"
+                            disabled={saving}
+                          >
+                            <Calendar className="mr-2 h-4 w-4" />
+                            {newStartDate ? format(newStartDate, "PPP") : "Select start date"}
+                          </Button>
+                        </PopoverTrigger>
+                        <PopoverContent className="w-auto p-0" align="start">
+                          <SimpleCalendar
+                            selected={newStartDate || undefined}
+                            onSelect={(date) => {
+                              setNewStartDate(date || null)
+                              // If end date is before new start date, clear it
+                              if (newEndDate && date && date > newEndDate) {
+                                setNewEndDate(null)
+                              }
+                            }}
+                            disabled={(date) => {
+                              // Allow past dates (for historical corrections) but show warning
+                              return false
+                            }}
+                          />
+                        </PopoverContent>
+                      </Popover>
+                    </div>
+
+                    {/* End Date (for multiple days) */}
+                    {selectedBooking.end_date && (
+                      <div>
+                        <Label htmlFor="new_end_date">New End Date</Label>
+                        <Popover>
+                          <PopoverTrigger asChild>
+                            <Button
+                              type="button"
+                              variant="outline"
+                              className="w-full justify-start text-left font-normal"
+                              disabled={saving || !newStartDate}
+                              title={!newStartDate ? "Please select a start date first" : ""}
+                            >
+                              <Calendar className="mr-2 h-4 w-4" />
+                              {newEndDate ? format(newEndDate, "PPP") : "Select end date"}
+                            </Button>
+                          </PopoverTrigger>
+                          <PopoverContent className="w-auto p-0" align="start">
+                            <SimpleCalendar
+                              selected={newEndDate || undefined}
+                              onSelect={(date) => {
+                                setNewEndDate(date || null)
+                              }}
+                              disabled={(date) => {
+                                if (!newStartDate) return true
+                                // End date must be after start date
+                                if (date && date <= newStartDate) return true
+                                return false
+                              }}
+                            />
+                          </PopoverContent>
+                        </Popover>
+                    </div>
+                  )}
+
+                    {/* Start Time */}
+                    <div>
+                      <Label htmlFor="new_start_time">New Start Time</Label>
+                      <TimePicker
+                        id="new_start_time"
+                        value={newStartTime || selectedBooking.start_time || "09:00"}
+                        onChange={(value) => setNewStartTime(value)}
+                        disabled={saving}
+                        className="w-full"
+                      />
+                    </div>
+
+                    {/* End Time */}
+                    <div>
+                      <Label htmlFor="new_end_time">New End Time</Label>
+                      <TimePicker
+                        id="new_end_time"
+                        value={newEndTime || selectedBooking.end_time || "17:00"}
+                        onChange={(value) => setNewEndTime(value)}
+                        disabled={saving}
+                        className="w-full"
+                      />
+                    </div>
+
+                    {/* Past Date Warning */}
+                    {newStartDate && (() => {
+                      const bangkokNow = getBangkokTime()
+                      const startTimestamp = calculateStartTimestamp(
+                        Math.floor(newStartDate.getTime() / 1000),
+                        newStartTime || selectedBooking.start_time || null
+                      )
+                      const isPast = startTimestamp < bangkokNow
+                      
+                      if (isPast && !showPastDateWarning) {
+                        return (
+                          <div className="bg-yellow-50 border border-yellow-200 rounded p-3">
+                            <p className="text-sm text-yellow-800">
+                              ⚠️ <strong>Warning:</strong> The selected start date is in the past. This is allowed for historical corrections only.
+                            </p>
+                            <Button
+                              type="button"
+                              variant="outline"
+                              size="sm"
+                              className="mt-2"
+                              onClick={() => setShowPastDateWarning(true)}
+                            >
+                              I understand, proceed
+                            </Button>
+                          </div>
+                        )
+                      }
+                      return null
+                    })()}
+                  </div>
+                </div>
+              )}
+              {/* Change Reason and Admin Notes */}
               <div>
                 <Label htmlFor="change_reason">Change Reason</Label>
                 <Textarea
@@ -1577,20 +2203,27 @@ export default function BookingsPage() {
                   disabled={saving}
                 />
               </div>
-              )}
               {selectedBooking && (() => {
                 const currentStatus = selectedStatusInForm || selectedBooking.status
                 
-                // Show deposit verification section for paid_deposit status
-                // Always show when booking status is paid_deposit, regardless of action selection
-                if (selectedBooking.status === "paid_deposit") {
+                // Show deposit verification section for pending_deposit or paid_deposit status with deposit evidence
+                // Always show when booking status is pending_deposit or paid_deposit and has deposit evidence
+                if ((selectedBooking.status === "pending_deposit" || selectedBooking.status === "paid_deposit") && selectedBooking.deposit_evidence_url) {
                   return (
                     <div className="space-y-4 border-t pt-4">
-                      <div className="bg-yellow-50 border border-yellow-200 rounded p-3 mb-4">
-                        <p className="text-sm text-yellow-800">
-                          ⚠️ <strong>Deposit Verification Required:</strong> Please verify or reject the deposit evidence below. Accept and Postpone actions are disabled to prevent flow disruption. You can still reject the entire booking if needed.
-                        </p>
-                      </div>
+                      {selectedBooking.status === "paid_deposit" ? (
+                        <div className="bg-purple-50 border border-purple-200 rounded p-3 mb-4">
+                          <p className="text-sm text-purple-800">
+                            ℹ️ <strong>Deposit Evidence Available:</strong> User has uploaded deposit evidence. Please review the evidence using the link below, then use the action buttons above to accept or reject the deposit.
+                          </p>
+                        </div>
+                      ) : (
+                        <div className="bg-yellow-50 border border-yellow-200 rounded p-3 mb-4">
+                          <p className="text-sm text-yellow-800">
+                            ⚠️ <strong>Deposit Verification Required:</strong> Please review the deposit evidence using the link below, then use the action buttons above to accept or reject the deposit.
+                          </p>
+                        </div>
+                      )}
                       <div className="bg-purple-50 border border-purple-200 rounded p-4">
                         <h4 className="font-semibold text-purple-900 mb-2">Deposit Verification</h4>
                         {selectedBooking.deposit_evidence_url ? (
@@ -1598,206 +2231,21 @@ export default function BookingsPage() {
                             <div>
                               <Label>Deposit Evidence</Label>
                               <a 
-                                href={selectedBooking.deposit_evidence_url} 
+                                href={`/api/admin/deposit/${selectedBooking.id}/image`}
                                 target="_blank" 
                                 rel="noopener noreferrer"
-                                className="text-sm text-blue-600 hover:underline block mt-1"
+                                className="text-sm text-blue-600 hover:underline block mt-1 font-medium"
                               >
-                                View Deposit Evidence
+                                View Deposit Evidence →
                               </a>
                           </div>
-                            {selectedBooking.deposit_verified_at ? (
+                            {selectedBooking.deposit_verified_at && (
                               <div className="bg-green-50 border border-green-200 rounded p-3">
                                 <p className="text-sm text-green-800">
                                   ✓ Verified by {selectedBooking.deposit_verified_by || "Admin"} on {formatTimestamp(selectedBooking.deposit_verified_at)}
-                        </p>
-                      </div>
-                            ) : (
-                              <div className="space-y-3">
-                          <div>
-                                  <Label htmlFor={`deposit_verified_by_${selectedBooking.id}`}>Verified By *</Label>
-                            <Input
-                                    id={`deposit_verified_by_${selectedBooking.id}`}
-                                    name="deposit_verified_by"
-                                    placeholder="Admin name/email"
-                              disabled={saving}
-                                    required={currentStatus === "checked-in"}
-                                    data-booking-id={selectedBooking.id}
-                            />
-                          </div>
-                                <input type="hidden" name="verify_deposit" value="true" />
-                                <div className="flex gap-2">
-                                  <Button
-                                    type="button"
-                                    onClick={async () => {
-                                      if (!selectedBooking || saving) return
-                                      setSaving(true)
-                                      
-                                      // Get form values - use more reliable selectors
-                                      // Use booking-specific ID to avoid conflicts with multiple open dialogs
-                                      const depositVerifiedByInput = document.querySelector(
-                                        `#deposit_verified_by_${selectedBooking.id}, input[data-booking-id="${selectedBooking.id}"][name="deposit_verified_by"]`
-                                      ) as HTMLInputElement || 
-                                      document.getElementById("deposit_verified_by") as HTMLInputElement
-                                      
-                                      // Fallback: scope to the current dialog
-                                      const currentDialog = !depositVerifiedByInput 
-                                        ? (document.querySelector('[role="dialog"]:not([aria-hidden="true"])') as HTMLElement)
-                                        : null
-                                      
-                                      const finalDepositVerifiedByInput = depositVerifiedByInput || 
-                                        (currentDialog 
-                                          ? (currentDialog.querySelector('#deposit_verified_by') as HTMLInputElement)
-                                          : null)
-                                      
-                                      if (!finalDepositVerifiedByInput) {
-                                        toast.error("Could not find 'Verified By' input field. Please refresh the page.")
-                                        console.error("Deposit verification: deposit_verified_by input not found", {
-                                          bookingId: selectedBooking.id,
-                                          hasCurrentDialog: !!currentDialog,
-                                          allInputs: Array.from(document.querySelectorAll('[name="deposit_verified_by"]')).length
-                                        })
-                                        setSaving(false)
-                                        return
-                                      }
-                                      
-                                      const depositVerifiedBy = finalDepositVerifiedByInput.value?.trim() || ""
-                                      
-                                      if (!depositVerifiedBy) {
-                                        toast.error("Please enter 'Verified By' field before verifying deposit")
-                                        setSaving(false)
-                                        return
-                                      }
-                                      
-                                      // Get change reason and admin notes from the form
-                                      // Use the form with data attribute or closest form, scoped to current dialog
-                                      const form = currentDialog
-                                        ? (currentDialog.querySelector('form[data-booking-form="true"]') as HTMLFormElement ||
-                                           finalDepositVerifiedByInput.closest('form') as HTMLFormElement ||
-                                           currentDialog.querySelector('form') as HTMLFormElement)
-                                        : (document.querySelector('form[data-booking-form="true"]') as HTMLFormElement ||
-                                           finalDepositVerifiedByInput.closest('form') as HTMLFormElement ||
-                                           document.querySelector('form') as HTMLFormElement)
-                                      
-                                      const changeReasonInput = form?.querySelector('[name="change_reason"]') as HTMLTextAreaElement
-                                      const changeReason = changeReasonInput?.value?.trim() || "Deposit verified and booking checked in"
-                                      const adminNotesInput = form?.querySelector('[name="admin_notes"]') as HTMLTextAreaElement
-                                      const adminNotes = adminNotesInput?.value?.trim() || ""
-                                      
-                                      try {
-                                        const response = await fetch(`/api/admin/bookings/${selectedBooking.id}`, {
-                                          method: "PATCH",
-                                          headers: { "Content-Type": "application/json" },
-                                          body: JSON.stringify({
-                                            status: "checked-in",
-                                            changeReason: changeReason || "Deposit verified and booking checked in",
-                                            adminNotes: adminNotes || null,
-                                            proposedDate: null,
-                                            depositVerifiedBy: depositVerifiedBy,
-                                          }),
-                                        })
-                                        
-                                        const json = await response.json()
-                                        
-                                        if (json.success) {
-                                          toast.success("Deposit verified and booking checked in successfully. Email notification sent.")
-                                          setStatusDialogOpen(false)
-                                          setSelectedStatusInForm("")
-                                          fetchBookings()
-                                          if (viewDialogOpen) {
-                                            fetchBookingDetails(selectedBooking.id)
-                                          }
-                                        } else {
-                                          // Extract detailed error message
-                                          const errorMessage = json.error?.message || json.error || "Failed to verify deposit and check in"
-                                          const errorDetails = json.error?.errors ? ` Errors: ${Array.isArray(json.error.errors) ? json.error.errors.join(', ') : JSON.stringify(json.error.errors)}` : ""
-                                          toast.error(`${errorMessage}${errorDetails}`)
-                                          console.error("Deposit verification failed:", json)
-                                        }
-                                      } catch (error) {
-                                        const errorMessage = error instanceof Error ? error.message : "Failed to verify deposit and check in"
-                                        toast.error(errorMessage)
-                                        console.error("Deposit verification error:", error)
-                                      } finally {
-                                        setSaving(false)
-                                      }
-                                    }}
-                                    className="flex-1"
-                                disabled={saving}
-                                  >
-                                    <CheckCircle2 className="w-4 h-4 mr-2" />
-                                    Verify Deposit & Check In
-                                  </Button>
-                                  <Button
-                                    type="button"
-                                    onClick={async () => {
-                                      if (!selectedBooking || saving) return
-                                      
-                                      // Confirm rejection
-                                      if (!confirm("Are you sure you want to reject this deposit evidence? The user will need to upload a new deposit.")) {
-                                        return
-                                      }
-                                      
-                                      setSaving(true)
-                                      
-                                      // Get form values - use more reliable selectors
-                                      // Scope to the current dialog to avoid conflicts with multiple open dialogs
-                                      const currentDialog = document.querySelector('[role="dialog"]:not([aria-hidden="true"])') as HTMLElement
-                                      const form = currentDialog
-                                        ? (currentDialog.querySelector('form[data-booking-form="true"]') as HTMLFormElement ||
-                                           currentDialog.querySelector('form') as HTMLFormElement)
-                                        : (document.querySelector('form[data-booking-form="true"]') as HTMLFormElement ||
-                                           document.querySelector('form') as HTMLFormElement)
-                                      
-                                      const changeReasonInput = form?.querySelector('[name="change_reason"]') as HTMLTextAreaElement
-                                      const changeReason = changeReasonInput?.value?.trim() || "Deposit evidence rejected by admin"
-                                      const adminNotesInput = form?.querySelector('[name="admin_notes"]') as HTMLTextAreaElement
-                                      const adminNotes = adminNotesInput?.value?.trim() || ""
-                                      
-                                      try {
-                                        const response = await fetch(`/api/admin/bookings/${selectedBooking.id}`, {
-                                          method: "PATCH",
-                                          headers: { "Content-Type": "application/json" },
-                                          body: JSON.stringify({
-                                            status: "pending_deposit",
-                                            changeReason: changeReason,
-                                            adminNotes: adminNotes || null,
-                                            proposedDate: null,
-                                            depositVerifiedBy: null,
-                                          }),
-                                        })
-                                        
-                                        const json = await response.json()
-                                        
-                                        if (json.success) {
-                                          toast.success("Deposit rejected. User will receive a new deposit upload link.")
-                                          setStatusDialogOpen(false)
-                                          setSelectedStatusInForm("")
-                                          fetchBookings()
-                                          if (viewDialogOpen) {
-                                            fetchBookingDetails(selectedBooking.id)
-                                          }
-                                        } else {
-                                          const errorMessage = json.error?.message || "Failed to reject deposit"
-                                          toast.error(errorMessage)
-                                        }
-                                      } catch (error) {
-                                        toast.error("Failed to reject deposit")
-                                        console.error(error)
-                                      } finally {
-                                        setSaving(false)
-                                      }
-                                    }}
-                                    variant="destructive"
-                                    className="flex-1"
-                                    disabled={saving}
-                                  >
-                                    <XCircle className="w-4 h-4 mr-2" />
-                                    Reject Deposit
-                                  </Button>
-                                </div>
-                            </div>
-                          )}
+                                </p>
+                              </div>
+                            )}
                           </div>
                         ) : (
                           <p className="text-sm text-purple-800">No deposit evidence uploaded yet.</p>
@@ -1810,13 +2258,13 @@ export default function BookingsPage() {
                   )
                 }
                 
-                // Show info for postpone action
-                if (selectedAction === "postpone") {
+                // No postpone action in new flow
+                if (false) {
                   return (
                     <div className="bg-orange-50 border border-orange-200 rounded p-4">
                       <p className="text-sm text-orange-800">
-                        When you select "Postpone", the user will be asked to propose a new date. Admin no longer proposes dates.
-                        {selectedBooking.status === "postponed" && (
+                        {/* Postpone removed from new flow */}
+                        {false && (
                           <span className="block mt-2 font-semibold">
                             ⚠️ This will clear the user's current proposal and request a new one.
                           </span>
@@ -1828,8 +2276,8 @@ export default function BookingsPage() {
                 
                 return null
               })()}
-              {/* Admin Notes - Hide for checked-in bookings */}
-              {selectedBooking.status !== "checked-in" && (
+              {/* Admin Notes */}
+              {selectedBooking.status !== "finished" && (
               <div>
                 <Label htmlFor="admin_notes">Admin Notes (internal only)</Label>
                 <Textarea
@@ -1856,13 +2304,13 @@ export default function BookingsPage() {
                 >
                   Cancel
                 </Button>
-              {(selectedBooking.status as string) !== "checked-in" && (
+              {(selectedBooking.status as string) !== "finished" && (
                 <Button 
                   type="submit" 
                   disabled={
                     saving || 
                     !selectedAction || 
-                    (selectedBooking.status === "paid_deposit" && selectedAction !== "reject")
+                    (selectedBooking.status === "pending_deposit" && selectedAction !== "reject_deposit" && selectedAction !== "cancel")
                   }
                   className="w-full sm:w-auto"
                 >
@@ -1872,7 +2320,7 @@ export default function BookingsPage() {
                       Processing...
                     </>
                   ) : selectedAction ? (
-                    `Confirm ${selectedAction === "accept" ? "Accept" : selectedAction === "reject" ? "Reject" : "Postpone"}`
+                    `Confirm ${selectedAction === "accept" ? "Accept" : selectedAction === "reject" ? "Reject" : selectedAction === "accept_deposit" ? "Accept Deposit" : selectedAction === "reject_deposit" ? "Reject Deposit" : selectedAction === "cancel" ? "Cancel" : selectedAction === "change_date" ? "Change Date" : "Action"}`
                   ) : (
                     "Select Action First"
                   )}
@@ -1899,6 +2347,101 @@ export default function BookingsPage() {
         }}
         isLoading={saving || actionLoading}
       />
+
+      {/* Other Channel Confirmation Dialog */}
+      <Dialog open={otherChannelDialogOpen} onOpenChange={setOtherChannelDialogOpen}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-amber-700">
+              <AlertTriangle className="w-5 h-5" />
+              Confirm Other Channel Verification
+            </DialogTitle>
+            <DialogDescription>
+              This action confirms the booking was verified through other channels (phone, in-person, etc.), not through the system deposit upload.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-4">
+            <Alert variant="default" className="bg-amber-50 border-amber-200">
+              <AlertTriangle className="h-4 w-4 text-amber-600" />
+              <AlertTitle className="text-amber-900">Warning</AlertTitle>
+              <AlertDescription className="text-amber-800">
+                You are confirming this booking without reviewing the deposit evidence in the system. 
+                This should only be used when verification was completed through other channels (phone call, in-person meeting, etc.).
+              </AlertDescription>
+            </Alert>
+
+            <div className="space-y-2">
+              <Label htmlFor="confirm-text" className="text-sm font-medium">
+                Type <strong>CONFIRM</strong> to proceed:
+              </Label>
+              <Input
+                id="confirm-text"
+                value={otherChannelConfirmText}
+                onChange={(e) => setOtherChannelConfirmText(e.target.value.toUpperCase())}
+                placeholder="Type CONFIRM here"
+                className="font-mono"
+                disabled={saving}
+              />
+            </div>
+          </div>
+
+          <DialogFooter>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => {
+                setOtherChannelDialogOpen(false)
+                setOtherChannelConfirmText("")
+                setSelectedAction(null)
+                setSelectedStatusInForm("")
+              }}
+              disabled={saving}
+            >
+              Cancel
+            </Button>
+            <Button
+              type="button"
+              variant="default"
+              className="bg-amber-600 hover:bg-amber-700 text-white"
+              onClick={async () => {
+                if (otherChannelConfirmText !== "CONFIRM") {
+                  toast.error("Please type CONFIRM exactly to proceed")
+                  return
+                }
+
+                // Proceed with the action
+                if (!selectedBooking || !selectedAction) return
+
+                const actionDef = getAvailableActions(
+                  selectedBooking.status as any,
+                  Boolean(selectedBooking.deposit_evidence_url),
+                  false
+                ).find(a => a.id === selectedAction)
+
+                if (!actionDef) {
+                  toast.error("Action not found")
+                  return
+                }
+
+                setOtherChannelDialogOpen(false)
+                setOtherChannelConfirmText("")
+                await executeActionDirectly(actionDef)
+              }}
+              disabled={saving || otherChannelConfirmText !== "CONFIRM"}
+            >
+              {saving ? (
+                <>
+                  <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                  Processing...
+                </>
+              ) : (
+                "Confirm Action"
+              )}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }
