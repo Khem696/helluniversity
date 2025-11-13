@@ -1,10 +1,10 @@
 import { NextResponse } from "next/server"
 import { getTursoClient } from "@/lib/turso"
 import { processAndUploadImage, validateImageFile } from "@/lib/image-processor"
-import { requireAuthorizedDomain, unauthorizedResponse, forbiddenResponse } from "@/lib/auth"
+import { requireAuthorizedDomain } from "@/lib/auth"
 import { randomUUID } from "crypto"
 import { createRequestLogger } from "@/lib/logger"
-import { withErrorHandling, successResponse, errorResponse, ErrorCodes } from "@/lib/api-response"
+import { withErrorHandling, successResponse, errorResponse, unauthorizedResponse, forbiddenResponse, ErrorCodes } from "@/lib/api-response"
 
 /**
  * Admin Image Upload API
@@ -32,10 +32,10 @@ export async function POST(request: Request) {
     } catch (error) {
       if (error instanceof Error && error.message.includes("Unauthorized")) {
         await logger.warn('Admin image upload rejected: authentication failed')
-        return unauthorizedResponse("Authentication required")
+        return unauthorizedResponse("Authentication required", { requestId })
       }
       await logger.warn('Admin image upload rejected: authorization failed')
-      return forbiddenResponse("Access denied: Must be from authorized Google Workspace domain")
+      return forbiddenResponse("Access denied: Must be from authorized Google Workspace domain", { requestId })
     }
     
     const formData = await request.formData()
@@ -183,10 +183,10 @@ export async function GET(request: Request) {
     } catch (error) {
       if (error instanceof Error && error.message.includes("Unauthorized")) {
         await logger.warn('Admin images list rejected: authentication failed')
-        return unauthorizedResponse("Authentication required")
+        return unauthorizedResponse("Authentication required", { requestId })
       }
       await logger.warn('Admin images list rejected: authorization failed')
-      return forbiddenResponse("Access denied: Must be from authorized Google Workspace domain")
+      return forbiddenResponse("Access denied: Must be from authorized Google Workspace domain", { requestId })
     }
     
     const { searchParams } = new URL(request.url)

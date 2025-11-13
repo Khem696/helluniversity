@@ -9,14 +9,12 @@ import {
 import { sendBookingStatusNotification, sendAdminBookingDeletionNotification, sendAdminStatusChangeNotification } from "@/lib/email"
 import {
   requireAuthorizedDomain,
-  unauthorizedResponse,
-  forbiddenResponse,
   getAuthSession,
 } from "@/lib/auth"
 import { deleteImage } from "@/lib/blob"
 import { enqueueJob } from "@/lib/job-queue"
 import { createRequestLogger } from "@/lib/logger"
-import { withErrorHandling, successResponse, errorResponse, notFoundResponse, ErrorCodes } from "@/lib/api-response"
+import { withErrorHandling, successResponse, errorResponse, notFoundResponse, unauthorizedResponse, forbiddenResponse, ErrorCodes } from "@/lib/api-response"
 import { createBangkokTimestamp } from "@/lib/timezone"
 
 /**
@@ -28,14 +26,14 @@ import { createBangkokTimestamp } from "@/lib/timezone"
  * - All routes require Google Workspace authentication
  */
 
-async function checkAuth() {
+async function checkAuth(requestId: string) {
   try {
     await requireAuthorizedDomain()
   } catch (error) {
     if (error instanceof Error && error.message.includes("Unauthorized")) {
-      return unauthorizedResponse("Authentication required")
+      return unauthorizedResponse("Authentication required", { requestId })
     }
-    return forbiddenResponse("Access denied: Must be from authorized Google Workspace domain")
+    return forbiddenResponse("Access denied: Must be from authorized Google Workspace domain", { requestId })
   }
   return null
 }
@@ -51,7 +49,7 @@ export async function GET(
     
     await logger.info('Admin get booking request', { bookingId: id })
     
-    const authError = await checkAuth()
+    const authError = await checkAuth(requestId)
     if (authError) {
       await logger.warn('Admin get booking request rejected: authentication failed', { bookingId: id })
       return authError
@@ -130,7 +128,7 @@ export async function PATCH(
     
     await logger.info('Admin update booking request', { bookingId: id })
     
-    const authError = await checkAuth()
+    const authError = await checkAuth(requestId)
     if (authError) {
       await logger.warn('Admin update booking rejected: authentication failed', { bookingId: id })
       return authError
@@ -271,7 +269,7 @@ export async function PATCH(
 
     // ENHANCED OVERLAP CHECK: Check for overlaps before updating to checked-in or accepting proposed dates
     // This prevents admin from creating overlapping bookings
-    if (status === "checked-in" || (status === "accepted" && currentBooking.proposed_date)) {
+    if (status === "checked-in" || (status === "accepted" && currentBooking.proposedDate)) {
       const { checkBookingOverlap } = await import('@/lib/booking-validations')
       
       // Determine which dates to check
@@ -280,40 +278,40 @@ export async function PATCH(
       let checkStartTime: string | null
       let checkEndTime: string | null
       
-      if (currentBooking.proposed_date && status === "accepted") {
+      if (currentBooking.proposedDate && status === "accepted") {
         // Accepting a proposed date - check proposed dates
         // CRITICAL: Use createBangkokTimestamp to handle date strings in Bangkok timezone
-        checkStartDate = typeof currentBooking.proposed_date === 'number' 
-          ? currentBooking.proposed_date 
-          : createBangkokTimestamp(String(currentBooking.proposed_date))
-        checkEndDate = currentBooking.proposed_end_date
-          ? (typeof currentBooking.proposed_end_date === 'number'
-              ? currentBooking.proposed_end_date
-              : createBangkokTimestamp(String(currentBooking.proposed_end_date)))
+        checkStartDate = typeof currentBooking.proposedDate === 'number' 
+          ? currentBooking.proposedDate 
+          : createBangkokTimestamp(String(currentBooking.proposedDate))
+        checkEndDate = currentBooking.proposedEndDate
+          ? (typeof currentBooking.proposedEndDate === 'number'
+              ? currentBooking.proposedEndDate
+              : createBangkokTimestamp(String(currentBooking.proposedEndDate)))
           : null
         // Parse times from user_response if available
         if (currentBooking.userResponse) {
           const startTimeMatch = currentBooking.userResponse.match(/Start Time: ([^,)]+)/)
           const endTimeMatch = currentBooking.userResponse.match(/End Time: ([^,)]+)/)
-          checkStartTime = startTimeMatch ? startTimeMatch[1].trim() : currentBooking.start_time
-          checkEndTime = endTimeMatch ? endTimeMatch[1].trim() : currentBooking.end_time
+          checkStartTime = startTimeMatch ? startTimeMatch[1].trim() : (currentBooking.startTime || null)
+          checkEndTime = endTimeMatch ? endTimeMatch[1].trim() : (currentBooking.endTime || null)
         } else {
-          checkStartTime = currentBooking.start_time
-          checkEndTime = currentBooking.end_time
+          checkStartTime = currentBooking.startTime || null
+          checkEndTime = currentBooking.endTime || null
         }
       } else {
         // Checking in with original dates
         // CRITICAL: Use createBangkokTimestamp to handle date strings in Bangkok timezone
-        checkStartDate = typeof currentBooking.start_date === 'number'
-          ? currentBooking.start_date
-          : createBangkokTimestamp(String(currentBooking.start_date))
-        checkEndDate = currentBooking.end_date
-          ? (typeof currentBooking.end_date === 'number'
-              ? currentBooking.end_date
-              : createBangkokTimestamp(String(currentBooking.end_date)))
+        checkStartDate = typeof currentBooking.startDate === 'number'
+          ? currentBooking.startDate
+          : createBangkokTimestamp(String(currentBooking.startDate))
+        checkEndDate = currentBooking.endDate
+          ? (typeof currentBooking.endDate === 'number'
+              ? currentBooking.endDate
+              : createBangkokTimestamp(String(currentBooking.endDate)))
           : null
-        checkStartTime = currentBooking.start_time
-        checkEndTime = currentBooking.end_time
+        checkStartTime = currentBooking.startTime || null
+        checkEndTime = currentBooking.endTime || null
       }
       
       await logger.info('Checking overlap before admin status update', {
@@ -594,7 +592,7 @@ export async function DELETE(
     
     await logger.info('Admin delete booking request', { bookingId: id })
     
-    const authError = await checkAuth()
+    const authError = await checkAuth(requestId)
     if (authError) {
       await logger.warn('Admin delete booking rejected: authentication failed', { bookingId: id })
       return authError

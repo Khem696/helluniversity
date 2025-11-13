@@ -1,9 +1,10 @@
 import { NextResponse } from "next/server"
 import { getTursoClient } from "@/lib/turso"
-import { requireAuthorizedDomain, unauthorizedResponse, forbiddenResponse } from "@/lib/auth"
+import { requireAuthorizedDomain } from "@/lib/auth"
 import { randomUUID } from "crypto"
 import { createRequestLogger } from "@/lib/logger"
-import { withErrorHandling, successResponse, errorResponse, ErrorCodes } from "@/lib/api-response"
+import { withErrorHandling, successResponse, errorResponse, unauthorizedResponse, forbiddenResponse, ErrorCodes } from "@/lib/api-response"
+import { createBangkokTimestamp } from "@/lib/timezone"
 
 /**
  * Admin Events CRUD API
@@ -13,14 +14,14 @@ import { withErrorHandling, successResponse, errorResponse, ErrorCodes } from "@
  * - All routes require Google Workspace authentication
  */
 
-async function checkAuth() {
+async function checkAuth(requestId: string) {
   try {
     await requireAuthorizedDomain()
   } catch (error) {
     if (error instanceof Error && error.message.includes("Unauthorized")) {
-      return unauthorizedResponse("Authentication required")
+      return unauthorizedResponse("Authentication required", { requestId })
     }
-    return forbiddenResponse("Access denied: Must be from authorized Google Workspace domain")
+    return forbiddenResponse("Access denied: Must be from authorized Google Workspace domain", { requestId })
   }
   return null
 }
@@ -32,7 +33,7 @@ export async function POST(request: Request) {
     
     await logger.info('Admin create event request received')
     
-    const authError = await checkAuth()
+    const authError = await checkAuth(requestId)
     if (authError) {
       await logger.warn('Admin create event rejected: authentication failed')
       return authError
@@ -64,10 +65,24 @@ export async function POST(request: Request) {
     const now = Math.floor(Date.now() / 1000)
 
     // Convert dates to Unix timestamps
+    // CRITICAL: Use createBangkokTimestamp for date strings (YYYY-MM-DD) to handle Bangkok timezone
     const convertToTimestamp = (date: string | number | null | undefined): number | null => {
       if (!date) return null
       if (typeof date === "number") return date
-      return Math.floor(new Date(date).getTime() / 1000)
+      
+      // If it's a date string (YYYY-MM-DD), use createBangkokTimestamp
+      // This ensures dates are interpreted in Bangkok timezone (GMT+7)
+      if (typeof date === "string") {
+        // Check if it's just a date string (YYYY-MM-DD) without time
+        if (/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+          return createBangkokTimestamp(date)
+        }
+        // If it's an ISO string with time (e.g., "2025-11-13T10:00:00Z"), parse as UTC
+        // This handles full ISO datetime strings from frontend
+        return Math.floor(new Date(date).getTime() / 1000)
+      }
+      
+      return null
     }
 
     const eventTimestamp = convertToTimestamp(event_date)
@@ -130,7 +145,7 @@ export async function GET(request: Request) {
     
     await logger.info('Admin events list request received')
     
-    const authError = await checkAuth()
+    const authError = await checkAuth(requestId)
     if (authError) {
       await logger.warn('Admin events list rejected: authentication failed')
       return authError

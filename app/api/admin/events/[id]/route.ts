@@ -1,8 +1,9 @@
 import { NextResponse } from "next/server"
 import { getTursoClient } from "@/lib/turso"
-import { requireAuthorizedDomain, unauthorizedResponse, forbiddenResponse } from "@/lib/auth"
+import { requireAuthorizedDomain } from "@/lib/auth"
 import { createRequestLogger } from "@/lib/logger"
-import { withErrorHandling, successResponse, errorResponse, notFoundResponse, ErrorCodes } from "@/lib/api-response"
+import { withErrorHandling, successResponse, errorResponse, notFoundResponse, unauthorizedResponse, forbiddenResponse, ErrorCodes } from "@/lib/api-response"
+import { createBangkokTimestamp } from "@/lib/timezone"
 
 /**
  * Admin Event Management API
@@ -13,14 +14,14 @@ import { withErrorHandling, successResponse, errorResponse, notFoundResponse, Er
  * - All routes require Google Workspace authentication
  */
 
-async function checkAuth() {
+async function checkAuth(requestId: string) {
   try {
     await requireAuthorizedDomain()
   } catch (error) {
     if (error instanceof Error && error.message.includes("Unauthorized")) {
-      return unauthorizedResponse("Authentication required")
+      return unauthorizedResponse("Authentication required", { requestId })
     }
-    return forbiddenResponse("Access denied: Must be from authorized Google Workspace domain")
+    return forbiddenResponse("Access denied: Must be from authorized Google Workspace domain", { requestId })
   }
   return null
 }
@@ -36,7 +37,7 @@ export async function GET(
     
     await logger.info('Admin get event request', { eventId: id })
     
-    const authError = await checkAuth()
+    const authError = await checkAuth(requestId)
     if (authError) {
       await logger.warn('Admin get event rejected: authentication failed', { eventId: id })
       return authError
@@ -105,7 +106,7 @@ export async function PATCH(
     
     await logger.info('Admin update event request', { eventId: id })
     
-    const authError = await checkAuth()
+    const authError = await checkAuth(requestId)
     if (authError) {
       await logger.warn('Admin update event rejected: authentication failed', { eventId: id })
       return authError
@@ -144,11 +145,26 @@ export async function PATCH(
       args.push(image_id || null)
     }
 
-    const convertToTimestamp = (date: string | number | null | undefined): number | null => {
-      if (date === undefined) return undefined as any
+    // Convert dates to Unix timestamps
+    // CRITICAL: Use createBangkokTimestamp for date strings (YYYY-MM-DD) to handle Bangkok timezone
+    const convertToTimestamp = (date: string | number | null | undefined): number | null | undefined => {
+      if (date === undefined) return undefined
       if (!date) return null
       if (typeof date === "number") return date
-      return Math.floor(new Date(date).getTime() / 1000)
+      
+      // If it's a date string (YYYY-MM-DD), use createBangkokTimestamp
+      // This ensures dates are interpreted in Bangkok timezone (GMT+7)
+      if (typeof date === "string") {
+        // Check if it's just a date string (YYYY-MM-DD) without time
+        if (/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+          return createBangkokTimestamp(date)
+        }
+        // If it's an ISO string with time (e.g., "2025-11-13T10:00:00Z"), parse as UTC
+        // This handles full ISO datetime strings from frontend
+        return Math.floor(new Date(date).getTime() / 1000)
+      }
+      
+      return null
     }
 
     if (event_date !== undefined) {
@@ -249,7 +265,7 @@ export async function DELETE(
     
     await logger.info('Admin delete event request', { eventId: id })
     
-    const authError = await checkAuth()
+    const authError = await checkAuth(requestId)
     if (authError) {
       await logger.warn('Admin delete event rejected: authentication failed', { eventId: id })
       return authError

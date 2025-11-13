@@ -1,8 +1,8 @@
 import { NextResponse } from "next/server"
 import { getTursoClient } from "@/lib/turso"
-import { requireAuthorizedDomain, unauthorizedResponse, forbiddenResponse } from "@/lib/auth"
+import { requireAuthorizedDomain } from "@/lib/auth"
 import { createRequestLogger } from "@/lib/logger"
-import { withErrorHandling, successResponse, errorResponse, notFoundResponse, ErrorCodes } from "@/lib/api-response"
+import { withErrorHandling, successResponse, errorResponse, notFoundResponse, unauthorizedResponse, forbiddenResponse, ErrorCodes } from "@/lib/api-response"
 
 /**
  * Toggle AI Selection with Automatic Ordering
@@ -17,14 +17,14 @@ import { withErrorHandling, successResponse, errorResponse, notFoundResponse, Er
  * - selected: true to select, false to deselect
  */
 
-async function checkAuth() {
+async function checkAuth(requestId: string) {
   try {
     await requireAuthorizedDomain()
   } catch (error) {
     if (error instanceof Error && error.message.includes("Unauthorized")) {
-      return unauthorizedResponse("Authentication required")
+      return unauthorizedResponse("Authentication required", { requestId })
     }
-    return forbiddenResponse("Access denied: Must be from authorized Google Workspace domain")
+    return forbiddenResponse("Access denied: Must be from authorized Google Workspace domain", { requestId })
   }
   return null
 }
@@ -36,7 +36,7 @@ export async function POST(request: Request) {
     
     await logger.info('Admin toggle AI selection request received')
     
-    const authError = await checkAuth()
+    const authError = await checkAuth(requestId)
     if (authError) {
       await logger.warn('Admin toggle AI selection rejected: authentication failed')
       return authError

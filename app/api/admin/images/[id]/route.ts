@@ -1,9 +1,9 @@
 import { NextResponse } from "next/server"
 import { getTursoClient } from "@/lib/turso"
-import { requireAuthorizedDomain, unauthorizedResponse, forbiddenResponse } from "@/lib/auth"
+import { requireAuthorizedDomain } from "@/lib/auth"
 import { deleteImageWithMetadata } from "@/lib/blob"
 import { createRequestLogger } from "@/lib/logger"
-import { withErrorHandling, successResponse, errorResponse, notFoundResponse, ErrorCodes } from "@/lib/api-response"
+import { withErrorHandling, successResponse, errorResponse, notFoundResponse, unauthorizedResponse, forbiddenResponse, ErrorCodes } from "@/lib/api-response"
 
 /**
  * Admin Image Update API
@@ -13,14 +13,14 @@ import { withErrorHandling, successResponse, errorResponse, notFoundResponse, Er
  * - Requires Google Workspace authentication
  */
 
-async function checkAuth() {
+async function checkAuth(requestId: string) {
   try {
     await requireAuthorizedDomain()
   } catch (error) {
     if (error instanceof Error && error.message.includes("Unauthorized")) {
-      return unauthorizedResponse("Authentication required")
+      return unauthorizedResponse("Authentication required", { requestId })
     }
-    return forbiddenResponse("Access denied: Must be from authorized Google Workspace domain")
+    return forbiddenResponse("Access denied: Must be from authorized Google Workspace domain", { requestId })
   }
   return null
 }
@@ -36,7 +36,7 @@ export async function PATCH(
     
     await logger.info('Admin image update request', { imageId: id })
     
-    const authError = await checkAuth()
+    const authError = await checkAuth(requestId)
     if (authError) {
       await logger.warn('Admin image update rejected: authentication failed', { imageId: id })
       return authError
@@ -156,7 +156,7 @@ export async function DELETE(
     
     await logger.info('Admin image delete request', { imageId: id })
     
-    const authError = await checkAuth()
+    const authError = await checkAuth(requestId)
     if (authError) {
       await logger.warn('Admin image delete rejected: authentication failed', { imageId: id })
       return authError

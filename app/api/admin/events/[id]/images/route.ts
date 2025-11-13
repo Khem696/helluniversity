@@ -1,9 +1,9 @@
 import { NextResponse } from "next/server"
 import { getTursoClient } from "@/lib/turso"
-import { requireAuthorizedDomain, unauthorizedResponse, forbiddenResponse } from "@/lib/auth"
+import { requireAuthorizedDomain } from "@/lib/auth"
 import { randomUUID } from "crypto"
 import { createRequestLogger } from "@/lib/logger"
-import { withErrorHandling, successResponse, errorResponse, notFoundResponse, ErrorCodes } from "@/lib/api-response"
+import { withErrorHandling, successResponse, errorResponse, notFoundResponse, unauthorizedResponse, forbiddenResponse, ErrorCodes } from "@/lib/api-response"
 
 /**
  * Admin Event Images Management API
@@ -13,14 +13,14 @@ import { withErrorHandling, successResponse, errorResponse, notFoundResponse, Er
  * - All routes require Google Workspace authentication
  */
 
-async function checkAuth() {
+async function checkAuth(requestId: string) {
   try {
     await requireAuthorizedDomain()
   } catch (error) {
     if (error instanceof Error && error.message.includes("Unauthorized")) {
-      return unauthorizedResponse("Authentication required")
+      return unauthorizedResponse("Authentication required", { requestId })
     }
-    return forbiddenResponse("Access denied: Must be from authorized Google Workspace domain")
+    return forbiddenResponse("Access denied: Must be from authorized Google Workspace domain", { requestId })
   }
   return null
 }
@@ -36,7 +36,7 @@ export async function POST(
     
     await logger.info('Admin add event image request', { eventId })
     
-    const authError = await checkAuth()
+    const authError = await checkAuth(requestId)
     if (authError) {
       await logger.warn('Admin add event image rejected: authentication failed', { eventId })
       return authError
@@ -132,7 +132,7 @@ export async function GET(
     
     await logger.info('Admin get event images request', { eventId })
     
-    const authError = await checkAuth()
+    const authError = await checkAuth(requestId)
     if (authError) {
       await logger.warn('Admin get event images rejected: authentication failed', { eventId })
       return authError
