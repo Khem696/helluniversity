@@ -416,12 +416,21 @@ export async function autoUpdateFinishedBookings(): Promise<{
     reason: string
   }> = []
 
+  console.log(`[autoUpdateFinishedBookings] Processing ${result.rows.length} bookings. Current time (Bangkok): ${new Date(now * 1000).toISOString()}`)
+  
   for (const row of result.rows) {
     const bookingRow = row as any
     const startTimestamp = await calculateReservationStartTimestamp(
       bookingRow.start_date,
       bookingRow.start_time
     )
+    
+    // Debug logging for pending bookings
+    if (bookingRow.status === "pending" || bookingRow.status === "postponed") {
+      const startDateStr = bookingRow.start_date ? new Date(bookingRow.start_date * 1000).toISOString() : 'null'
+      const startTimestampStr = startTimestamp ? new Date(startTimestamp * 1000).toISOString() : 'null'
+      console.log(`[autoUpdateFinishedBookings] ${bookingRow.status} booking ${bookingRow.id}: start_date=${startDateStr}, start_time=${bookingRow.start_time || 'null'}, startTimestamp=${startTimestampStr}, now=${new Date(now * 1000).toISOString()}, shouldCancel=${startTimestamp && startTimestamp < now}`)
+    }
     
     // Check accepted bookings - cancel if past start date + time (grace period) without deposit
     if (bookingRow.status === "accepted") {
@@ -523,7 +532,32 @@ export async function autoUpdateFinishedBookings(): Promise<{
     // Check pending and postponed bookings - cancel if start date passed
     if (bookingRow.status === "pending" || bookingRow.status === "postponed") {
       // If start date has passed, cancel the booking (no response received before reservation start date)
-      if (startTimestamp && startTimestamp < now) {
+      // For bookings without start_time, compare the date itself (not time)
+      let shouldCancel = false
+      
+      if (startTimestamp) {
+        // Has start_time: compare timestamp directly
+        shouldCancel = startTimestamp < now
+      } else if (bookingRow.start_date) {
+        // No start_time: compare dates (if start_date is before today, cancel)
+        // Get today's date in Bangkok timezone (at start of day)
+        const { TZDate } = await import('@date-fns/tz')
+        const BANGKOK_TIMEZONE = 'Asia/Bangkok'
+        const nowDate = new Date(now * 1000)
+        const tzNow = new TZDate(nowDate.getTime(), BANGKOK_TIMEZONE)
+        const todayYear = tzNow.getFullYear()
+        const todayMonth = tzNow.getMonth()
+        const todayDay = tzNow.getDate()
+        const todayStart = new TZDate(todayYear, todayMonth, todayDay, 0, 0, 0, BANGKOK_TIMEZONE)
+        const todayStartTimestamp = Math.floor(todayStart.getTime() / 1000)
+        
+        // If start_date is before today, cancel it
+        shouldCancel = bookingRow.start_date < todayStartTimestamp
+        console.log(`[autoUpdateFinishedBookings] Booking ${bookingRow.id} has no start_time: start_date=${new Date(bookingRow.start_date * 1000).toISOString()}, today_start=${new Date(todayStartTimestamp * 1000).toISOString()}, shouldCancel=${shouldCancel}`)
+      }
+      
+      if (shouldCancel) {
+        console.log(`[autoUpdateFinishedBookings] Cancelling ${bookingRow.status} booking ${bookingRow.id} - start date/time has passed`)
         const newStatus = "cancelled"
         const changeReason = "Automatically cancelled: reservation start date/time has passed without response"
 

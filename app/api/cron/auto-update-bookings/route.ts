@@ -59,13 +59,44 @@ async function handleAutoUpdate(request: Request) {
     }
     
     // Run auto-update
+    const startTime = Date.now()
+    await logger.info('Starting auto-update bookings', {
+      timestamp: new Date().toISOString(),
+      timezone: 'UTC'
+    })
+    
+    console.log(`[auto-update-bookings] Starting auto-update bookings processing`)
+    
     const result = await autoUpdateFinishedBookings()
+    const duration = Date.now() - startTime
     
     await logger.info('Auto-update bookings completed', {
       finished: result.finished,
       cancelled: result.cancelled,
-      updatedCount: result.updatedBookings.length
+      updatedCount: result.updatedBookings.length,
+      duration: `${duration}ms`,
+      timestamp: new Date().toISOString(),
+      updatedBookings: result.updatedBookings.map(b => ({
+        id: b.booking.id,
+        oldStatus: b.oldStatus,
+        newStatus: b.newStatus
+      }))
     })
+    
+    // Log detailed results for debugging
+    console.log(`[auto-update-bookings] Auto-update completed in ${duration}ms:`)
+    console.log(`[auto-update-bookings]   - Finished: ${result.finished}`)
+    console.log(`[auto-update-bookings]   - Cancelled: ${result.cancelled}`)
+    console.log(`[auto-update-bookings]   - Total updated: ${result.updatedBookings.length}`)
+    
+    if (result.updatedBookings.length > 0) {
+      console.log(`[auto-update-bookings]   - Updated bookings details:`)
+      result.updatedBookings.forEach(b => {
+        console.log(`[auto-update-bookings]     • Booking ${b.booking.id}: ${b.oldStatus} → ${b.newStatus} (${b.reason})`)
+      })
+    } else {
+      console.log(`[auto-update-bookings]   - No bookings needed updating`)
+    }
     
     return successResponse(
       {

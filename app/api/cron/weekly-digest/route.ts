@@ -44,18 +44,37 @@ export async function GET(request: Request) {
     }
 
     // Send weekly digest
-    await logger.info('Sending weekly booking digest')
-    await sendWeeklyBookingDigest()
+    const startTime = Date.now()
+    await logger.info('Sending weekly booking digest', {
+      timestamp: new Date().toISOString(),
+      timezone: 'UTC'
+    })
     
-    await logger.info('Weekly booking digest sent successfully')
-    
-    return successResponse(
-      {
-        message: "Weekly booking digest sent successfully",
-        timestamp: new Date().toISOString(),
-      },
-      { requestId }
-    )
+    try {
+      await sendWeeklyBookingDigest()
+      const duration = Date.now() - startTime
+      
+      await logger.info('Weekly booking digest sent successfully', {
+        duration: `${duration}ms`,
+        timestamp: new Date().toISOString()
+      })
+      
+      console.log(`[weekly-digest] Successfully sent weekly booking digest in ${duration}ms`)
+      
+      return successResponse(
+        {
+          message: "Weekly booking digest sent successfully",
+          timestamp: new Date().toISOString(),
+          duration: `${duration}ms`,
+        },
+        { requestId }
+      )
+    } catch (error) {
+      const duration = Date.now() - startTime
+      await logger.error('Failed to send weekly booking digest', error instanceof Error ? error : new Error(String(error)))
+      console.error(`[weekly-digest] Failed to send weekly booking digest after ${duration}ms:`, error)
+      throw error
+    }
   }, { endpoint: '/api/cron/weekly-digest' })
 }
 
