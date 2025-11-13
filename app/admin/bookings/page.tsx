@@ -1347,19 +1347,19 @@ export default function BookingsPage() {
                   <h3 className="text-lg font-semibold mb-3">Additional Information</h3>
                   {selectedBooking.introduction && (
                     <div className="mb-3">
-                      <Label>Introduction</Label>
+                      <Label>Brief Your Desire</Label>
                       <div className="text-sm text-gray-900 mt-1">{selectedBooking.introduction}</div>
                     </div>
                   )}
                   {selectedBooking.biography && (
                     <div className="mb-3">
-                      <Label>Biography</Label>
+                      <Label>Background & Interests</Label>
                       <div className="text-sm text-gray-900 mt-1">{selectedBooking.biography}</div>
                     </div>
                   )}
                   {selectedBooking.special_requests && (
                     <div>
-                      <Label>Special Requests</Label>
+                      <Label>Special Requirements</Label>
                       <div className="text-sm text-gray-900 mt-1">{selectedBooking.special_requests}</div>
                     </div>
                   )}

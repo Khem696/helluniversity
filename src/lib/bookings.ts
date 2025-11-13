@@ -67,8 +67,8 @@ function generateBookingReference(): string {
   const timestamp = Math.floor(Date.now() / 1000)
   
   // Generate random component (3 bytes = 6 hex chars, convert to base36)
-  const randomBytes = crypto.randomBytes(3)
-  const randomValue = parseInt(randomBytes.toString('hex'), 16)
+  const randomBuffer = randomBytes(3)
+  const randomValue = parseInt(randomBuffer.toString('hex'), 16)
   
   // Convert to base36 (0-9, a-z)
   const timestampPart = (timestamp % 46656).toString(36).toUpperCase().padStart(3, '0') // 46656 = 36^3

@@ -32,6 +32,10 @@
     {
       "path": "/api/cron/job-queue",
       "schedule": "*/5 * * * *"
+    },
+    {
+      "path": "/api/cron/auto-update-bookings",
+      "schedule": "0 * * * *"
     }
   ]
 }

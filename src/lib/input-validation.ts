@@ -468,7 +468,7 @@ export function validateBookingData(data: {
   }
 
   // Validate introduction
-  const introductionValidation = validateTextField(data.introduction, 'Introduction', {
+  const introductionValidation = validateTextField(data.introduction, 'Brief Your Desire', {
     required: true,
     minLength: 1,
     maxLength: 5000,
@@ -482,7 +482,7 @@ export function validateBookingData(data: {
 
   // Validate biography (optional)
   if (data.biography) {
-    const biographyValidation = validateTextField(data.biography, 'Biography', {
+    const biographyValidation = validateTextField(data.biography, 'Background & Interests', {
       maxLength: 2000,
       allowNewlines: true,
     })
@@ -495,7 +495,7 @@ export function validateBookingData(data: {
 
   // Validate special requests (optional)
   if (data.specialRequests) {
-    const specialRequestsValidation = validateTextField(data.specialRequests, 'Special requests', {
+    const specialRequestsValidation = validateTextField(data.specialRequests, 'Special Requirements', {
       maxLength: 1000,
       allowNewlines: true,
     })
