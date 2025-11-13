@@ -25,6 +25,7 @@ import {
 import { Upload, Edit, Loader2, Image as ImageIcon, ChevronDown, ChevronUp, Globe, Image as ImageIcon2, Trash2 } from "lucide-react"
 import { toast } from "sonner"
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible"
+import { useAdminData } from "@/hooks/useAdminData"
 
 interface Image {
   id: string
@@ -90,8 +91,6 @@ const SECTIONS: SectionInfo[] = [
 
 export default function ImagesPage() {
   const { data: session, status } = useSession()
-  const [images, setImages] = useState<Image[]>([])
-  const [loading, setLoading] = useState(true)
   const [uploading, setUploading] = useState(false)
   const [editingImage, setEditingImage] = useState<Image | null>(null)
   const [uploadDialogOpen, setUploadDialogOpen] = useState(false)
@@ -103,6 +102,27 @@ export default function ImagesPage() {
   const [expandedSections, setExpandedSections] = useState<Set<string>>(new Set(SECTIONS.map(s => s.name)))
   const [viewMode, setViewMode] = useState<"sections" | "grid">("sections")
   const uploadFormRef = useRef<HTMLFormElement>(null)
+  
+  // Use useAdminData hook for images with optimistic updates
+  const {
+    data: images,
+    loading,
+    fetchData: fetchImages,
+    addItem,
+    updateItem,
+    removeItem,
+    replaceItem
+  } = useAdminData<Image>({
+    endpoint: "/api/admin/images?limit=1000",
+    transformResponse: (json) => {
+      return Array.isArray(json.data?.images) 
+        ? json.data.images 
+        : Array.isArray(json.images) 
+          ? json.images 
+          : []
+    },
+    isDialogOpen: () => uploadDialogOpen || editDialogOpen || deleteDialogOpen
+  })
 
   // Redirect if not authenticated
   useEffect(() => {
@@ -111,66 +131,7 @@ export default function ImagesPage() {
     }
   }, [status])
 
-  // Fetch images
-  const fetchImages = async () => {
-    try {
-      setLoading(true)
-      const response = await fetch("/api/admin/images?limit=1000")
-      const json = await response.json()
-      
-      // Enhanced logging to debug response structure
-      console.log("[ImagesPage] API Response:", {
-        hasSuccess: 'success' in json,
-        success: json.success,
-        hasData: 'data' in json,
-        hasDataImages: json.data && 'images' in json.data,
-        hasDirectImages: 'images' in json,
-        dataKeys: Object.keys(json),
-        dataDataKeys: json.data ? Object.keys(json.data) : undefined
-      })
-      
-      if (json.success) {
-        // API returns { success: true, data: { images: [...], pagination: {...} } }
-        // Check both possible response structures for compatibility
-        const fetchedImages = Array.isArray(json.data?.images) 
-          ? json.data.images 
-          : Array.isArray(json.images) 
-            ? json.images 
-            : []
-        
-        console.log("[ImagesPage] Fetched images:", {
-          count: fetchedImages.length,
-          sample: fetchedImages.length > 0 ? fetchedImages.slice(0, 3).map((img: Image) => ({
-            id: img.id,
-            blob_url: img.blob_url,
-            title: img.title,
-            category: img.category
-          })) : []
-        })
-        
-        setImages(fetchedImages)
-      } else {
-        const errorMessage = json.error?.message || json.error || "Failed to load images"
-        toast.error(errorMessage)
-        console.error("[ImagesPage] API error:", json)
-        // Set to empty array on error to prevent undefined state
-        setImages([])
-      }
-    } catch (error) {
-      toast.error("Failed to load images")
-      console.error("[ImagesPage] Fetch error:", error)
-      // Set to empty array on error to prevent undefined state
-      setImages([])
-    } finally {
-      setLoading(false)
-    }
-  }
-
-  useEffect(() => {
-    if (session) {
-      fetchImages()
-    }
-  }, [session])
+  // No need for useEffect - useAdminData handles initial fetch
 
   // Handle image upload
   const handleUpload = async (e: React.FormEvent<HTMLFormElement>) => {
@@ -201,6 +162,11 @@ export default function ImagesPage() {
 
       const json = await response.json()
       if (json.success) {
+        const newImage = json.data?.image || json.image
+        // Optimistically add to list (instant UI update)
+        if (newImage) {
+          addItem(newImage)
+        }
         toast.success("Image uploaded successfully")
         // Reset form before closing dialog (e.currentTarget may be null after dialog closes)
         if (uploadFormRef.current) {
@@ -209,7 +175,6 @@ export default function ImagesPage() {
           e.currentTarget.reset()
         }
         setUploadDialogOpen(false)
-        fetchImages()
       } else {
         const errorMessage = json.error?.message || json.error || "Failed to upload image"
         toast.error(errorMessage)
@@ -238,13 +203,19 @@ export default function ImagesPage() {
       const json = await response.json()
       if (json.success) {
         // API returns { success: true, data: { image: {...}, totalSelected: ... } }
+        const updatedImage = json.data?.image || json.image
         const totalSelected = json.data?.totalSelected ?? json.totalSelected ?? 0
+        
+        // Optimistically update the image
+        if (updatedImage) {
+          replaceItem(imageId, updatedImage)
+        }
+        
         toast.success(
           newValue 
             ? `Image selected for AI generation (Order: ${totalSelected})` 
             : "Image deselected from AI generation"
         )
-        fetchImages()
       } else {
         const errorMessage = json.error?.message || json.error || "Failed to update image selection"
         toast.error(errorMessage)
@@ -281,6 +252,9 @@ export default function ImagesPage() {
     }
 
     try {
+      // Optimistically update UI first
+      updateItem(editingImage.id, updates as Partial<Image>)
+      
       const response = await fetch(`/api/admin/images/${editingImage.id}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
@@ -289,15 +263,23 @@ export default function ImagesPage() {
 
       const json = await response.json()
       if (json.success) {
+        const updatedImage = json.data?.image || json.image
+        // Replace with server response (ensures sync)
+        if (updatedImage) {
+          replaceItem(editingImage.id, updatedImage)
+        }
         toast.success("Image updated successfully")
         setEditDialogOpen(false)
         setEditingImage(null)
-        fetchImages()
       } else {
+        // Rollback on error
+        fetchImages()
         const errorMessage = json.error?.message || json.error || "Failed to update image"
         toast.error(errorMessage)
       }
     } catch (error) {
+      // Rollback on error
+      fetchImages()
       toast.error("Failed to update image")
       console.error(error)
     }
@@ -314,6 +296,9 @@ export default function ImagesPage() {
 
     try {
       setDeleting(true)
+      // Optimistically remove from list
+      removeItem(imageToDelete.id)
+      
       const response = await fetch(`/api/admin/images/${imageToDelete.id}`, {
         method: "DELETE",
       })
@@ -323,12 +308,15 @@ export default function ImagesPage() {
         toast.success("Image deleted successfully")
         setDeleteDialogOpen(false)
         setImageToDelete(null)
-        fetchImages() // Refresh the list
       } else {
+        // Rollback on error
+        fetchImages()
         const errorMessage = json.error?.message || json.error || "Failed to delete image"
         toast.error(errorMessage)
       }
     } catch (error) {
+      // Rollback on error
+      fetchImages()
       toast.error("Failed to delete image")
       console.error(error)
     } finally {

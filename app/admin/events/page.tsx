@@ -38,6 +38,8 @@ import {
 import { Plus, Trash2, Edit, Loader2, Calendar, MapPin, Image as ImageIcon, X, Check } from "lucide-react"
 import { toast } from "sonner"
 import { format } from "date-fns"
+import { TZDate } from '@date-fns/tz'
+import { useAdminData } from "@/hooks/useAdminData"
 
 interface Event {
   id: string
@@ -72,9 +74,6 @@ interface Image {
 
 export default function EventsPage() {
   const { data: session, status } = useSession()
-  const [events, setEvents] = useState<Event[]>([])
-  const [images, setImages] = useState<Image[]>([])
-  const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [editingEvent, setEditingEvent] = useState<Event | null>(null)
   const [deleteConfirm, setDeleteConfirm] = useState<string | null>(null)
@@ -85,13 +84,31 @@ export default function EventsPage() {
   const [editImageOpen, setEditImageOpen] = useState(false)
   const [selectedImageId, setSelectedImageId] = useState<string | null>(null)
   const [editSelectedImageId, setEditSelectedImageId] = useState<string | null>(null)
+  const [images, setImages] = useState<Image[]>([])
   const createFormRef = React.useRef<HTMLFormElement>(null)
-  const createDialogOpenRef = React.useRef<boolean>(false)
   
-  // Track dialog state to prevent unnecessary refreshes
-  useEffect(() => {
-    createDialogOpenRef.current = createDialogOpen
-  }, [createDialogOpen])
+  // Use useAdminData hook for events with optimistic updates
+  const {
+    data: events,
+    loading,
+    fetchData: fetchEvents,
+    addItem,
+    updateItem,
+    removeItem,
+    replaceItem
+  } = useAdminData<Event>({
+    endpoint: "/api/admin/events?limit=1000",
+    transformResponse: (json) => {
+      return Array.isArray(json.data?.events) 
+        ? json.data.events 
+        : Array.isArray(json.events) 
+          ? json.events 
+          : []
+    },
+    isDialogOpen: () => createDialogOpen || editDialogOpen,
+    enablePolling: true,
+    pollInterval: 30000
+  })
 
   // Redirect if not authenticated
   useEffect(() => {
@@ -100,73 +117,6 @@ export default function EventsPage() {
     }
   }, [status])
 
-  // Fetch events
-  const fetchEvents = async (showLoading: boolean = true) => {
-    // Don't fetch if create dialog is open (prevents form reset while user is typing)
-    if (createDialogOpenRef.current && showLoading) {
-      return
-    }
-    
-    try {
-      // Don't show loading state if create dialog is open (prevents form reset)
-      if (showLoading && !createDialogOpenRef.current) {
-        setLoading(true)
-      }
-      const response = await fetch("/api/admin/events?limit=1000")
-      const json = await response.json()
-      
-      // Enhanced logging to debug response structure (only in development)
-      if (process.env.NODE_ENV === 'development') {
-        console.log("[EventsPage] API Response:", {
-          hasSuccess: 'success' in json,
-          success: json.success,
-          hasData: 'data' in json,
-          hasDataEvents: json.data && 'events' in json.data,
-          hasDirectEvents: 'events' in json,
-          dataKeys: Object.keys(json),
-          dataDataKeys: json.data ? Object.keys(json.data) : undefined
-        })
-      }
-      
-      if (json.success) {
-        // API returns { success: true, data: { events: [...], pagination: {...} } }
-        // Check both possible response structures for compatibility
-        const fetchedEvents = Array.isArray(json.data?.events) 
-          ? json.data.events 
-          : Array.isArray(json.events) 
-            ? json.events 
-            : []
-        
-        if (process.env.NODE_ENV === 'development') {
-          console.log("[EventsPage] Fetched events:", {
-            count: fetchedEvents.length,
-            sample: fetchedEvents.length > 0 ? fetchedEvents.slice(0, 3).map((evt: Event) => ({
-              id: evt.id,
-              title: evt.title,
-              image_id: evt.image_id
-            })) : []
-          })
-        }
-        
-        setEvents(fetchedEvents)
-      } else {
-        const errorMessage = json.error?.message || json.error || "Failed to load events"
-        toast.error(errorMessage)
-        console.error("[EventsPage] API error:", json)
-        // Set to empty array on error to prevent undefined state
-        setEvents([])
-      }
-    } catch (error) {
-      toast.error("Failed to load events")
-      console.error("[EventsPage] Fetch error:", error)
-      // Set to empty array on error to prevent undefined state
-      setEvents([])
-    } finally {
-      if (showLoading && !createDialogOpenRef.current) {
-        setLoading(false)
-      }
-    }
-  }
 
   // Fetch event details with in-event photos
   const fetchEventDetails = async (eventId: string) => {
@@ -204,9 +154,10 @@ export default function EventsPage() {
           const updated = await fetchEventDetails(eventId)
           if (updated) {
             setEditingEvent(updated)
+            // Update the event in the list with new photo data
+            replaceItem(eventId, updated)
           }
         }
-        fetchEvents()
       } else {
         const errorMessage = json.error?.message || json.error || "Failed to add photo"
         toast.error(errorMessage)
@@ -232,9 +183,10 @@ export default function EventsPage() {
           const updated = await fetchEventDetails(eventId)
           if (updated) {
             setEditingEvent(updated)
+            // Update the event in the list with updated photo data
+            replaceItem(eventId, updated)
           }
         }
-        fetchEvents()
       } else {
         const errorMessage = json.error?.message || json.error || "Failed to remove photo"
         toast.error(errorMessage)
@@ -272,10 +224,6 @@ export default function EventsPage() {
 
   useEffect(() => {
     if (session) {
-      // Only fetch on initial load, not if dialog is open
-      if (!createDialogOpenRef.current) {
-        fetchEvents()
-      }
       fetchImages()
     }
   }, [session])
@@ -305,6 +253,11 @@ export default function EventsPage() {
 
       const json = await response.json()
       if (json.success) {
+        const newEvent = json.data?.event || json.event
+        // Optimistically add to list (instant UI update)
+        if (newEvent) {
+          addItem(newEvent)
+        }
         toast.success("Event created successfully")
         setCreateDialogOpen(false)
         setSelectedImageId(null)
@@ -314,8 +267,6 @@ export default function EventsPage() {
         } else if (e.currentTarget) {
           e.currentTarget.reset()
         }
-        // Fetch events without showing loading state (dialog is closing)
-        fetchEvents(false)
       } else {
         const errorMessage = json.error?.message || json.error || "Failed to create event"
         toast.error(errorMessage)
@@ -369,6 +320,9 @@ export default function EventsPage() {
     }
 
     try {
+      // Optimistically update UI first
+      updateItem(editingEvent.id, updates as Partial<Event>)
+      
       const response = await fetch(`/api/admin/events/${editingEvent.id}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
@@ -377,16 +331,24 @@ export default function EventsPage() {
 
       const json = await response.json()
       if (json.success) {
+        const updatedEvent = json.data?.event || json.event
+        // Replace with server response (ensures sync)
+        if (updatedEvent) {
+          replaceItem(editingEvent.id, updatedEvent)
+        }
         toast.success("Event updated successfully")
         setEditDialogOpen(false)
         setEditingEvent(null)
         setEditSelectedImageId(null)
-        fetchEvents()
       } else {
+        // Rollback on error
+        fetchEvents()
         const errorMessage = json.error?.message || json.error || "Failed to update event"
         toast.error(errorMessage)
       }
     } catch (error) {
+      // Rollback on error
+      fetchEvents()
       toast.error("Failed to update event")
       console.error(error)
     } finally {
@@ -397,6 +359,9 @@ export default function EventsPage() {
   // Handle event delete
   const handleDelete = async (eventId: string) => {
     try {
+      // Optimistically remove from list
+      removeItem(eventId)
+      
       const response = await fetch(`/api/admin/events/${eventId}`, {
         method: "DELETE",
       })
@@ -405,12 +370,15 @@ export default function EventsPage() {
       if (json.success) {
         toast.success("Event deleted successfully")
         setDeleteConfirm(null)
-        fetchEvents()
       } else {
+        // Rollback on error
+        fetchEvents()
         const errorMessage = json.error?.message || json.error || "Failed to delete event"
         toast.error(errorMessage)
       }
     } catch (error) {
+      // Rollback on error
+      fetchEvents()
       toast.error("Failed to delete event")
       console.error(error)
     }
@@ -418,7 +386,22 @@ export default function EventsPage() {
 
   const formatTimestamp = (timestamp: number | null) => {
     if (!timestamp) return ""
-    return format(new Date(timestamp * 1000), "yyyy-MM-dd")
+    try {
+      // Handle both Unix timestamp (seconds) and milliseconds
+      const timestampMs = timestamp > 1000000000000 
+        ? timestamp // Already in milliseconds
+        : timestamp * 1000 // Convert from seconds to milliseconds
+      
+      // CRITICAL: Convert UTC timestamp to Bangkok timezone for display
+      // Timestamps in DB are UTC but represent Bangkok time
+      const utcDate = new Date(timestampMs)
+      const bangkokDate = new TZDate(utcDate.getTime(), 'Asia/Bangkok')
+      
+      return format(bangkokDate, "yyyy-MM-dd")
+    } catch (error) {
+      console.error("Error formatting timestamp:", timestamp, error)
+      return ""
+    }
   }
 
   if (status === "loading" || loading) {

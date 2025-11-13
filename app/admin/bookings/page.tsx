@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useEffect, useRef } from "react"
+import { useState, useEffect, useRef, useMemo } from "react"
 import { redirect } from "next/navigation"
 import { useSession } from "next-auth/react"
 import { Button } from "@/components/ui/button"
@@ -53,6 +53,7 @@ import { useBookingActions } from "@/hooks/useBookingActions"
 import { getAvailableActions, type ActionDefinition } from "@/lib/booking-state-machine"
 import { calculateStartTimestamp } from "@/lib/booking-validations"
 import { getBangkokTime } from "@/lib/timezone"
+import { useAdminData } from "@/hooks/useAdminData"
 
 // Helper function to add AM/PM to 24-hour time format for display
 // Converts "13:00" -> "13:00 PM", "09:30" -> "09:30 AM", "00:00" -> "00:00 AM"
@@ -119,8 +120,6 @@ interface StatusHistory {
 
 export default function BookingsPage() {
   const { data: session, status } = useSession()
-  const [bookings, setBookings] = useState<Booking[]>([])
-  const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [selectedBooking, setSelectedBooking] = useState<Booking | null>(null)
   const [statusHistory, setStatusHistory] = useState<StatusHistory[]>([])
@@ -153,6 +152,36 @@ export default function BookingsPage() {
     viewDialogOpenRef.current = viewDialogOpen
   }, [viewDialogOpen])
   
+  // Build endpoint with filters (memoized to trigger refetch when filters change)
+  const endpoint = useMemo(() => {
+    const params = new URLSearchParams()
+    if (statusFilter !== "all") {
+      params.append("status", statusFilter)
+    }
+    if (emailFilter) {
+      params.append("email", emailFilter)
+    }
+    params.append("limit", "1000")
+    return `/api/admin/bookings?${params.toString()}`
+  }, [statusFilter, emailFilter])
+  
+  // Use useAdminData hook for bookings (polling disabled - we have custom polling)
+  const {
+    data: bookings,
+    loading,
+    fetchData: fetchBookings,
+    updateItem,
+    removeItem,
+    replaceItem
+  } = useAdminData<Booking>({
+    endpoint,
+    transformResponse: (json) => {
+      return json.data?.bookings || json.bookings || []
+    },
+    isDialogOpen: () => viewDialogOpen || statusDialogOpen,
+    enablePolling: false // Disable hook polling - we have custom polling below
+  })
+  
   // Initialize booking actions hook
   const {
     isLoading: actionLoading,
@@ -181,47 +210,13 @@ export default function BookingsPage() {
     }
   }, [status])
 
-  // Fetch bookings
-  const fetchBookings = async () => {
-    try {
-      setLoading(true)
-      const params = new URLSearchParams()
-      if (statusFilter !== "all") {
-        params.append("status", statusFilter)
-      }
-      if (emailFilter) {
-        params.append("email", emailFilter)
-      }
-      params.append("limit", "1000")
-
-      const response = await fetch(`/api/admin/bookings?${params.toString()}`)
-      const json = await response.json()
-      
-      if (json.success && json.data) {
-        const bookings = json.data.bookings || []
-        setBookings(Array.isArray(bookings) ? bookings : [])
-      } else {
-        const errorMessage = json.error?.message || "Failed to load bookings"
-        toast.error(errorMessage)
-        // Set to empty array on error to prevent undefined state
-        setBookings([])
-      }
-    } catch (error) {
-      toast.error("Failed to load bookings")
-      console.error(error)
-      // Set to empty array on error to prevent undefined state
-      setBookings([])
-    } finally {
-      setLoading(false)
-    }
-  }
-
+  // Initial fetch and refetch when filters change
   useEffect(() => {
     if (session) {
       fetchBookings()
       lastCheckedAtRef.current = Date.now()
     }
-  }, [session, statusFilter, emailFilter])
+  }, [session, endpoint])
 
   // Poll for new user responses and status changes every 30 seconds
   useEffect(() => {
@@ -396,9 +391,15 @@ export default function BookingsPage() {
             })
           }
           
-          // Refresh bookings list if there are any changes
+          // Update bookings selectively if there are any changes
           if (newResponses.length > 0 || statusChanges.length > 0) {
-            fetchBookings()
+            // Update changed bookings in the list instead of full refresh
+            statusChanges.forEach(booking => {
+              replaceItem(booking.id, booking)
+            })
+            newResponses.forEach(booking => {
+              replaceItem(booking.id, booking)
+            })
             
             // If dialog is open, refresh selected booking details to get latest data
             if (isDialogOpen && currentSelectedBookingId) {
@@ -497,12 +498,17 @@ export default function BookingsPage() {
       const json = await response.json()
       
       if (json.success) {
+        // Optimistically remove from list
+        if (selectedBooking) {
+          removeItem(selectedBooking.id)
+        }
         const message = json.data?.message || "Booking deleted successfully. Notifications sent if applicable."
         toast.success(message)
         setViewDialogOpen(false)
         setStatusDialogOpen(false)
-        fetchBookings()
       } else {
+        // Rollback on error
+        fetchBookings()
         const errorMessage = json.error?.message || "Failed to delete booking"
         toast.error(errorMessage)
       }
@@ -640,6 +646,11 @@ export default function BookingsPage() {
       const json = await response.json()
       
       if (json.success) {
+        const updatedBooking = json.data?.booking || json.booking
+        // Optimistically update the booking
+        if (updatedBooking && selectedBooking) {
+          replaceItem(selectedBooking.id, updatedBooking)
+        }
         toast.success(`Booking ${selectedAction === "accept" ? "accepted" : selectedAction === "reject" ? "rejected" : "postponed"} successfully. Email notification sent.`)
         setStatusDialogOpen(false)
         setSelectedAction(null)
@@ -649,11 +660,12 @@ export default function BookingsPage() {
         setConfirmationDialogOpen(false)
         setPendingAction(null)
         setPendingValidation(null)
-        fetchBookings()
         if (viewDialogOpen) {
           fetchBookingDetails(selectedBooking.id)
         }
       } else {
+          // Rollback on error
+          fetchBookings()
           // Parse error for better user experience
           const { parseBackendError, getErrorMessageWithGuidance } = await import("@/lib/error-parser")
           const errorText = json.error?.message || "Failed to update booking"
@@ -677,7 +689,6 @@ export default function BookingsPage() {
             if (selectedBooking) {
               await fetchBookingDetails(selectedBooking.id)
             }
-            fetchBookings()
           } else if (parsedError.type === 'transition') {
             // Show transition error with valid options
             toast.error(errorMessage)
@@ -686,6 +697,8 @@ export default function BookingsPage() {
           }
         }
       } catch (error) {
+        // Rollback on error
+        fetchBookings()
         const { parseBackendError, getErrorMessageWithGuidance } = await import("@/lib/error-parser")
         const parsedError = parseBackendError(error instanceof Error ? error : new Error(String(error)))
         const errorMessage = getErrorMessageWithGuidance(parsedError)
@@ -707,7 +720,6 @@ export default function BookingsPage() {
           if (selectedBooking) {
             await fetchBookingDetails(selectedBooking.id)
           }
-          fetchBookings()
         } else {
           toast.error(errorMessage)
         }
@@ -822,7 +834,7 @@ export default function BookingsPage() {
                   variant="outline"
                   onClick={() => {
                     setNewResponsesCount(0)
-                    setLastCheckedAt(Date.now())
+                    lastCheckedAtRef.current = Date.now()
                   }}
                 >
                   Mark as read
@@ -900,7 +912,7 @@ export default function BookingsPage() {
               <tbody className="bg-white divide-y divide-gray-200">
                 {bookings.map((booking) => {
                   const hasNewResponse = booking.user_response && booking.response_date && 
-                    (booking.response_date * 1000) > lastCheckedAt - 300000 // New if within last 5 minutes
+                    (booking.response_date * 1000) > lastCheckedAtRef.current - 300000 // New if within last 5 minutes
                   
                   return (
                   <tr 
@@ -1041,7 +1053,7 @@ export default function BookingsPage() {
           <div className="lg:hidden space-y-4">
             {bookings.map((booking) => {
               const hasNewResponse = booking.user_response && booking.response_date && 
-                (booking.response_date * 1000) > lastCheckedAt - 300000
+                (booking.response_date * 1000) > lastCheckedAtRef.current - 300000
               
               return (
                 <div

@@ -6,22 +6,27 @@
 
 import { NextResponse } from "next/server"
 import { sendBookingReminders } from "@/lib/booking-reminders"
-import { checkAuth } from "@/lib/auth"
+import { checkAdminAuth } from "@/lib/admin-auth"
 import { createRequestLogger } from "@/lib/logger"
-import { withErrorHandling, successResponse, errorResponse, ErrorCodes } from "@/lib/api-response"
+import { withErrorHandling, successResponse, errorResponse, ErrorCodes, ApiResponse } from "@/lib/api-response"
 
 export async function POST(request: Request) {
-  return withErrorHandling(async () => {
+  return withErrorHandling(async (): Promise<NextResponse<ApiResponse<any>>> => {
     const requestId = crypto.randomUUID()
     const logger = createRequestLogger(requestId, '/api/admin/bookings/reminders')
     
     await logger.info('Admin send reminders request received')
     
-    const authError = await checkAuth()
-    if (authError) {
-      await logger.warn('Admin send reminders rejected: authentication failed')
-      return authError
+    // Check authentication
+    const authResult = await checkAdminAuth(requestId, logger, '/api/admin/bookings/reminders')
+    if (!authResult.success) {
+      return authResult.response
     }
+    
+    await logger.info('Admin authenticated for reminders request', {
+      userId: authResult.user.id,
+      email: authResult.user.email
+    })
 
     await logger.info('Sending booking reminders')
     const result = await sendBookingReminders()
@@ -29,7 +34,7 @@ export async function POST(request: Request) {
     await logger.info('Reminders sent', {
       sent7Day: result.sent7Day,
       sent24Hour: result.sent24Hour,
-      errorsCount: result.errors.length
+      errorsCount: result.errors
     })
     
     return successResponse(

@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useEffect } from "react"
+import { useState, useEffect, useMemo } from "react"
 import { redirect } from "next/navigation"
 import { useSession } from "next-auth/react"
 import { Button } from "@/components/ui/button"
@@ -34,6 +34,8 @@ import {
 } from "lucide-react"
 import { toast } from "sonner"
 import { format } from "date-fns"
+import { TZDate } from '@date-fns/tz'
+import { useAdminData } from "@/hooks/useAdminData"
 
 interface EmailQueueItem {
   id: string
@@ -64,7 +66,6 @@ interface EmailQueueStats {
 
 export default function EmailQueuePage() {
   const { data: session, status } = useSession()
-  const [emails, setEmails] = useState<EmailQueueItem[]>([])
   const [stats, setStats] = useState<EmailQueueStats>({
     pending: 0,
     processing: 0,
@@ -72,12 +73,46 @@ export default function EmailQueuePage() {
     sent: 0,
     total: 0,
   })
-  const [loading, setLoading] = useState(true)
   const [processing, setProcessing] = useState(false)
   const [selectedEmail, setSelectedEmail] = useState<EmailQueueItem | null>(null)
   const [viewDialogOpen, setViewDialogOpen] = useState(false)
   const [statusFilter, setStatusFilter] = useState<string>("all")
   const [emailTypeFilter, setEmailTypeFilter] = useState<string>("all")
+  
+  // Build endpoint with filters (memoized to trigger refetch when filters change)
+  const endpoint = useMemo(() => {
+    const params = new URLSearchParams()
+    if (statusFilter !== "all") {
+      params.append("status", statusFilter)
+    }
+    if (emailTypeFilter !== "all") {
+      params.append("emailType", emailTypeFilter)
+    }
+    params.append("limit", "50")
+    return `/api/admin/email-queue?${params.toString()}`
+  }, [statusFilter, emailTypeFilter])
+  
+  // Use useAdminData hook for emails with optimistic updates
+  const {
+    data: emails,
+    loading,
+    fetchData: fetchEmails,
+    updateItem,
+    removeItem,
+    replaceItem
+  } = useAdminData<EmailQueueItem>({
+    endpoint,
+    transformResponse: (json) => {
+      const responseData = json.data || json
+      const items = responseData.items || []
+      const statsData = responseData.stats || {}
+      setStats(statsData)
+      return items
+    },
+    isDialogOpen: () => viewDialogOpen,
+    enablePolling: true,
+    pollInterval: 30000
+  })
 
   // Redirect if not authenticated
   useEffect(() => {
@@ -86,44 +121,6 @@ export default function EmailQueuePage() {
     }
   }, [status])
 
-  // Fetch emails and stats
-  const fetchEmails = async () => {
-    try {
-      setLoading(true)
-      const params = new URLSearchParams()
-      if (statusFilter !== "all") {
-        params.append("status", statusFilter)
-      }
-      if (emailTypeFilter !== "all") {
-        params.append("emailType", emailTypeFilter)
-      }
-      params.append("limit", "50")
-
-      const response = await fetch(`/api/admin/email-queue?${params.toString()}`)
-      const json = await response.json()
-      if (json.success) {
-        // API returns { success: true, data: { items: [...], stats: {...} } }
-        const responseData = json.data || json
-        setEmails(responseData.items || [])
-        setStats(responseData.stats || stats)
-      } else {
-        const errorMsg = typeof json.error === 'string' ? json.error : json.error?.message || JSON.stringify(json.error) || "Failed to load email queue"
-        toast.error(errorMsg)
-      }
-    } catch (error) {
-      const errorMsg = error instanceof Error ? error.message : "Failed to load email queue"
-      toast.error(errorMsg)
-      console.error(error)
-    } finally {
-      setLoading(false)
-    }
-  }
-
-  useEffect(() => {
-    if (session) {
-      fetchEmails()
-    }
-  }, [session, statusFilter, emailTypeFilter])
 
   // Process queue
   const handleProcessQueue = async () => {
@@ -140,6 +137,7 @@ export default function EmailQueuePage() {
         const responseData = json.data || json
         const result = responseData.result || responseData
         toast.success(`Processed: ${result.sent} sent, ${result.failed} failed`)
+        // Refresh to get updated stats and email statuses
         fetchEmails()
       } else {
         const errorMsg = typeof json.error === 'string' ? json.error : json.error?.message || JSON.stringify(json.error) || "Failed to process queue"
@@ -178,8 +176,12 @@ export default function EmailQueuePage() {
       
       const json = await response.json()
       if (json.success) {
+        const updatedEmail = json.data?.email || json.email
+        // Update the email status optimistically
+        if (updatedEmail) {
+          replaceItem(id, updatedEmail)
+        }
         toast.success("Email retried successfully")
-        fetchEmails()
       } else {
         const errorMsg = typeof json.error === 'string' ? json.error : json.error?.message || JSON.stringify(json.error) || "Failed to retry email"
         toast.error(errorMsg)
@@ -198,14 +200,18 @@ export default function EmailQueuePage() {
     }
 
     try {
+      // Optimistically remove from list
+      removeItem(id)
+      
       const response = await fetch(`/api/admin/email-queue/${id}`, {
         method: "DELETE",
       })
       const json = await response.json()
       if (json.success) {
         toast.success("Email deleted successfully")
-        fetchEmails()
       } else {
+        // Rollback on error
+        fetchEmails()
         const errorMsg = typeof json.error === 'string' ? json.error : json.error?.message || JSON.stringify(json.error) || "Failed to delete email"
         toast.error(errorMsg)
       }
@@ -233,6 +239,7 @@ export default function EmailQueuePage() {
         // API returns { success: true, data: { deletedCount: ... } }
         const responseData = json.data || json
         toast.success(`Cleaned up ${responseData.deletedCount || 0} old emails`)
+        // Refresh to get updated list after cleanup
         fetchEmails()
       } else {
         const errorMsg = typeof json.error === 'string' ? json.error : json.error?.message || JSON.stringify(json.error) || "Failed to cleanup"
@@ -278,7 +285,22 @@ export default function EmailQueuePage() {
 
   const formatTimestamp = (timestamp: number | null | undefined) => {
     if (!timestamp) return "N/A"
-    return format(new Date(timestamp * 1000), "MMM dd, yyyy 'at' h:mm a")
+    try {
+      // Handle both Unix timestamp (seconds) and milliseconds
+      const timestampMs = timestamp > 1000000000000 
+        ? timestamp // Already in milliseconds
+        : timestamp * 1000 // Convert from seconds to milliseconds
+      
+      // CRITICAL: Convert UTC timestamp to Bangkok timezone for display
+      // Timestamps in DB are UTC but represent Bangkok time
+      const utcDate = new Date(timestampMs)
+      const bangkokDate = new TZDate(utcDate.getTime(), 'Asia/Bangkok')
+      
+      return format(bangkokDate, "MMM dd, yyyy 'at' h:mm a")
+    } catch (error) {
+      console.error("Error formatting timestamp:", timestamp, error)
+      return "N/A"
+    }
   }
 
   if (status === "loading" || loading) {

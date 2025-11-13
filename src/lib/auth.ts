@@ -102,24 +102,12 @@ export async function requireAuthorizedDomain(): Promise<AuthUser> {
 }
 
 /**
- * Create unauthorized response for API routes
+ * NOTE: unauthorizedResponse and forbiddenResponse have been moved to @/lib/api-response
+ * to ensure consistent ApiResponse format across all routes.
+ * 
+ * For admin routes, use checkAdminAuth() from @/lib/admin-auth
+ * For user routes, use errorResponse() or unauthorizedResponse() from @/lib/api-response
  */
-export function unauthorizedResponse(message: string = "Unauthorized") {
-  return NextResponse.json(
-    { success: false, error: message },
-    { status: 401 }
-  )
-}
-
-/**
- * Create forbidden response for API routes
- */
-export function forbiddenResponse(message: string = "Forbidden") {
-  return NextResponse.json(
-    { success: false, error: message },
-    { status: 403 }
-  )
-}
 
 /**
  * Middleware helper to check authentication in API routes

@@ -8,28 +8,25 @@
 
 import { NextResponse } from 'next/server'
 import { autoUpdateFinishedBookings } from '@/lib/bookings'
-import { requireAuthorizedDomain } from '@/lib/auth'
+import { checkAdminAuth } from '@/lib/admin-auth'
+import { withErrorHandling, successResponse, errorResponse, ErrorCodes, ApiResponse } from '@/lib/api-response'
 import { createRequestLogger } from '@/lib/logger'
-import { withErrorHandling, successResponse, errorResponse, unauthorizedResponse, forbiddenResponse, ErrorCodes, ApiResponse } from '@/lib/api-response'
 
 export async function POST(request: Request) {
   return withErrorHandling(async (): Promise<NextResponse<ApiResponse<any>>> => {
     const requestId = crypto.randomUUID()
     const logger = createRequestLogger(requestId, '/api/admin/bookings/auto-update')
     
-    await logger.info('Manual auto-update trigger request received')
-    
     // Check authentication
-    try {
-      await requireAuthorizedDomain()
-    } catch (error) {
-      if (error instanceof Error && error.message.includes("Unauthorized")) {
-        await logger.warn('Manual auto-update trigger rejected: authentication failed')
-        return unauthorizedResponse("Authentication required", { requestId })
-      }
-      await logger.warn('Manual auto-update trigger rejected: authorization failed')
-      return forbiddenResponse("Access denied: Must be from authorized Google Workspace domain", { requestId })
+    const authResult = await checkAdminAuth(requestId, logger, '/api/admin/bookings/auto-update')
+    if (!authResult.success) {
+      return authResult.response
     }
+    
+    await logger.info('Manual auto-update trigger request received', {
+      userId: authResult.user.id,
+      email: authResult.user.email
+    })
     
     try {
       // Run auto-update
