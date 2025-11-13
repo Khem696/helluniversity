@@ -535,9 +535,10 @@ export async function autoUpdateFinishedBookings(): Promise<{
       // For bookings without start_time, compare the date itself (not time)
       let shouldCancel = false
       
-      if (startTimestamp) {
-        // Has start_time: compare timestamp directly
+      if (bookingRow.start_time && startTimestamp) {
+        // Has start_time: compare timestamp directly (already in Bangkok timezone)
         shouldCancel = startTimestamp < now
+        console.log(`[autoUpdateFinishedBookings] ${bookingRow.status} booking ${bookingRow.id} with start_time: startTimestamp=${new Date(startTimestamp * 1000).toISOString()}, now=${new Date(now * 1000).toISOString()}, shouldCancel=${shouldCancel}`)
       } else if (bookingRow.start_date) {
         // No start_time: compare dates (if start_date is before today, cancel)
         // Get today's date in Bangkok timezone (at start of day)
@@ -551,9 +552,18 @@ export async function autoUpdateFinishedBookings(): Promise<{
         const todayStart = new TZDate(todayYear, todayMonth, todayDay, 0, 0, 0, BANGKOK_TIMEZONE)
         const todayStartTimestamp = Math.floor(todayStart.getTime() / 1000)
         
-        // If start_date is before today, cancel it
-        shouldCancel = bookingRow.start_date < todayStartTimestamp
-        console.log(`[autoUpdateFinishedBookings] Booking ${bookingRow.id} has no start_time: start_date=${new Date(bookingRow.start_date * 1000).toISOString()}, today_start=${new Date(todayStartTimestamp * 1000).toISOString()}, shouldCancel=${shouldCancel}`)
+        // Also convert start_date to Bangkok timezone start of day for fair comparison
+        const startDateUtc = new Date(bookingRow.start_date * 1000)
+        const tzStartDate = new TZDate(startDateUtc.getTime(), BANGKOK_TIMEZONE)
+        const startYear = tzStartDate.getFullYear()
+        const startMonth = tzStartDate.getMonth()
+        const startDay = tzStartDate.getDate()
+        const startDateStart = new TZDate(startYear, startMonth, startDay, 0, 0, 0, BANGKOK_TIMEZONE)
+        const startDateStartTimestamp = Math.floor(startDateStart.getTime() / 1000)
+        
+        // If start_date (start of day) is before today (start of day), cancel it
+        shouldCancel = startDateStartTimestamp < todayStartTimestamp
+        console.log(`[autoUpdateFinishedBookings] ${bookingRow.status} booking ${bookingRow.id} has no start_time: start_date=${new Date(bookingRow.start_date * 1000).toISOString()}, startDateStart=${new Date(startDateStartTimestamp * 1000).toISOString()}, today_start=${new Date(todayStartTimestamp * 1000).toISOString()}, shouldCancel=${shouldCancel}`)
       }
       
       if (shouldCancel) {

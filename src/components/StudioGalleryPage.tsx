@@ -489,7 +489,7 @@ export function StudioGalleryPage() {
                           </h1>
                         </div>
                         <h2 className="text-white mb-4 sm:mb-6 lg:mb-4 xl:mb-6 font-comfortaa" style={{ fontSize: 'clamp(20px, 2.5vw, 28px)', fontWeight: '400' }}>
-                          Tailor Your Desire
+                          Tailor Your Reservation
                         </h2>
                         <p className="text-white/90 font-comfortaa text-sm sm:text-base lg:text-sm xl:text-base leading-relaxed">
                           Select images and describe your decoration style to generate AI-powered space designs.

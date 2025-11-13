@@ -6,22 +6,27 @@
 
 import { NextResponse } from "next/server"
 import { sendDailyBookingDigest, sendWeeklyBookingDigest } from "@/lib/booking-digest"
-import { checkAuth } from "@/lib/auth"
+import { checkAdminAuth } from "@/lib/admin-auth"
 import { createRequestLogger } from "@/lib/logger"
-import { withErrorHandling, successResponse, errorResponse, ErrorCodes } from "@/lib/api-response"
+import { withErrorHandling, successResponse, errorResponse, ErrorCodes, ApiResponse } from "@/lib/api-response"
 
 export async function POST(request: Request) {
-  return withErrorHandling(async () => {
+  return withErrorHandling(async (): Promise<NextResponse<ApiResponse<any>>> => {
     const requestId = crypto.randomUUID()
     const logger = createRequestLogger(requestId, '/api/admin/bookings/digest')
     
     await logger.info('Admin send digest request received')
     
-    const authError = await checkAuth()
-    if (authError) {
-      await logger.warn('Admin send digest rejected: authentication failed')
-      return authError
+    // Check authentication
+    const authResult = await checkAdminAuth(requestId, logger, '/api/admin/bookings/digest')
+    if (!authResult.success) {
+      return authResult.response
     }
+    
+    await logger.info('Admin authenticated for digest request', {
+      userId: authResult.user.id,
+      email: authResult.user.email
+    })
 
     const body = await request.json()
     const { type } = body // "daily" or "weekly"
