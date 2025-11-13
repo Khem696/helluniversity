@@ -868,9 +868,9 @@ export function Header() {
                         </div>
                       )}
   
-                      {/* Basic Information */}
+                      {/* Required Information */}
                       <div style={{ display: 'flex', flexDirection: 'column', gap: 'clamp(0.25rem, 0.4vw, 0.5rem)' }}>
-                        <h4 className="text-[#5a3a2a] font-comfortaa font-semibold" style={{ fontSize: 'clamp(0.75rem, 0.8vw, 0.875rem)' }}>Basic Information</h4>
+                        <h4 className="text-[#5a3a2a] font-comfortaa font-semibold" style={{ fontSize: 'clamp(0.75rem, 0.8vw, 0.875rem)' }}>Required Information</h4>
                         <div className="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3" style={{ gap: 'clamp(0.375rem, 0.5vw, 0.75rem)' }}>
                           <div style={{ display: 'flex', flexDirection: 'column', gap: 'clamp(0.25rem, 0.3vw, 0.375rem)' }}>
                             <Label htmlFor="name" className="text-[#5a3a2a] font-comfortaa" style={{ fontSize: 'clamp(0.6875rem, 0.7vw, 0.75rem)' }}>Full Name *</Label>
@@ -1273,10 +1273,10 @@ export function Header() {
 
                       {/* Personal Information */}
                       <div className="space-y-1 sm:space-y-2 lg:space-y-1">
-                        <h4 className="text-[#5a3a2a] font-comfortaa font-semibold" style={{ fontSize: 'clamp(0.75rem, 0.8vw, 0.875rem)' }}>Share Your Story</h4>
+                        <h4 className="text-[#5a3a2a] font-comfortaa font-semibold" style={{ fontSize: 'clamp(0.75rem, 0.8vw, 0.875rem)' }}>Tailor Your Reservation</h4>
                         <div className="space-y-1 sm:space-y-1.5 lg:space-y-1">
                           <div className="space-y-1">
-                            <Label htmlFor="introduction" className="text-[#5a3a2a] font-comfortaa" style={{ fontSize: 'clamp(0.6875rem, 0.7vw, 0.75rem)' }}>Brief Introduction *</Label>
+                            <Label htmlFor="introduction" className="text-[#5a3a2a] font-comfortaa" style={{ fontSize: 'clamp(0.6875rem, 0.7vw, 0.75rem)' }}>Brief Your Desire *</Label>
                             <Textarea
                               id="introduction"
                               name="introduction"
@@ -1284,7 +1284,7 @@ export function Header() {
                               required
                               value={formData.introduction || ""}
                               onChange={(e) => handleInputChange("introduction", e.target.value)}
-                              placeholder={isRecaptchaVerified ? "Tell us a bit about yourself..." : "Please complete CAPTCHA verification first..."}
+                              placeholder={isRecaptchaVerified ? "Tell us what you desire..." : "Please complete CAPTCHA verification first..."}
                               disabled={!isRecaptchaVerified || process.env.NEXT_PUBLIC_USE_STATIC_IMAGES === '1'}
                               rows={2}
                               className={`font-comfortaa resize-none ${!isRecaptchaVerified ? "opacity-50 cursor-not-allowed bg-gray-100" : ""}`}
@@ -1292,29 +1292,14 @@ export function Header() {
                             />
                           </div>
                           <div className="space-y-1">
-                            <Label htmlFor="biography" className="text-[#5a3a2a] font-comfortaa" style={{ fontSize: 'clamp(0.6875rem, 0.7vw, 0.75rem)' }}>Background & Interests</Label>
-                            <Textarea
-                              id="biography"
-                              name="biography"
-                              autoComplete="off"
-                              value={formData.biography || ""}
-                              onChange={(e) => handleInputChange("biography", e.target.value)}
-                              placeholder={isRecaptchaVerified ? "Share your interests, profession..." : "Please complete CAPTCHA verification first..."}
-                              disabled={!isRecaptchaVerified || process.env.NEXT_PUBLIC_USE_STATIC_IMAGES === '1'}
-                              rows={2}
-                              className={`font-comfortaa resize-none ${!isRecaptchaVerified ? "opacity-50 cursor-not-allowed bg-gray-100" : ""}`}
-                              style={{ fontSize: 'clamp(0.75rem, 0.8vw, 0.875rem)', minHeight: 'clamp(3rem, 3.5vw, 4rem)' }}
-                            />
-                          </div>
-                          <div className="space-y-1">
-                            <Label htmlFor="specialRequests" className="text-[#5a3a2a] font-comfortaa" style={{ fontSize: 'clamp(0.6875rem, 0.7vw, 0.75rem)' }}>Special Requests or Vision</Label>
+                            <Label htmlFor="specialRequests" className="text-[#5a3a2a] font-comfortaa" style={{ fontSize: 'clamp(0.6875rem, 0.7vw, 0.75rem)' }}>Special Requirements</Label>
                             <Textarea
                               id="specialRequests"
                               name="specialRequests"
                               autoComplete="off"
                               value={formData.specialRequests || ""}
                               onChange={(e) => handleInputChange("specialRequests", e.target.value)}
-                              placeholder={isRecaptchaVerified ? "Describe your vision, special requirements..." : "Please complete CAPTCHA verification first..."}
+                              placeholder={isRecaptchaVerified ? "Describe any special requirements..." : "Please complete CAPTCHA verification first..."}
                               disabled={!isRecaptchaVerified || process.env.NEXT_PUBLIC_USE_STATIC_IMAGES === '1'}
                               rows={2}
                               className={`font-comfortaa resize-none ${!isRecaptchaVerified ? "opacity-50 cursor-not-allowed bg-gray-100" : ""}`}

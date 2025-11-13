@@ -377,7 +377,7 @@ function generateAdminEmailHTML(data: ReservationData): string {
     <div class="section">
       <div class="section-title">Guest Information</div>
       <div class="field">
-        <span class="field-label">Introduction:</span>
+        <span class="field-label">Brief Your Desire:</span>
         <div class="text-content">${(function() {
           try {
             const intro = sanitizeUserInput(data.introduction)
@@ -402,7 +402,7 @@ function generateAdminEmailHTML(data: ReservationData): string {
       ` : ''}
       ${data.specialRequests ? `
       <div class="field">
-        <span class="field-label">Special Requests:</span>
+        <span class="field-label">Special Requirements:</span>
         <div class="text-content">${(function() {
           try {
             const req = sanitizeUserInput(data.specialRequests)
@@ -454,10 +454,10 @@ Organization: ${safeOrganizationType} (${organizationRemark})
 
 GUEST INFORMATION:
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-Introduction:
+Brief Your Desire:
 ${data.introduction}
 
-${data.biography ? `Background & Interests:\n${data.biography}\n\n` : ''}${data.specialRequests ? `Special Requests:\n${data.specialRequests}\n\n` : ''}
+${data.biography ? `Background & Interests:\n${data.biography}\n\n` : ''}${data.specialRequests ? `Special Requirements:\n${data.specialRequests}\n\n` : ''}
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 Received: ${new Date().toLocaleString('en-US', {
     timeZone: 'UTC',
