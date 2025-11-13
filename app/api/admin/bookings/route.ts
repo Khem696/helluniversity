@@ -3,6 +3,7 @@ import { listBookings } from "@/lib/bookings"
 import { requireAuthorizedDomain, unauthorizedResponse, forbiddenResponse } from "@/lib/auth"
 import { createRequestLogger } from "@/lib/logger"
 import { withErrorHandling, successResponse, errorResponse, ErrorCodes } from "@/lib/api-response"
+import { createBangkokTimestamp } from "@/lib/timezone"
 
 /**
  * Admin Bookings Management API
@@ -84,7 +85,8 @@ export async function GET(request: Request) {
       archive 
     })
 
-    // Transform bookings to match frontend interface (convert ISO strings to Unix timestamps)
+    // Transform bookings to match frontend interface (convert date strings to Unix timestamps)
+    // CRITICAL: Use createBangkokTimestamp to handle YYYY-MM-DD strings in Bangkok timezone
     const transformedBookings = result.bookings.map((booking) => ({
       id: booking.id,
       name: booking.name,
@@ -94,8 +96,8 @@ export async function GET(request: Request) {
       event_type: booking.eventType,
       other_event_type: booking.otherEventType,
       date_range: booking.dateRange ? 1 : 0,
-      start_date: booking.startDate ? Math.floor(new Date(booking.startDate).getTime() / 1000) : 0,
-      end_date: booking.endDate ? Math.floor(new Date(booking.endDate).getTime() / 1000) : null,
+      start_date: booking.startDate ? createBangkokTimestamp(booking.startDate) : 0,
+      end_date: booking.endDate ? createBangkokTimestamp(booking.endDate) : null,
       start_time: booking.startTime || "",
       end_time: booking.endTime || "",
       organization_type: booking.organizationType,
@@ -107,8 +109,8 @@ export async function GET(request: Request) {
       admin_notes: booking.adminNotes,
       response_token: booking.responseToken,
       token_expires_at: booking.tokenExpiresAt,
-      proposed_date: booking.proposedDate ? Math.floor(new Date(booking.proposedDate).getTime() / 1000) : null,
-      proposed_end_date: booking.proposedEndDate ? Math.floor(new Date(booking.proposedEndDate).getTime() / 1000) : null,
+      proposed_date: booking.proposedDate ? createBangkokTimestamp(booking.proposedDate) : null,
+      proposed_end_date: booking.proposedEndDate ? createBangkokTimestamp(booking.proposedEndDate) : null,
       user_response: booking.userResponse,
       response_date: booking.responseDate,
       deposit_evidence_url: booking.depositEvidenceUrl,

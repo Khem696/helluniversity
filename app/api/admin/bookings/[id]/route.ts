@@ -17,6 +17,7 @@ import { deleteImage } from "@/lib/blob"
 import { enqueueJob } from "@/lib/job-queue"
 import { createRequestLogger } from "@/lib/logger"
 import { withErrorHandling, successResponse, errorResponse, notFoundResponse, ErrorCodes } from "@/lib/api-response"
+import { createBangkokTimestamp } from "@/lib/timezone"
 
 /**
  * Admin Booking Management API
@@ -75,7 +76,6 @@ export async function GET(
 
     // Transform booking to match frontend interface (convert date strings to Unix timestamps)
     // CRITICAL: Use createBangkokTimestamp to handle YYYY-MM-DD strings in Bangkok timezone
-    const { createBangkokTimestamp } = await import('@/lib/timezone')
     const transformedBooking = {
       id: booking.id,
       name: booking.name,
@@ -273,7 +273,6 @@ export async function PATCH(
     // This prevents admin from creating overlapping bookings
     if (status === "checked-in" || (status === "accepted" && currentBooking.proposed_date)) {
       const { checkBookingOverlap } = await import('@/lib/booking-validations')
-      const { createBangkokTimestamp } = await import('@/lib/timezone')
       
       // Determine which dates to check
       let checkStartDate: number
@@ -284,14 +283,13 @@ export async function PATCH(
       if (currentBooking.proposed_date && status === "accepted") {
         // Accepting a proposed date - check proposed dates
         // CRITICAL: Use createBangkokTimestamp to handle date strings in Bangkok timezone
-        const { createBangkokTimestamp: createBangkokTimestampForCheck } = await import('@/lib/timezone')
         checkStartDate = typeof currentBooking.proposed_date === 'number' 
           ? currentBooking.proposed_date 
-          : createBangkokTimestampForCheck(String(currentBooking.proposed_date))
+          : createBangkokTimestamp(String(currentBooking.proposed_date))
         checkEndDate = currentBooking.proposed_end_date
           ? (typeof currentBooking.proposed_end_date === 'number'
               ? currentBooking.proposed_end_date
-              : createBangkokTimestampForCheck(String(currentBooking.proposed_end_date)))
+              : createBangkokTimestamp(String(currentBooking.proposed_end_date)))
           : null
         // Parse times from user_response if available
         if (currentBooking.userResponse) {
@@ -306,14 +304,13 @@ export async function PATCH(
       } else {
         // Checking in with original dates
         // CRITICAL: Use createBangkokTimestamp to handle date strings in Bangkok timezone
-        const { createBangkokTimestamp: createBangkokTimestampForCheck2 } = await import('@/lib/timezone')
         checkStartDate = typeof currentBooking.start_date === 'number'
           ? currentBooking.start_date
-          : createBangkokTimestampForCheck2(String(currentBooking.start_date))
+          : createBangkokTimestamp(String(currentBooking.start_date))
         checkEndDate = currentBooking.end_date
           ? (typeof currentBooking.end_date === 'number'
               ? currentBooking.end_date
-              : createBangkokTimestampForCheck2(String(currentBooking.end_date)))
+              : createBangkokTimestamp(String(currentBooking.end_date)))
           : null
         checkStartTime = currentBooking.start_time
         checkEndTime = currentBooking.end_time
@@ -460,7 +457,6 @@ export async function PATCH(
           const { TZDate } = await import('@date-fns/tz')
           const { format } = await import('date-fns')
           const BANGKOK_TIMEZONE = 'Asia/Bangkok'
-          const { createBangkokTimestamp } = await import('@/lib/timezone')
           
           const proposedDateValue = typeof currentBooking.proposedDate === 'number' 
             ? currentBooking.proposedDate 
