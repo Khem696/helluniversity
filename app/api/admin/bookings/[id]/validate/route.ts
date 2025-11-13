@@ -8,6 +8,7 @@ import {
 import { getBookingById } from "@/lib/bookings"
 import { withErrorHandling, successResponse, errorResponse, notFoundResponse, ErrorCodes } from "@/lib/api-response"
 import { createRequestLogger } from "@/lib/logger"
+import { createBangkokTimestamp } from "@/lib/timezone"
 
 /**
  * Validate booking action before execution
@@ -52,16 +53,17 @@ export async function POST(
       }
 
       // Transform booking to match validation interface
+      // CRITICAL: Use createBangkokTimestamp to handle YYYY-MM-DD strings in Bangkok timezone
       // Note: responseDate and depositVerifiedAt are already Unix timestamps (numbers)
       const validationBooking: Booking = {
         id: booking.id,
         status: booking.status,
-        start_date: booking.startDate ? Math.floor(new Date(booking.startDate).getTime() / 1000) : 0,
-        end_date: booking.endDate ? Math.floor(new Date(booking.endDate).getTime() / 1000) : null,
+        start_date: booking.startDate ? createBangkokTimestamp(booking.startDate) : 0,
+        end_date: booking.endDate ? createBangkokTimestamp(booking.endDate) : null,
         start_time: booking.startTime || null,
         end_time: booking.endTime || null,
-        proposed_date: booking.proposedDate ? Math.floor(new Date(booking.proposedDate).getTime() / 1000) : null,
-        proposed_end_date: booking.proposedEndDate ? Math.floor(new Date(booking.proposedEndDate).getTime() / 1000) : null,
+        proposed_date: booking.proposedDate ? createBangkokTimestamp(booking.proposedDate) : null,
+        proposed_end_date: booking.proposedEndDate ? createBangkokTimestamp(booking.proposedEndDate) : null,
         response_date: booking.responseDate || null,
         deposit_evidence_url: booking.depositEvidenceUrl || null,
         deposit_verified_at: booking.depositVerifiedAt || null,
