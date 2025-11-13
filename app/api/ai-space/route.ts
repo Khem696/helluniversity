@@ -384,10 +384,9 @@ export async function POST(request: Request) {
       return errorResponse(
         ErrorCodes.VALIDATION_ERROR,
         "reCAPTCHA verification failed",
-        undefined,
+        { "error-codes": recaptchaData["error-codes"] || [] },
         400,
-        { requestId },
-        { "error-codes": recaptchaData["error-codes"] || [] }
+        { requestId }
       )
     }
     
