@@ -1,9 +1,9 @@
 import { NextResponse } from "next/server"
 import { getTursoClient } from "@/lib/turso"
 import { imageExists } from "@/lib/blob"
-import { requireAuthorizedDomain, unauthorizedResponse, forbiddenResponse } from "@/lib/auth"
+import { requireAuthorizedDomain } from "@/lib/auth"
 import { createRequestLogger } from "@/lib/logger"
-import { withErrorHandling, successResponse, errorResponse, ErrorCodes } from "@/lib/api-response"
+import { withErrorHandling, successResponse, errorResponse, unauthorizedResponse, forbiddenResponse, ErrorCodes } from "@/lib/api-response"
 
 /**
  * Cleanup Orphaned Image Records
@@ -30,10 +30,10 @@ export async function POST() {
     } catch (error) {
       if (error instanceof Error && error.message.includes("Unauthorized")) {
         await logger.warn('Cleanup orphaned images rejected: authentication failed')
-        return unauthorizedResponse("Authentication required")
+        return unauthorizedResponse("Authentication required", { requestId })
       }
       await logger.warn('Cleanup orphaned images rejected: authorization failed')
-      return forbiddenResponse("Access denied: Must be from authorized Google Workspace domain")
+      return forbiddenResponse("Access denied: Must be from authorized Google Workspace domain", { requestId })
     }
 
     const db = getTursoClient()

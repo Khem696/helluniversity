@@ -1,8 +1,8 @@
 import { NextResponse } from "next/server"
 import { listBookings } from "@/lib/bookings"
-import { requireAuthorizedDomain, unauthorizedResponse, forbiddenResponse } from "@/lib/auth"
+import { requireAuthorizedDomain } from "@/lib/auth"
 import { createRequestLogger } from "@/lib/logger"
-import { withErrorHandling, successResponse, errorResponse, ErrorCodes } from "@/lib/api-response"
+import { withErrorHandling, successResponse, errorResponse, unauthorizedResponse, forbiddenResponse, ErrorCodes } from "@/lib/api-response"
 import { createBangkokTimestamp } from "@/lib/timezone"
 
 /**
@@ -12,14 +12,14 @@ import { createBangkokTimestamp } from "@/lib/timezone"
  * - Requires Google Workspace authentication
  */
 
-async function checkAuth() {
+async function checkAuth(requestId: string) {
   try {
     await requireAuthorizedDomain()
   } catch (error) {
     if (error instanceof Error && error.message.includes("Unauthorized")) {
-      return unauthorizedResponse("Authentication required")
+      return unauthorizedResponse("Authentication required", { requestId })
     }
-    return forbiddenResponse("Access denied: Must be from authorized Google Workspace domain")
+    return forbiddenResponse("Access denied: Must be from authorized Google Workspace domain", { requestId })
   }
   return null
 }
@@ -31,7 +31,7 @@ export async function GET(request: Request) {
     
     await logger.info('Admin bookings list request received')
     
-    const authError = await checkAuth()
+    const authError = await checkAuth(requestId)
     if (authError) {
       await logger.warn('Admin bookings list request rejected: authentication failed')
       return authError
