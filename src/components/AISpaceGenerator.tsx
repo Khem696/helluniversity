@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useRef, useMemo, useCallback, memo } from "react"
 import { withBasePath, getThumbnailUrl, loadThumbnailManifest } from "@/lib/utils"
+import { API_PATHS } from "@/lib/api-config"
 import { Recaptcha } from "./Recaptcha"
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogClose } from "./ui/dialog"
 import {
@@ -361,7 +362,7 @@ export function AISpaceGenerator() {
     }, 300000) // 5 minutes timeout (generation can take a while)
     
     try {
-      const response = await fetch("/api/ai-space", {
+      const response = await fetch(API_PATHS.aiSpace, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -445,7 +446,7 @@ export function AISpaceGenerator() {
       generatedImages = generatedImages.map((url: string) => {
         if (isBFLDeliveryUrl(url) && !useStaticImages) {
           // Use proxy route in development/server mode, or if API routes are available
-          return `/api/images/proxy?url=${encodeURIComponent(url)}`
+          return `${API_PATHS.imagesProxy}?url=${encodeURIComponent(url)}`
         }
         // In static mode, use BFL URLs directly (they may expire, but API proxy isn't available)
         return url

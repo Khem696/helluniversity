@@ -4,8 +4,11 @@ import { AlertCircle, Clock, Calendar, CheckCircle2, XCircle } from "lucide-reac
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Badge } from "@/components/ui/badge"
 import { willAutoUpdate } from "@/lib/booking-action-validation"
+import { calculateStartTimestamp } from "@/lib/booking-validations"
+import { getBangkokTime } from "@/lib/timezone-client"
 import { format } from "date-fns"
 import type { BookingStatus } from "@/lib/booking-state-machine"
+import { API_PATHS } from "@/lib/api-config"
 
 interface Booking {
   id: string
@@ -28,13 +31,17 @@ interface BookingStateInfoProps {
 
 export function BookingStateInfo({ booking }: BookingStateInfoProps) {
   const autoUpdateInfo = willAutoUpdate(booking)
-  const now = Math.floor(Date.now() / 1000)
+  // CRITICAL: Use Bangkok time for all date comparisons to match server-side logic
+  const now = getBangkokTime()
   
-  // Calculate start timestamp
-  const startTimestamp = booking.start_date
+  // Calculate start timestamp including time component (CRITICAL: Use calculateStartTimestamp to include start_time)
+  const startTimestamp = calculateStartTimestamp(
+    booking.start_date,
+    booking.start_time || null
+  )
   const startDate = new Date(startTimestamp * 1000)
   
-  // Check if start date has passed
+  // Check if start date has passed (using Bangkok timezone for consistency)
   const startDatePassed = startTimestamp < now
   
   // Format dates
@@ -108,7 +115,7 @@ export function BookingStateInfo({ booking }: BookingStateInfoProps) {
           <AlertDescription>
             Deposit evidence is available. Please verify before confirming the booking.{" "}
             <a 
-              href={`/api/admin/deposit/${booking.id}/image`}
+              href={API_PATHS.adminDepositImage(booking.id)}
               target="_blank" 
               rel="noopener noreferrer"
               className="text-blue-600 hover:underline font-medium"

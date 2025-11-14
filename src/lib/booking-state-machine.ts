@@ -94,6 +94,15 @@ export function getAvailableActions(
           description: "Decline this booking",
           requiresConfirmation: true,
           requiresValidation: false,
+        },
+        {
+          id: "cancel",
+          label: "Cancel",
+          targetStatus: "cancelled",
+          type: "destructive",
+          description: "Cancel this booking",
+          requiresConfirmation: true,
+          requiresValidation: false,
         }
       )
       break

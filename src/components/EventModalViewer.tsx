@@ -1,6 +1,7 @@
 "use client"
 
 import { useState, useEffect } from "react"
+import { API_PATHS } from "@/lib/api-config"
 import { X, ChevronLeft, ChevronRight } from "lucide-react"
 import { Dialog, DialogContent, DialogTitle, DialogHeader } from "./ui/dialog"
 import {
@@ -50,7 +51,8 @@ export function EventModalViewer({ eventId, isOpen, onClose }: EventModalViewerP
       setError(null)
 
       try {
-        const response = await fetch(`/api/events/${eventId}`)
+        if (!eventId) return
+        const response = await fetch(API_PATHS.event(eventId))
         if (!response.ok) {
           throw new Error("Failed to fetch event details")
         }

@@ -380,12 +380,14 @@ export async function POST(request: Request): Promise<NextResponse> {
     const tempBookingId = randomUUID()
     
     // Generate reference number (same logic as createBooking)
+    // IMPROVED: Increased capacity from 60M to 2.2B combinations
+    // Format: HU-XXXXXX (3 chars timestamp + 3 chars random)
     const generateBookingReference = () => {
       const timestamp = Math.floor(Date.now() / 1000)
-      const randomBytes = require('crypto').randomBytes(3)
+      const randomBytes = require('crypto').randomBytes(4)
       const randomValue = parseInt(randomBytes.toString('hex'), 16)
       const timestampPart = (timestamp % 46656).toString(36).toUpperCase().padStart(3, '0')
-      const randomPart = (randomValue % 1296).toString(36).toUpperCase().padStart(2, '0')
+      const randomPart = (randomValue % 46656).toString(36).toUpperCase().padStart(3, '0')
       return `HU-${timestampPart}${randomPart}`
     }
     const tempReferenceNumber = generateBookingReference()

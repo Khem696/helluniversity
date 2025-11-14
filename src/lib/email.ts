@@ -569,7 +569,7 @@ function generateUserEmailHTML(data: ReservationData): string {
   <div class="footer">
     <p>This is an automated confirmation email. Please do not reply to this message.</p>
     <p style="margin-top: 10px;">
-      <a href="mailto:helluniversity.cm@gmail.com" style="color: #5B9AB8;">helluniversity.cm@gmail.com</a>
+      <a href="mailto:admin@huculturehub.com" style="color: #5B9AB8;">admin@huculturehub.com</a>
     </p>
   </div>
 </body>
@@ -608,7 +608,7 @@ The Hell University Team
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 This is an automated confirmation email. Please do not reply to this message.
-For inquiries: helluniversity.cm@gmail.com
+For inquiries: admin@huculturehub.com
   `.trim()
 }
 
@@ -625,13 +625,14 @@ export async function sendAdminNotification(data: ReservationData, bookingId?: s
 
   const formattedEventType = formatEventType(data.eventType, data.otherEventType)
   const formattedDateRange = formatDateRange(data)
-  const bookingIdText = bookingId ? ` [Booking ID: ${bookingId}]` : ''
+  // CRITICAL: Always start subject with booking reference number for easy identification
+  const referencePrefix = bookingId ? `[${bookingId}] ` : ''
 
   const mailOptions: nodemailer.SendMailOptions = {
     from: `"Hell University Reservation System" <${process.env.SMTP_USER}>`,
     to: recipientEmail,
     replyTo: data.email,
-    subject: `New Reservation Inquiry${bookingIdText} - ${formattedEventType} - ${formattedDateRange.substring(0, 50)}`,
+    subject: `${referencePrefix}New Reservation Inquiry - ${formattedEventType} - ${formattedDateRange.substring(0, 50)}`,
     text: generateAdminEmailText(data),
     html: generateAdminEmailHTML(data),
   }
@@ -673,11 +674,12 @@ export async function sendAdminNotification(data: ReservationData, bookingId?: s
  * Uses nodemailer v7 compatible API
  */
 export async function sendUserConfirmation(data: ReservationData, bookingId?: string): Promise<void> {
-  const bookingIdText = bookingId ? ` [Booking ID: ${bookingId}]` : ''
+  // CRITICAL: Always start subject with booking reference number for easy identification
+  const referencePrefix = bookingId ? `[${bookingId}] ` : ''
   const mailOptions: nodemailer.SendMailOptions = {
     from: `"Hell University" <${process.env.SMTP_USER}>`,
     to: data.email,
-    subject: `Reservation Inquiry Received${bookingIdText} - Hell University`,
+    subject: `${referencePrefix}Reservation Inquiry Received - Hell University`,
     text: generateUserEmailText(data),
     html: generateUserEmailHTML(data),
   }
@@ -923,8 +925,12 @@ function generateStatusChangeEmailHTML(
       color: isRejection ? '#f59e0b' : '#10b981',
     },
     paid_deposit: {
-      title: 'Deposit Evidence Uploaded Successfully',
-      message: 'Your deposit evidence has been uploaded successfully. Our admin team will review it and confirm your booking shortly. You will receive an email notification once the verification is complete.',
+      title: changeReason?.toLowerCase().includes('restored') || changeReason?.toLowerCase().includes('restoration')
+        ? 'Booking Restored - Deposit Evidence Available'
+        : 'Deposit Evidence Uploaded Successfully',
+      message: changeReason?.toLowerCase().includes('restored') || changeReason?.toLowerCase().includes('restoration')
+        ? 'Your booking has been restored. Your deposit evidence is available and will be reviewed by our admin team. You will receive an email notification once the verification is complete.'
+        : 'Your deposit evidence has been uploaded successfully. Our admin team will review it and confirm your booking shortly. You will receive an email notification once the verification is complete.',
       color: '#10b981',
     },
     confirmed: {
@@ -1407,10 +1413,12 @@ export async function sendBookingStatusNotification(
     ? `${siteUrl}/booking/response/${options.responseToken}`
     : null
 
+  // CRITICAL: Always start subject with booking reference number for easy identification
+  const referenceNumber = booking.referenceNumber || booking.id
   const mailOptions: nodemailer.SendMailOptions = {
     from: `"Hell University" <${process.env.SMTP_USER}>`,
     to: booking.email,
-    subject: `Reservation Status Update [Booking ID: ${booking.referenceNumber || booking.id}] - ${booking.eventType}`,
+    subject: `[${referenceNumber}] Reservation Status Update - ${booking.eventType}`,
     text: generateStatusChangeEmailText(
       booking,
       status,
@@ -1676,11 +1684,13 @@ Best regards,
 Hell University Reservation System
   `.trim()
 
+  // CRITICAL: Always start subject with booking reference number for easy identification
+  const referenceNumber = booking.referenceNumber || booking.id
   const mailOptions: nodemailer.SendMailOptions = {
     from: `"Hell University Reservation System" <${process.env.SMTP_USER}>`,
     to: recipientEmail,
     replyTo: booking.email,
-    subject: `${responseInfo.title} [Booking ID: ${booking.referenceNumber || booking.id}] - ${formattedEventType}`,
+    subject: `[${referenceNumber}] ${responseInfo.title} - ${formattedEventType}`,
     text: textContent,
     html: htmlContent,
   }
@@ -1894,16 +1904,17 @@ Best regards,
 Hell University Reservation System
   `.trim()
 
-  // Create booking IDs list for subject (limit to first 3 for readability)
-  const bookingIds = bookings.map(b => b.booking.referenceNumber || b.booking.id)
-  const bookingIdsText = bookingIds.length <= 3 
-    ? bookingIds.join(', ')
-    : `${bookingIds.slice(0, 3).join(', ')} and ${bookingIds.length - 3} more`
+  // Create booking reference numbers list for subject (limit to first 3 for readability)
+  // CRITICAL: Always start subject with booking reference numbers for easy identification
+  const bookingReferences = bookings.map(b => b.booking.referenceNumber || b.booking.id)
+  const bookingRefsText = bookingReferences.length <= 3 
+    ? bookingReferences.join(', ')
+    : `${bookingReferences.slice(0, 3).join(', ')} and ${bookings.length - 3} more`
 
   const mailOptions: nodemailer.SendMailOptions = {
     from: `"Hell University Reservation System" <${process.env.SMTP_USER}>`,
     to: recipientEmail,
-    subject: `Automatic Booking Updates [Booking IDs: ${bookingIdsText}] - ${bookings.length} booking${bookings.length > 1 ? 's' : ''} updated`,
+    subject: `[${bookingRefsText}] Automatic Booking Updates - ${bookings.length} booking${bookings.length > 1 ? 's' : ''} updated`,
     text: textContent,
     html: htmlContent,
   }
@@ -1983,26 +1994,40 @@ export async function sendAdminStatusChangeNotification(
       color: '#3b82f6',
     },
     pending_deposit: {
-      title: oldStatus === 'pending' 
+      title: oldStatus === 'cancelled'
+        ? 'Booking Restored - Deposit Required'
+        : oldStatus === 'pending' 
         ? 'Booking Accepted - Deposit Required'
         : 'Deposit Evidence Rejected',
-      message: oldStatus === 'pending'
+      message: oldStatus === 'cancelled'
+        ? 'A cancelled booking has been restored. User needs to upload deposit evidence. A deposit upload link has been sent to the user.'
+        : oldStatus === 'pending'
         ? 'A booking has been accepted. User needs to upload deposit evidence. A deposit upload link has been sent to the user.'
         : 'Deposit evidence has been rejected. User will re-upload deposit evidence with a new token (expires at booking start date/time).',
-      color: oldStatus === 'pending' ? '#10b981' : '#f59e0b',
+      color: oldStatus === 'cancelled' || oldStatus === 'pending' ? '#10b981' : '#f59e0b',
     },
     paid_deposit: {
-      title: 'Deposit Evidence Uploaded',
-      message: 'User has uploaded deposit evidence. Please review and verify the deposit to confirm the booking.',
+      title: oldStatus === 'cancelled'
+        ? 'Booking Restored to Paid Deposit'
+        : 'Deposit Evidence Uploaded',
+      message: oldStatus === 'cancelled'
+        ? 'A cancelled booking has been restored to paid_deposit status. Deposit evidence is available for review. Please verify the deposit to confirm the booking.'
+        : 'User has uploaded deposit evidence. Please review and verify the deposit to confirm the booking.',
       color: '#10b981',
     },
     confirmed: {
-      title: oldStatus === 'pending_deposit' && changeReason?.toLowerCase().includes('other channel')
+      title: oldStatus === 'cancelled'
+        ? 'Booking Restored and Confirmed'
+        : oldStatus === 'pending_deposit' && changeReason?.toLowerCase().includes('other channel')
         ? 'Booking Confirmed (Other Channel)'
         : oldStatus === 'paid_deposit' && changeReason?.toLowerCase().includes('other channel')
         ? 'Booking Confirmed (Other Channel)'
         : 'Booking Confirmed',
-      message: oldStatus === 'pending_deposit' && changeReason?.toLowerCase().includes('other channel')
+      message: oldStatus === 'cancelled'
+        ? changeReason?.toLowerCase().includes('other channel')
+          ? 'A cancelled booking has been restored and confirmed. Deposit was verified through other channels (phone, in-person, etc.).'
+          : 'A cancelled booking has been restored and confirmed. Deposit has been verified.'
+        : oldStatus === 'pending_deposit' && changeReason?.toLowerCase().includes('other channel')
         ? 'A booking has been confirmed. Deposit was verified through other channels (phone, in-person, etc.), not through system upload.'
         : oldStatus === 'paid_deposit' && changeReason?.toLowerCase().includes('other channel')
         ? 'A booking has been confirmed. Deposit was verified through other channels instead of reviewing the uploaded evidence.'
@@ -2221,11 +2246,13 @@ Best regards,
 Hell University Reservation System
   `.trim()
 
+  // CRITICAL: Always start subject with booking reference number for easy identification
+  const referenceNumber = booking.referenceNumber || booking.id
   const mailOptions: nodemailer.SendMailOptions = {
     from: `"Hell University Reservation System" <${process.env.SMTP_USER}>`,
     to: recipientEmail,
     replyTo: booking.email,
-    subject: `${statusInfo.title} [Booking ID: ${booking.referenceNumber || booking.id}] - ${formattedEventType} - ${booking.name}`,
+    subject: `[${referenceNumber}] ${statusInfo.title} - ${formattedEventType} - ${booking.name}`,
     text: textContent,
     html: htmlContent,
   }
@@ -2375,11 +2402,13 @@ Best regards,
 Hell University Reservation System
   `.trim()
 
+  // CRITICAL: Always start subject with booking reference number for easy identification
+  const referenceNumber = booking.referenceNumber || booking.id
   const mailOptions: nodemailer.SendMailOptions = {
     from: `"Hell University Reservation System" <${process.env.SMTP_USER}>`,
     to: recipientEmail,
     replyTo: booking.email,
-    subject: `User Checked In [Booking ID: ${booking.referenceNumber || booking.id}] - ${formattedEventType} - ${booking.name}`,
+    subject: `[${referenceNumber}] User Checked In - ${formattedEventType} - ${booking.name}`,
     text: textContent,
     html: htmlContent,
   }
@@ -2539,11 +2568,13 @@ Best regards,
 Hell University Reservation System
   `.trim()
 
+  // CRITICAL: Always start subject with booking reference number for easy identification
+  const referenceNumber = booking.referenceNumber || booking.id
   const mailOptions: nodemailer.SendMailOptions = {
     from: `"Hell University Reservation System" <${process.env.SMTP_USER}>`,
     to: recipientEmail,
     replyTo: booking.email,
-    subject: `Booking Deleted [Booking ID: ${booking.referenceNumber || booking.id}] - ${formattedEventType} - ${booking.name}`,
+    subject: `[${referenceNumber}] Booking Deleted - ${formattedEventType} - ${booking.name}`,
     text: textContent,
     html: htmlContent,
   }

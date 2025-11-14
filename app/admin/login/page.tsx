@@ -55,7 +55,7 @@ export default async function LoginPage({
             <Link
               href="/admin"
               prefetch={false}
-              className="inline-block w-full px-6 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors font-medium text-center"
+              className="inline-block w-full px-4 sm:px-6 py-2.5 sm:py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors font-medium text-center text-sm sm:text-base"
             >
               Go to Dashboard
             </Link>
@@ -67,8 +67,8 @@ export default async function LoginPage({
 
   return (
     <>
-      <div data-login-page className="flex min-h-screen items-center justify-center bg-gradient-to-br from-gray-50 to-gray-100">
-        <div className="w-full max-w-md p-8 bg-white rounded-lg shadow-xl">
+      <div data-login-page className="flex min-h-screen items-center justify-center bg-gradient-to-br from-gray-50 to-gray-100 px-4 sm:px-6">
+        <div className="w-full max-w-md p-6 sm:p-8 bg-white rounded-lg shadow-xl">
           <div className="text-center mb-8">
             <h1 className="text-3xl font-bold text-gray-900 mb-2">Admin Login</h1>
             <p className="text-gray-600">

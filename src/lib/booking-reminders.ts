@@ -8,6 +8,7 @@ import { getTursoClient } from "./turso"
 import { sendBookingStatusNotification } from "./email"
 import { formatBooking } from "./bookings"
 import { calculateStartTimestamp } from "./booking-validations"
+import { getBangkokTime } from "./timezone"
 
 // Note: formatBooking is imported from bookings.ts
 
@@ -15,6 +16,9 @@ import { calculateStartTimestamp } from "./booking-validations"
  * Send reminder emails for upcoming bookings
  * - 7 days before start date
  * - 24 hours before start date
+ * 
+ * CRITICAL: Uses Bangkok timezone for all date comparisons to ensure reminders
+ * are sent based on Bangkok calendar days, not UTC days.
  */
 export async function sendBookingReminders(): Promise<{
   sent7Day: number
@@ -22,7 +26,8 @@ export async function sendBookingReminders(): Promise<{
   errors: number
 }> {
   const db = getTursoClient()
-  const now = Math.floor(Date.now() / 1000)
+  // CRITICAL: Use Bangkok time for business logic (reminder calculations)
+  const now = getBangkokTime()
   
   // Calculate reminder timestamps
   const sevenDaysFromNow = now + (7 * 24 * 60 * 60) // 7 days in seconds

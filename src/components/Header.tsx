@@ -19,6 +19,7 @@ import { Recaptcha } from "./Recaptcha"
 import PhoneInput from "react-phone-number-input"
 import { TimePicker } from "@/components/ui/time-picker"
 import { dateToBangkokDateString } from "@/lib/timezone-client"
+import { API_PATHS, buildApiUrl } from "@/lib/api-config"
 
 const STORAGE_KEY = "helluniversity_booking_form"
 const DEBOUNCE_DELAY = 500 // milliseconds
@@ -118,7 +119,7 @@ export function Header() {
   useEffect(() => {
     async function fetchBookingStatus() {
       try {
-        const response = await fetch("/api/settings/booking-enabled")
+        const response = await fetch(API_PATHS.settingsBookingEnabled)
         const json = await response.json()
         
         if (json.success && json.data) {
@@ -140,7 +141,7 @@ export function Header() {
   useEffect(() => {
     if (bookingOpen && mounted) {
       const fetchUnavailableDates = () => {
-        fetch("/api/booking/availability")
+        fetch(API_PATHS.bookingAvailability)
           .then((res) => res.json())
           .then((json) => {
               // Check both possible response structures
@@ -180,7 +181,7 @@ export function Header() {
   // Function to refresh unavailable dates (called on month navigation)
   const refreshUnavailableDates = () => {
     if (bookingOpen && mounted) {
-      fetch("/api/booking/availability")
+      fetch("/api/v1/booking/availability")
         .then((res) => res.json())
         .then((json) => {
           const unavailableDatesArray = json.data?.unavailableDates || json.unavailableDates || []
@@ -548,7 +549,7 @@ export function Header() {
         specialRequests: formData.specialRequests.trim(),
       }
       
-      const response = await fetch("/api/booking", {
+      const response = await fetch(API_PATHS.booking, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",

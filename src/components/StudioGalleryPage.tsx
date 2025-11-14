@@ -5,6 +5,7 @@ import { ChevronDown, Loader2 } from "lucide-react";
 import { ImageWithFallback } from "./figma/ImageWithFallback";
 import { withBasePath } from "@/lib/utils";
 import { ARTWORK_STUDIO_IMAGES, BUILDING_STUDIO_IMAGES, GALLERY_IMAGES_PUBLIC } from "@/lib/imageManifests";
+import { API_PATHS, buildApiUrl } from "@/lib/api-config";
 import { Dialog, DialogTrigger, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "./ui/dialog";
 import {
   Carousel,
@@ -64,9 +65,9 @@ export function StudioGalleryPage() {
       try {
         // Fetch all three categories in parallel
         const [artworkRes, buildingRes, galleryRes] = await Promise.all([
-          fetch("/api/images?category=artwork_studio&limit=100"),
-          fetch("/api/images?category=building_studio&limit=100"),
-          fetch("/api/images?category=gallery&limit=100"),
+          fetch(buildApiUrl(API_PATHS.images, { category: 'artwork_studio', limit: 100 })),
+          fetch(buildApiUrl(API_PATHS.images, { category: 'building_studio', limit: 100 })),
+          fetch(buildApiUrl(API_PATHS.images, { category: 'gallery', limit: 100 })),
         ]);
 
         // Process artwork images

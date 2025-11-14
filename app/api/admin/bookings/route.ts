@@ -4,6 +4,7 @@ import { requireAuthorizedDomain } from "@/lib/auth"
 import { createRequestLogger } from "@/lib/logger"
 import { withErrorHandling, successResponse, errorResponse, unauthorizedResponse, forbiddenResponse, ErrorCodes } from "@/lib/api-response"
 import { createBangkokTimestamp } from "@/lib/timezone"
+import { getRequestPath } from "@/lib/api-versioning"
 
 /**
  * Admin Bookings Management API
@@ -27,7 +28,8 @@ async function checkAuth(requestId: string) {
 export async function GET(request: Request) {
   return withErrorHandling(async () => {
     const requestId = crypto.randomUUID()
-    const logger = createRequestLogger(requestId, '/api/admin/bookings')
+    const endpoint = getRequestPath(request)
+    const logger = createRequestLogger(requestId, endpoint)
     
     await logger.info('Admin bookings list request received')
     
@@ -138,7 +140,8 @@ export async function GET(request: Request) {
       deposit_evidence_url: booking.depositEvidenceUrl,
       deposit_verified_at: booking.depositVerifiedAt,
       deposit_verified_by: booking.depositVerifiedBy,
-      deposit_verified_from_other_channel: booking.depositVerifiedFromOtherChannel || false,
+      // Preserve boolean value correctly - use explicit check to avoid undefined -> false conversion
+      deposit_verified_from_other_channel: booking.depositVerifiedFromOtherChannel === true,
       created_at: booking.createdAt,
       updated_at: booking.updatedAt,
     }))
@@ -155,6 +158,6 @@ export async function GET(request: Request) {
       },
       { requestId }
     )
-  }, { endpoint: '/api/admin/bookings' })
+  }, { endpoint: getRequestPath(request) })
 }
 

@@ -46,7 +46,7 @@ export default function DepositUploadPage() {
 
     async function fetchBooking() {
       try {
-        const response = await fetch(`/api/booking/response/${token}`)
+        const response = await fetch(API_PATHS.bookingResponse(token))
         const json = await response.json()
         
         // Check for API errors first
@@ -130,7 +130,7 @@ export default function DepositUploadPage() {
       formData.append("token", token)
       formData.append("file", selectedFile)
 
-      const response = await fetch("/api/booking/deposit", {
+      const response = await fetch(API_PATHS.bookingDeposit, {
         method: "POST",
         body: formData,
       })
@@ -146,7 +146,7 @@ export default function DepositUploadPage() {
         if (response.status === 409 || parsedError.type === 'conflict') {
           // Refresh booking data and show retry option
           try {
-            const bookingResponse = await fetch(`/api/booking/response/${token}`)
+            const bookingResponse = await fetch(`/api/v1/booking/response/${token}`)
             const bookingJson = await bookingResponse.json()
             if (bookingJson.success) {
               const refreshedBooking = bookingJson.data?.booking || bookingJson.booking
@@ -214,7 +214,7 @@ export default function DepositUploadPage() {
     setError(null)
 
     try {
-      const response = await fetch(`/api/booking/response/${token}`, {
+      const response = await fetch(`/api/v1/booking/response/${token}`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",

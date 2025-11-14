@@ -7,9 +7,9 @@
 
 import { 
   calculateStartTimestamp, 
-  checkBookingOverlap,
   CHECK_IN_GRACE_PERIOD 
 } from "./booking-validations"
+// checkBookingOverlap is imported dynamically to avoid bundling database code in client components
 import { getBangkokTime, isPastInBangkok } from "./timezone"
 import { TZDate } from '@date-fns/tz'
 
@@ -98,6 +98,10 @@ export async function validateAction(
     action === "verify_deposit"
   ) {
     try {
+      // Dynamically import checkBookingOverlap to avoid bundling database code
+      // This function requires database access and should only run server-side
+      const { checkBookingOverlap } = await import("./booking-validations")
+      
       // Determine which dates to check
       let checkStartDate: number
       let checkEndDate: number | null

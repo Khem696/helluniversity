@@ -12,6 +12,7 @@ import { NextResponse } from 'next/server'
 import { autoUpdateFinishedBookings } from '@/lib/bookings'
 import { withErrorHandling, successResponse, errorResponse, ErrorCodes } from '@/lib/api-response'
 import { createRequestLogger } from '@/lib/logger'
+import { verifyCronSecret, withTimeout, CRON_TIMEOUT_MS } from '@/lib/cron-utils'
 
 /**
  * Auto-update bookings (cancel past pending, finish past bookings)
@@ -32,27 +33,16 @@ async function handleAutoUpdate(request: Request) {
     await logger.info('Auto-update bookings cron job started')
     
     // Verify Vercel cron secret
-    const authHeader = request.headers.get('authorization')
-    const cronSecret = process.env.CRON_SECRET
-    
-    if (!cronSecret) {
-      await logger.error('CRON_SECRET not configured', new Error('CRON_SECRET not configured'))
+    try {
+      verifyCronSecret(request)
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : 'Authentication failed'
+      await logger.error(errorMessage, error instanceof Error ? error : new Error(errorMessage))
       return errorResponse(
-        ErrorCodes.INTERNAL_ERROR,
-        'Cron secret not configured',
+        errorMessage.includes('not configured') ? ErrorCodes.INTERNAL_ERROR : ErrorCodes.UNAUTHORIZED,
+        errorMessage,
         undefined,
-        500,
-        { requestId }
-      )
-    }
-
-    if (authHeader !== `Bearer ${cronSecret}`) {
-      await logger.warn('Unauthorized cron job attempt')
-      return errorResponse(
-        ErrorCodes.UNAUTHORIZED,
-        'Unauthorized',
-        undefined,
-        401,
+        errorMessage.includes('not configured') ? 500 : 401,
         { requestId }
       )
     }
@@ -60,13 +50,29 @@ async function handleAutoUpdate(request: Request) {
     // Run auto-update
     const startTime = Date.now()
     await logger.info('Starting auto-update bookings', {
+      timeout: `${CRON_TIMEOUT_MS}ms`,
       timestamp: new Date().toISOString(),
       timezone: 'UTC'
     })
     
-    console.log(`[auto-update-bookings] Starting auto-update bookings processing`)
+    console.log(`[auto-update-bookings] Starting auto-update bookings processing (timeout: ${CRON_TIMEOUT_MS}ms)`)
     
-    const result = await autoUpdateFinishedBookings()
+    let result
+    try {
+      // Execute with timeout to prevent hanging
+      result = await withTimeout(
+        () => autoUpdateFinishedBookings(),
+        CRON_TIMEOUT_MS,
+        'Auto-update bookings timed out'
+      )
+    } catch (error) {
+      const duration = Date.now() - startTime
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error'
+      await logger.error('Auto-update bookings failed', error instanceof Error ? error : new Error(errorMessage))
+      console.error(`[auto-update-bookings] Auto-update failed after ${duration}ms:`, errorMessage)
+      throw error
+    }
+    
     const duration = Date.now() - startTime
     
     await logger.info('Auto-update bookings completed', {

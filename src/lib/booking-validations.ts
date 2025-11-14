@@ -7,6 +7,7 @@
 import { getTursoClient } from "./turso"
 import { TZDate } from '@date-fns/tz'
 import { format } from 'date-fns'
+import { createBangkokTimestamp, getBangkokTime } from './timezone'
 
 const BANGKOK_TIMEZONE = 'Asia/Bangkok' // GMT+7
 
@@ -68,22 +69,44 @@ export function isValidStatusTransition(
 
 /**
  * Validate if a date is in the past
+ * CRITICAL: Uses Bangkok timezone for business logic consistency
+ * Note: This function assumes date is in YYYY-MM-DD format (Bangkok timezone)
+ * For proper timezone handling, use createBangkokTimestamp() and getBangkokTime()
  */
 export function isDateInPast(date: string | null | undefined): boolean {
   if (!date) return false
-  const dateTimestamp = Math.floor(new Date(date).getTime() / 1000)
-  const now = Math.floor(Date.now() / 1000)
-  return dateTimestamp < now
+  // Use createBangkokTimestamp to properly handle Bangkok timezone
+  try {
+    const dateTimestamp = createBangkokTimestamp(date, null)
+    const now = getBangkokTime()
+    return dateTimestamp < now
+  } catch {
+    // Fallback to old method if date format is not YYYY-MM-DD
+    const dateTimestamp = Math.floor(new Date(date).getTime() / 1000)
+    const now = getBangkokTime()
+    return dateTimestamp < now
+  }
 }
 
 /**
  * Validate if a date is in the future
+ * CRITICAL: Uses Bangkok timezone for business logic consistency
+ * Note: This function assumes date is in YYYY-MM-DD format (Bangkok timezone)
+ * For proper timezone handling, use createBangkokTimestamp() and getBangkokTime()
  */
 export function isDateInFuture(date: string | null | undefined): boolean {
   if (!date) return false
-  const dateTimestamp = Math.floor(new Date(date).getTime() / 1000)
-  const now = Math.floor(Date.now() / 1000)
-  return dateTimestamp > now
+  // Use createBangkokTimestamp to properly handle Bangkok timezone
+  try {
+    const dateTimestamp = createBangkokTimestamp(date, null)
+    const now = getBangkokTime()
+    return dateTimestamp > now
+  } catch {
+    // Fallback to old method if date format is not YYYY-MM-DD
+    const dateTimestamp = Math.floor(new Date(date).getTime() / 1000)
+    const now = getBangkokTime()
+    return dateTimestamp > now
+  }
 }
 
 /**
@@ -158,7 +181,8 @@ export function isCheckInAllowed(
   gracePeriod: number = CHECK_IN_GRACE_PERIOD
 ): { allowed: boolean; reason?: string } {
   const startTimestamp = calculateStartTimestamp(startDate, startTime)
-  const now = Math.floor(Date.now() / 1000)
+  // CRITICAL: Use Bangkok time for business logic (check-in validation)
+  const now = getBangkokTime()
   const gracePeriodEnd = startTimestamp + gracePeriod
 
   // Check-in is allowed if:
@@ -211,7 +235,20 @@ export async function checkBookingOverlap(
           endTimestamp = endDate
         }
       } else {
-        endTimestamp = endDate
+        // No endTime: endDate should represent the END of that day (23:59:59), not the start (00:00:00)
+        // This ensures date ranges like "16-21 Nov" don't incorrectly overlap with "22 Nov"
+        try {
+          const utcDate = new Date(endDate * 1000)
+          const tzDate = new TZDate(utcDate.getTime(), BANGKOK_TIMEZONE)
+          const year = tzDate.getFullYear()
+          const month = tzDate.getMonth()
+          const day = tzDate.getDate()
+          // Set to end of day (23:59:59)
+          const tzDateEndOfDay = new TZDate(year, month, day, 23, 59, 59, BANGKOK_TIMEZONE)
+          endTimestamp = Math.floor(tzDateEndOfDay.getTime() / 1000)
+        } catch (error) {
+          endTimestamp = endDate
+        }
       }
     } else {
       // Single day booking - use start date with end time or start time
@@ -254,14 +291,14 @@ export async function checkBookingOverlap(
   
   const query = bookingId
     ? `
-      SELECT id, name, email, start_date, end_date, start_time, end_time, status
+      SELECT id, name, email, reference_number, start_date, end_date, start_time, end_time, status
       FROM bookings
       WHERE id != ?
         AND status = 'confirmed'
       ORDER BY start_date ASC
     `
     : `
-      SELECT id, name, email, start_date, end_date, start_time, end_time, status
+      SELECT id, name, email, reference_number, start_date, end_date, start_time, end_time, status
       FROM bookings
       WHERE status = 'confirmed'
       ORDER BY start_date ASC
@@ -306,7 +343,20 @@ export async function checkBookingOverlap(
           existingEndTimestamp = existingBooking.end_date
         }
       } else {
-        existingEndTimestamp = existingBooking.end_date
+        // No endTime: endDate should represent the END of that day (23:59:59), not the start (00:00:00)
+        // This ensures date ranges like "16-21 Nov" don't incorrectly overlap with "22 Nov"
+        try {
+          const utcDate = new Date(existingBooking.end_date * 1000)
+          const tzDate = new TZDate(utcDate.getTime(), BANGKOK_TIMEZONE)
+          const year = tzDate.getFullYear()
+          const month = tzDate.getMonth()
+          const day = tzDate.getDate()
+          // Set to end of day (23:59:59)
+          const tzDateEndOfDay = new TZDate(year, month, day, 23, 59, 59, BANGKOK_TIMEZONE)
+          existingEndTimestamp = Math.floor(tzDateEndOfDay.getTime() / 1000)
+        } catch (error) {
+          existingEndTimestamp = existingBooking.end_date
+        }
       }
     } else {
       // Single day booking
@@ -344,7 +394,40 @@ export async function checkBookingOverlap(
     // Check for time overlap: two time ranges overlap if:
     // newStart <= existingEnd AND newEnd >= existingStart
     // This includes boundary touches (e.g., 21-25 overlaps with 25-26)
-    if (startTimestamp <= existingEndTimestamp && endTimestamp >= existingStartTimestamp) {
+    const overlaps = startTimestamp <= existingEndTimestamp && endTimestamp >= existingStartTimestamp
+    
+    // Debug logging for overlap detection
+    if (overlaps || (endDate && existingBooking.end_date)) {
+      console.log('[Overlap Debug]', {
+        newBooking: {
+          startDate: new Date(startTimestamp * 1000).toISOString(),
+          endDate: new Date(endTimestamp * 1000).toISOString(),
+          startTimestamp,
+          endTimestamp,
+          hasEndDate: !!endDate,
+          hasEndTime: !!endTime,
+        },
+        existingBooking: {
+          id: existingBooking.id,
+          reference: existingBooking.reference_number,
+          startDate: new Date(existingStartTimestamp * 1000).toISOString(),
+          endDate: new Date(existingEndTimestamp * 1000).toISOString(),
+          startTimestamp: existingStartTimestamp,
+          endTimestamp: existingEndTimestamp,
+          hasEndDate: !!existingBooking.end_date,
+          hasEndTime: !!existingBooking.end_time,
+        },
+        overlapCheck: {
+          condition1: `${startTimestamp} <= ${existingEndTimestamp}`,
+          condition1Result: startTimestamp <= existingEndTimestamp,
+          condition2: `${endTimestamp} >= ${existingStartTimestamp}`,
+          condition2Result: endTimestamp >= existingStartTimestamp,
+          overlaps,
+        }
+      })
+    }
+    
+    if (overlaps) {
       overlappingBookings.push(existingBooking)
     }
   }
@@ -407,11 +490,24 @@ export async function findAllOverlappingBookings(
         endTimestamp = endDate
       }
     } else {
-      endTimestamp = endDate
+      // No endTime: endDate should represent the END of that day (23:59:59), not the start (00:00:00)
+      // This ensures date ranges like "16-21 Nov" don't incorrectly overlap with "22 Nov"
+      try {
+        const utcDate = new Date(endDate * 1000)
+        const tzDate = new TZDate(utcDate.getTime(), BANGKOK_TIMEZONE)
+        const year = tzDate.getFullYear()
+        const month = tzDate.getMonth()
+        const day = tzDate.getDate()
+        // Set to end of day (23:59:59)
+        const tzDateEndOfDay = new TZDate(year, month, day, 23, 59, 59, BANGKOK_TIMEZONE)
+        endTimestamp = Math.floor(tzDateEndOfDay.getTime() / 1000)
+      } catch (error) {
+        endTimestamp = endDate
+      }
     }
   } else {
-    // Single day booking
-    if (endTime) {
+      // Single day booking
+      if (endTime) {
       const parsed = parseTimeString(endTime)
       if (parsed) {
         try {
@@ -469,6 +565,7 @@ export async function findAllOverlappingBookings(
     
     let existingEndTimestamp: number
     if (existingBooking.end_date) {
+      // Multiple day booking
       if (existingBooking.end_time) {
         const parsed = parseTimeString(existingBooking.end_time)
         if (parsed) {
@@ -487,9 +584,23 @@ export async function findAllOverlappingBookings(
           existingEndTimestamp = existingBooking.end_date
         }
       } else {
-        existingEndTimestamp = existingBooking.end_date
+        // No endTime: endDate should represent the END of that day (23:59:59), not the start (00:00:00)
+        // This ensures date ranges like "16-21 Nov" don't incorrectly overlap with "22 Nov"
+        try {
+          const utcDate = new Date(existingBooking.end_date * 1000)
+          const tzDate = new TZDate(utcDate.getTime(), BANGKOK_TIMEZONE)
+          const year = tzDate.getFullYear()
+          const month = tzDate.getMonth()
+          const day = tzDate.getDate()
+          // Set to end of day (23:59:59)
+          const tzDateEndOfDay = new TZDate(year, month, day, 23, 59, 59, BANGKOK_TIMEZONE)
+          existingEndTimestamp = Math.floor(tzDateEndOfDay.getTime() / 1000)
+        } catch (error) {
+          existingEndTimestamp = existingBooking.end_date
+        }
       }
     } else {
+      // Single day booking
       if (existingBooking.end_time) {
         const parsed = parseTimeString(existingBooking.end_time)
         if (parsed) {
@@ -591,6 +702,7 @@ export async function getUnavailableDates(excludeBookingId?: string | null): Pro
     
     let endTimestamp: number
     if (booking.end_date) {
+      // Multiple day booking
       if (booking.end_time) {
         const parsed = parseTimeString(booking.end_time)
         if (parsed) {
@@ -610,7 +722,20 @@ export async function getUnavailableDates(excludeBookingId?: string | null): Pro
           endTimestamp = booking.end_date
         }
       } else {
-        endTimestamp = booking.end_date
+        // No endTime: endDate should represent the END of that day (23:59:59), not the start (00:00:00)
+        // This ensures date ranges like "16-21 Nov" don't incorrectly overlap with "22 Nov"
+        try {
+          const utcDate = new Date(booking.end_date * 1000)
+          const tzDate = new TZDate(utcDate.getTime(), BANGKOK_TIMEZONE)
+          const year = tzDate.getFullYear()
+          const month = tzDate.getMonth()
+          const day = tzDate.getDate()
+          // Set to end of day (23:59:59)
+          const tzDateEndOfDay = new TZDate(year, month, day, 23, 59, 59, BANGKOK_TIMEZONE)
+          endTimestamp = Math.floor(tzDateEndOfDay.getTime() / 1000)
+        } catch (error) {
+          endTimestamp = booking.end_date
+        }
       }
     } else {
       if (booking.end_time) {

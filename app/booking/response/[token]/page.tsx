@@ -12,6 +12,7 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 import { format } from "date-fns"
 import { TimePicker } from "@/components/ui/time-picker"
 import { dateToBangkokDateString } from "@/lib/timezone-client"
+import { API_PATHS, buildApiUrl } from "@/lib/api-config"
 
 // Parse 24-hour time string from user_response (HH:MM format)
 // Returns 24-hour format string or null
@@ -91,8 +92,8 @@ export default function BookingResponsePage() {
     if (!booking?.id) return // Wait for booking to load
     
     const url = booking.id 
-      ? `/api/booking/availability?bookingId=${encodeURIComponent(booking.id)}`
-      : "/api/booking/availability"
+      ? buildApiUrl(API_PATHS.bookingAvailability, { bookingId: booking.id })
+      : API_PATHS.bookingAvailability
     
     fetch(url)
       .then((res) => res.json())
@@ -124,7 +125,7 @@ export default function BookingResponsePage() {
 
     async function fetchBooking() {
       try {
-        const response = await fetch(`/api/booking/response/${token}`)
+        const response = await fetch(API_PATHS.bookingResponse(token))
         const json = await response.json()
         
         if (!response.ok || !json.success) {
@@ -173,7 +174,7 @@ export default function BookingResponsePage() {
     setError(null)
 
     try {
-      const responseData = await fetch(`/api/booking/response/${token}`, {
+      const responseData = await fetch(`/api/v1/booking/response/${token}`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -395,7 +396,7 @@ export default function BookingResponsePage() {
             </div>
             {booking.depositEvidenceUrl && (() => {
               // Generate secure proxy URL instead of direct blob URL
-              const proxyUrl = `/api/deposit/${token}/image`
+              const proxyUrl = API_PATHS.depositImage(token)
               return (
               <div className="mt-4">
                 <a

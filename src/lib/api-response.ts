@@ -75,7 +75,7 @@ export function successResponse<T>(
   // Use requestId from meta if provided, otherwise generate new one
   const requestId = meta?.requestId || randomUUID()
   
-  return NextResponse.json(
+  const response = NextResponse.json(
     {
       success: true,
       data,
@@ -87,6 +87,14 @@ export function successResponse<T>(
     },
     { status: 200 }
   )
+  
+  // Add API version headers if version is detected
+  if (meta?.apiVersion) {
+    const { addVersionHeaders } = require('./api-versioning')
+    return addVersionHeaders(response, meta.apiVersion)
+  }
+  
+  return response
 }
 
 /**

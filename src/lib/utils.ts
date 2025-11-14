@@ -42,6 +42,8 @@ export function throttle<T extends (...args: any[]) => any>(
   }
 }
 
+import { API_PATHS } from './api-config'
+
 // Image optimization utilities
 export function getOptimizedImageUrl(
   src: string,
@@ -129,7 +131,7 @@ export async function getThumbnailUrlAsync(
   // Add cache buster to ensure fresh image (especially important after regeneration)
   params.set('_t', Date.now().toString())
   
-  return `/api/images/optimize?${params.toString()}`
+  return `${API_PATHS.imagesOptimize}?${params.toString()}`
 }
 
 /**
@@ -180,7 +182,7 @@ export function getThumbnailUrl(
   // Add cache buster to ensure fresh image (especially important after regeneration)
   params.set('_t', Date.now().toString())
   
-  return `/api/images/optimize?${params.toString()}`
+  return `${API_PATHS.imagesOptimize}?${params.toString()}`
 }
 
 // Export the async loader for components that need it

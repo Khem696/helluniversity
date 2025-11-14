@@ -40,6 +40,7 @@ import { toast } from "sonner"
 import { format } from "date-fns"
 import { TZDate } from '@date-fns/tz'
 import { useAdminData } from "@/hooks/useAdminData"
+import { API_PATHS, buildApiUrl } from "@/lib/api-config"
 import {
   DndContext,
   closestCenter,
@@ -218,7 +219,7 @@ export default function EventsPage() {
     }
     params.append("sortBy", sortBy)
     params.append("sortOrder", sortOrder)
-    return `/api/admin/events?${params.toString()}`
+    return buildApiUrl(API_PATHS.adminEvents, Object.fromEntries(params))
   }, [upcomingFilter, titleFilter, eventDateFilter, eventDateFrom, eventDateTo, useDateRange, sortBy, sortOrder])
   
   // Use useAdminData hook for events with optimistic updates
@@ -255,7 +256,7 @@ export default function EventsPage() {
   // Fetch event details with in-event photos
   const fetchEventDetails = async (eventId: string) => {
     try {
-      const response = await fetch(`/api/admin/events/${eventId}`)
+      const response = await fetch(`/api/v1/admin/events/${eventId}`)
       const json = await response.json()
       if (json.success) {
         // API returns { success: true, data: { event: {...} } }
@@ -288,7 +289,7 @@ export default function EventsPage() {
         uploadFormData.append("file", file)
         uploadFormData.append("title", editingEvent?.title ? `${editingEvent.title} - Photo ${i + 1}` : `Event Photo ${i + 1}`)
 
-        const uploadResponse = await fetch("/api/admin/images", {
+        const uploadResponse = await fetch(API_PATHS.adminImages, {
           method: "POST",
           body: uploadFormData,
         })
@@ -311,7 +312,7 @@ export default function EventsPage() {
       const addErrors: string[] = []
       for (const imageId of uploadedImageIds) {
         try {
-          const response = await fetch(`/api/admin/events/${eventId}/images`, {
+          const response = await fetch(API_PATHS.adminEventImages(eventId), {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
@@ -406,7 +407,7 @@ export default function EventsPage() {
     // Update all photos' display_order in the database
     try {
       const updatePromises = updatedPhotos.map((photo, index) =>
-        fetch(`/api/admin/events/${editingEvent.id}/images/${photo.id}`, {
+        fetch(API_PATHS.adminEventImage(editingEvent.id, photo.id), {
           method: "PATCH",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ display_order: index }),
@@ -449,7 +450,7 @@ export default function EventsPage() {
   // Remove in-event photo
   const handleRemovePhoto = async (eventId: string, eventImageId: string) => {
     try {
-      const response = await fetch(`/api/admin/events/${eventId}/images/${eventImageId}`, {
+      const response = await fetch(API_PATHS.adminEventImage(eventId, eventImageId), {
         method: "DELETE",
       })
 
@@ -478,7 +479,7 @@ export default function EventsPage() {
   // Fetch images for selection
   const fetchImages = async () => {
     try {
-      const response = await fetch("/api/admin/images?limit=1000")
+      const response = await fetch(buildApiUrl(API_PATHS.adminImages, { limit: 1000 }))
       const json = await response.json()
       if (json.success) {
         // API returns { success: true, data: { images: [...], pagination: {...} } }
@@ -521,7 +522,7 @@ export default function EventsPage() {
         uploadFormData.append("file", posterFile)
         uploadFormData.append("title", formData.get("title") as string || "Event Poster")
 
-        const uploadResponse = await fetch("/api/admin/images", {
+        const uploadResponse = await fetch(API_PATHS.adminImages, {
           method: "POST",
           body: uploadFormData,
         })
@@ -553,7 +554,7 @@ export default function EventsPage() {
     }
 
     try {
-      const response = await fetch("/api/admin/events", {
+      const response = await fetch(API_PATHS.adminEvents, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(eventData),
@@ -622,7 +623,7 @@ export default function EventsPage() {
         uploadFormData.append("file", editPosterFile)
         uploadFormData.append("title", title || "Event Poster")
 
-        const uploadResponse = await fetch("/api/admin/images", {
+        const uploadResponse = await fetch(API_PATHS.adminImages, {
           method: "POST",
           body: uploadFormData,
         })
@@ -668,7 +669,7 @@ export default function EventsPage() {
       // Optimistically update UI first
       updateItem(editingEvent.id, updates as Partial<Event>)
       
-      const response = await fetch(`/api/admin/events/${editingEvent.id}`, {
+      const response = await fetch(`/api/v1/admin/events/${editingEvent.id}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(updates),
@@ -709,7 +710,7 @@ export default function EventsPage() {
       // Optimistically remove from list
       removeItem(eventId)
       
-      const response = await fetch(`/api/admin/events/${eventId}`, {
+      const response = await fetch(API_PATHS.adminEvent(eventId), {
         method: "DELETE",
       })
 
@@ -753,7 +754,7 @@ export default function EventsPage() {
 
   if (status === "loading" || loading) {
     return (
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-12">
+      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 sm:py-8 lg:py-12">
         <div className="flex items-center justify-center h-64">
           <Loader2 className="w-8 h-8 animate-spin text-gray-400" />
         </div>
@@ -762,7 +763,7 @@ export default function EventsPage() {
   }
 
   return (
-    <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-12">
+    <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 sm:py-8 lg:py-12">
       <div className="mb-8 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
         <div>
           <h1 className="text-2xl sm:text-3xl lg:text-4xl font-bold text-gray-900 mb-2">Event Management</h1>
@@ -1231,7 +1232,7 @@ export default function EventsPage() {
 
       {/* Edit Dialog - Streamlined for Dates and Images */}
       <Dialog open={editDialogOpen} onOpenChange={setEditDialogOpen}>
-        <DialogContent className="max-w-[95vw] sm:max-w-2xl lg:max-w-3xl max-h-[90vh] overflow-y-auto">
+        <DialogContent className="max-w-[95vw] sm:max-w-2xl lg:max-w-3xl max-h-[90vh] overflow-y-auto w-full">
           <DialogHeader>
             <DialogTitle>Edit Event: {editingEvent?.title}</DialogTitle>
             <DialogDescription>

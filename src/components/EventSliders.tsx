@@ -3,6 +3,7 @@ import { useState, useEffect } from "react"
 import { EventSlider } from "./EventSlider"
 import { mockEvents, splitEventsByDate, type EventSlide } from "@/data/events"
 import { dateToBangkokDateString } from "@/lib/timezone-client"
+import { API_PATHS } from "@/lib/api-config"
 
 /**
  * EventSliders Component
@@ -21,7 +22,7 @@ export function EventSliders() {
   useEffect(() => {
     async function fetchEvents() {
       try {
-        const response = await fetch("/api/events")
+        const response = await fetch(API_PATHS.events)
         if (!response.ok) {
           throw new Error("Failed to fetch events")
         }
@@ -67,7 +68,9 @@ export function EventSliders() {
             setCurrentEvents(responseData.currentEvents.map(convertToEventSlide))
           } else if (responseData.events) {
             // If single array, split by end_date
-            const now = Math.floor(Date.now() / 1000)
+            // CRITICAL: Use Bangkok time for date comparisons to match business logic
+            const { getBangkokTime } = await import("@/lib/timezone-client")
+            const now = getBangkokTime()
             const past: EventSlide[] = []
             const current: EventSlide[] = []
 

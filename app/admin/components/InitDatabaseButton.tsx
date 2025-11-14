@@ -1,6 +1,7 @@
 "use client"
 
 import { useState } from "react"
+import { API_PATHS } from "@/lib/api-config"
 import { Button } from "@/components/ui/button"
 import { Loader2, Database, CheckCircle2, XCircle, AlertCircle } from "lucide-react"
 
@@ -18,7 +19,7 @@ export function InitDatabaseButton() {
   const checkStatus = async () => {
     setStatus({ type: "checking" })
     try {
-      const response = await fetch("/api/admin/init-db")
+      const response = await fetch("/api/v1/admin/init-db")
       
       // Check if response is ok
       if (!response.ok) {
@@ -91,7 +92,7 @@ export function InitDatabaseButton() {
     setStatus({ type: "idle" })
     
     try {
-      const response = await fetch("/api/admin/init-db", {
+      const response = await fetch(API_PATHS.adminInitDb, {
         method: "POST",
       })
       

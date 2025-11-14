@@ -9,6 +9,7 @@ import { NextResponse } from "next/server"
 import { sendDailyBookingDigest } from "@/lib/booking-digest"
 import { createRequestLogger } from "@/lib/logger"
 import { withErrorHandling, successResponse, errorResponse, ErrorCodes } from "@/lib/api-response"
+import { verifyCronSecret, withTimeout, CRON_TIMEOUT_MS } from '@/lib/cron-utils'
 
 export async function GET(request: Request) {
   return withErrorHandling(async () => {
@@ -18,27 +19,16 @@ export async function GET(request: Request) {
     await logger.info('Daily digest cron job started')
     
     // Verify Vercel cron secret
-    const authHeader = request.headers.get('authorization')
-    const cronSecret = process.env.CRON_SECRET
-    
-    if (!cronSecret) {
-      await logger.error('CRON_SECRET not configured', new Error('CRON_SECRET not configured'))
+    try {
+      verifyCronSecret(request)
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : 'Authentication failed'
+      await logger.error(errorMessage, error instanceof Error ? error : new Error(errorMessage))
       return errorResponse(
-        ErrorCodes.INTERNAL_ERROR,
-        'Cron secret not configured',
+        errorMessage.includes('not configured') ? ErrorCodes.INTERNAL_ERROR : ErrorCodes.UNAUTHORIZED,
+        errorMessage,
         undefined,
-        500,
-        { requestId }
-      )
-    }
-
-    if (authHeader !== `Bearer ${cronSecret}`) {
-      await logger.warn('Unauthorized cron job attempt')
-      return errorResponse(
-        ErrorCodes.UNAUTHORIZED,
-        'Unauthorized',
-        undefined,
-        401,
+        errorMessage.includes('not configured') ? 500 : 401,
         { requestId }
       )
     }
@@ -46,14 +36,20 @@ export async function GET(request: Request) {
     // Send daily digest
     const startTime = Date.now()
     await logger.info('Sending daily booking digest', {
+      timeout: `${CRON_TIMEOUT_MS}ms`,
       timestamp: new Date().toISOString(),
       timezone: 'UTC'
     })
     
-    console.log(`[daily-digest] Starting daily booking digest`)
+    console.log(`[daily-digest] Starting daily booking digest (timeout: ${CRON_TIMEOUT_MS}ms)`)
     
     try {
-      await sendDailyBookingDigest()
+      // Execute with timeout to prevent hanging
+      await withTimeout(
+        () => sendDailyBookingDigest(),
+        CRON_TIMEOUT_MS,
+        'Daily digest processing timed out'
+      )
       const duration = Date.now() - startTime
       
       await logger.info('Daily booking digest sent successfully', {

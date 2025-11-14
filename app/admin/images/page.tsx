@@ -26,6 +26,7 @@ import { Upload, Edit, Loader2, Image as ImageIcon, ChevronDown, ChevronUp, Glob
 import { toast } from "sonner"
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible"
 import { useAdminData } from "@/hooks/useAdminData"
+import { API_PATHS, buildApiUrl } from "@/lib/api-config"
 import {
   DndContext,
   closestCenter,
@@ -296,7 +297,7 @@ export default function ImagesPage() {
     }
     params.append("sortBy", sortBy)
     params.append("sortOrder", sortOrder)
-    return `/api/admin/images?${params.toString()}`
+    return buildApiUrl(API_PATHS.adminImages, Object.fromEntries(params))
   }, [categoryFilter, titleFilter, sortBy, sortOrder])
   
   // Use useAdminData hook for images with optimistic updates
@@ -351,7 +352,7 @@ export default function ImagesPage() {
         uploadFormData.append("category", category)
       }
 
-      const response = await fetch("/api/admin/images", {
+      const response = await fetch(API_PATHS.adminImages, {
         method: "POST",
         body: uploadFormData,
       })
@@ -454,7 +455,7 @@ export default function ImagesPage() {
           updateBody.ai_order = img.ai_order
         }
 
-        return fetch(`/api/admin/images/${img.id}`, {
+        return fetch(API_PATHS.adminImage(img.id), {
           method: "PATCH",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify(updateBody),
@@ -484,7 +485,7 @@ export default function ImagesPage() {
   const toggleAISelection = async (imageId: string, currentValue: number | boolean | undefined) => {
     try {
       const newValue = !currentValue || currentValue === 0
-      const response = await fetch(`/api/admin/images/toggle-ai-selection`, {
+      const response = await fetch(API_PATHS.adminImageToggleAISelection, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ 
@@ -548,7 +549,7 @@ export default function ImagesPage() {
       // Optimistically update UI first
       updateItem(editingImage.id, updates as Partial<Image>)
       
-      const response = await fetch(`/api/admin/images/${editingImage.id}`, {
+      const response = await fetch(API_PATHS.adminImage(editingImage.id), {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(updates),
@@ -592,7 +593,7 @@ export default function ImagesPage() {
       // Optimistically remove from list
       removeItem(imageToDelete.id)
       
-      const response = await fetch(`/api/admin/images/${imageToDelete.id}`, {
+      const response = await fetch(API_PATHS.adminImage(imageToDelete.id), {
         method: "DELETE",
       })
       const json = await response.json()
@@ -716,7 +717,7 @@ export default function ImagesPage() {
 
   if (status === "loading" || loading) {
     return (
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-12">
+      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 sm:py-8 lg:py-12">
         <div className="flex items-center justify-center h-64">
           <Loader2 className="w-8 h-8 animate-spin text-gray-400" />
         </div>
@@ -725,8 +726,8 @@ export default function ImagesPage() {
   }
 
   return (
-    <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-12">
-      <div className="mb-8 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+    <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 sm:py-8 lg:py-12">
+      <div className="mb-6 sm:mb-8 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
         <div>
           <h1 className="text-2xl sm:text-3xl lg:text-4xl font-bold text-gray-900 mb-2">Image Management</h1>
           <p className="text-sm sm:text-base text-gray-600">Manage uploaded images and their metadata</p>
@@ -738,7 +739,7 @@ export default function ImagesPage() {
               Upload Image
             </Button>
           </DialogTrigger>
-          <DialogContent className="max-w-2xl">
+          <DialogContent className="max-w-[95vw] sm:max-w-2xl">
             <DialogHeader>
               <DialogTitle>Upload New Image</DialogTitle>
               <DialogDescription>
@@ -1146,7 +1147,7 @@ export default function ImagesPage() {
 
       {/* Edit Dialog */}
       <Dialog open={editDialogOpen} onOpenChange={setEditDialogOpen}>
-        <DialogContent className="max-w-2xl">
+        <DialogContent className="max-w-[95vw] sm:max-w-2xl">
           <DialogHeader>
             <DialogTitle>Edit Image</DialogTitle>
             <DialogDescription>

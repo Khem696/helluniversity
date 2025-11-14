@@ -5,6 +5,8 @@
  * This ensures deposit images are only accessible through authenticated endpoints.
  */
 
+import { API_PATHS } from './api-config'
+
 /**
  * Generate proxy URL for user access (requires booking token)
  * @param blobUrl - Original blob storage URL
@@ -15,7 +17,7 @@ export function getDepositProxyUrl(blobUrl: string | null | undefined, token: st
   if (!blobUrl || !token) {
     return null
   }
-  return `/api/deposit/${token}/image`
+  return API_PATHS.depositImage(token)
 }
 
 /**
@@ -28,6 +30,6 @@ export function getAdminDepositProxyUrl(blobUrl: string | null | undefined, book
   if (!blobUrl || !bookingId) {
     return null
   }
-  return `/api/admin/deposit/${bookingId}/image`
+  return API_PATHS.adminDepositImage(bookingId)
 }
 

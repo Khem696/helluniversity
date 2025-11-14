@@ -1,6 +1,7 @@
 "use client"
 
 import { useState, useEffect } from "react"
+import { API_PATHS, buildApiUrl } from "@/lib/api-config"
 import { Switch } from "@/components/ui/switch"
 import { Label } from "@/components/ui/label"
 import { Loader2, Calendar, CalendarX } from "lucide-react"
@@ -16,7 +17,7 @@ export function BookingToggle() {
     async function fetchBookingStatus() {
       try {
         setLoading(true)
-        const response = await fetch("/api/admin/settings?key=bookings_enabled")
+        const response = await fetch(buildApiUrl(API_PATHS.adminSettings, { key: 'bookings_enabled' }))
         const json = await response.json()
         
         if (json.success && json.data) {
@@ -49,7 +50,7 @@ export function BookingToggle() {
   const handleToggle = async (checked: boolean) => {
     try {
       setUpdating(true)
-      const response = await fetch("/api/admin/settings", {
+      const response = await fetch(API_PATHS.adminSettings, {
         method: "PATCH",
         headers: {
           "Content-Type": "application/json",
