@@ -85,6 +85,7 @@ function formatTimeForDisplay(time24: string | null | undefined): string {
 
 interface Booking {
   id: string
+  reference_number: string | null
   name: string
   email: string
   phone: string
@@ -124,6 +125,22 @@ interface StatusHistory {
   changed_by: string | null
   change_reason: string | null
   created_at: number
+}
+
+// Helper function to get booking reference number with fallback for old records
+// Generates a deterministic reference number based on booking ID if missing
+function getBookingReferenceNumber(booking: Booking): string {
+  if (booking.reference_number) {
+    return booking.reference_number
+  }
+  // For old records without reference_number, generate a deterministic one based on ID
+  // Use last 8 characters of UUID and convert to base36-like format
+  // This ensures the same booking always gets the same reference number
+  const idPart = booking.id.replace(/-/g, '').slice(-8)
+  const numValue = parseInt(idPart, 16) % 46656 // 36^3
+  // Use first 2 hex chars of ID for deterministic "random" part
+  const deterministicPart = parseInt(idPart.slice(0, 2), 16) % 1296 // 36^2
+  return `HU-${numValue.toString(36).toUpperCase().padStart(3, '0')}${deterministicPart.toString(36).toUpperCase().padStart(2, '0')}`
 }
 
 export default function BookingsPage() {
@@ -1264,6 +1281,12 @@ export default function BookingsPage() {
             <table className="min-w-full divide-y divide-gray-200">
               <thead className="bg-gray-50">
                 <tr>
+                    <th className="px-6 xl:px-8 py-4 text-left text-xs font-medium text-gray-500 uppercase tracking-wider w-16">
+                    No.
+                  </th>
+                    <th className="px-6 xl:px-8 py-4 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    Booking Reference
+                  </th>
                     <th className="px-6 xl:px-8 py-4 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                     Name
                   </th>
@@ -1272,9 +1295,6 @@ export default function BookingsPage() {
                   </th>
                     <th className="px-6 xl:px-8 py-4 text-left text-xs font-medium text-gray-500 uppercase tracking-wider min-w-[180px]">
                     Date/Time
-                  </th>
-                    <th className="px-6 xl:px-8 py-4 text-left text-xs font-medium text-gray-500 uppercase tracking-wider min-w-[180px]">
-                    Proposed Date
                   </th>
                     <th className="px-6 xl:px-8 py-4 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                     Status
@@ -1288,7 +1308,7 @@ export default function BookingsPage() {
                 </tr>
               </thead>
               <tbody className="bg-white divide-y divide-gray-200">
-                {bookings.map((booking) => {
+                {bookings.map((booking, index) => {
                   const hasNewResponse = booking.user_response && booking.response_date && 
                     (booking.response_date * 1000) > lastCheckedAtRef.current - 300000 // New if within last 5 minutes
                   
@@ -1297,6 +1317,14 @@ export default function BookingsPage() {
                     key={booking.id} 
                     className={`hover:bg-gray-50 ${hasNewResponse ? 'bg-blue-50 border-l-4 border-l-blue-500' : ''}`}
                   >
+                    <td className="px-6 xl:px-8 py-4 whitespace-nowrap text-sm text-gray-500">
+                      {index + 1}
+                    </td>
+                    <td className="px-6 xl:px-8 py-4 whitespace-nowrap">
+                      <div className="text-sm font-medium text-gray-900">
+                        {getBookingReferenceNumber(booking)}
+                      </div>
+                    </td>
                     <td className="px-6 xl:px-8 py-4 whitespace-nowrap">
                       <div className="flex items-center gap-2">
                         <div className="text-sm font-medium text-gray-900">{booking.name}</div>
@@ -1340,54 +1368,6 @@ export default function BookingsPage() {
                         <span className="whitespace-normal break-words">{formatTimeForDisplay(booking.start_time)} - {formatTimeForDisplay(booking.end_time)}</span>
                       </div>
                     </td>
-                    <td className="px-6 xl:px-8 py-4 min-w-[180px] whitespace-normal">
-                      {booking.proposed_date ? (
-                        <div>
-                        <div className="text-sm text-gray-900">
-                          {formatDate(booking.proposed_date)}
-                          {booking.proposed_end_date && booking.proposed_end_date !== booking.proposed_date && (
-                            <span> - {formatDate(booking.proposed_end_date)}</span>
-                          )}
-                          </div>
-                          {/* Parse and display times from user_response */}
-                          {booking.user_response && (() => {
-                            const startTimeMatch = booking.user_response.match(/Start Time: ([^,)]+)/)
-                            const endTimeMatch = booking.user_response.match(/End Time: ([^,)]+)/)
-                            if (startTimeMatch || endTimeMatch) {
-                              // Parse 24-hour format times from user_response
-                              const parseTime = (timeStr: string): string | null => {
-                                const match = timeStr.trim().match(/^(\d{1,2}):(\d{2})$/)
-                                if (match) {
-                                  const hours = parseInt(match[1], 10)
-                                  const minutes = match[2] || '00'
-                                  if (hours >= 0 && hours <= 23 && parseInt(minutes) >= 0 && parseInt(minutes) <= 59) {
-                                    return `${hours.toString().padStart(2, '0')}:${minutes}`
-                                  }
-                                }
-                                return null
-                              }
-                              const startTime = startTimeMatch ? parseTime(startTimeMatch[1].trim()) : null
-                              const endTime = endTimeMatch ? parseTime(endTimeMatch[1].trim()) : null
-                              return (
-                                <div className="text-sm text-gray-500 flex items-center gap-1 mt-1">
-                                  <Clock className="w-3 h-3" />
-                                  {startTime && endTime 
-                                    ? `${formatTimeForDisplay(startTime)} - ${formatTimeForDisplay(endTime)}`
-                                    : startTime 
-                                      ? formatTimeForDisplay(startTime)
-                                      : endTime 
-                                        ? formatTimeForDisplay(endTime)
-                                        : null}
-                                </div>
-                              )
-                            }
-                            return null
-                          })()}
-                        </div>
-                      ) : (
-                        <div className="text-sm text-gray-400">-</div>
-                      )}
-                    </td>
                     <td className="px-6 xl:px-8 py-4 whitespace-nowrap">
                       {getStatusBadge(booking.status)}
                     </td>
@@ -1429,7 +1409,7 @@ export default function BookingsPage() {
 
           {/* Mobile/Tablet Card View */}
           <div className="lg:hidden space-y-4">
-            {bookings.map((booking) => {
+            {bookings.map((booking, index) => {
               const hasNewResponse = booking.user_response && booking.response_date && 
                 (booking.response_date * 1000) > lastCheckedAtRef.current - 300000
               
@@ -1441,6 +1421,7 @@ export default function BookingsPage() {
                   <div className="flex items-start justify-between mb-3">
                     <div className="flex-1">
                       <div className="flex items-center gap-2 mb-2">
+                        <span className="text-xs font-medium text-gray-500">#{index + 1}</span>
                         <h3 className="text-base sm:text-lg font-semibold text-gray-900">{booking.name}</h3>
                         {booking.user_response && (
                           <Badge variant="outline" className="bg-blue-100 text-blue-800 border-blue-300">
@@ -1448,6 +1429,10 @@ export default function BookingsPage() {
                             Response
                           </Badge>
                         )}
+                      </div>
+                      <div className="mb-2">
+                        <div className="text-xs font-medium text-gray-500 mb-0.5">Booking Reference</div>
+                        <div className="text-sm font-medium text-gray-900">{getBookingReferenceNumber(booking)}</div>
                       </div>
                       <div className="flex flex-wrap gap-x-4 gap-y-1 text-sm text-gray-500">
                         <div className="flex items-center gap-1">
@@ -1493,50 +1478,6 @@ export default function BookingsPage() {
                         {formatTimeForDisplay(booking.start_time)} - {formatTimeForDisplay(booking.end_time)}
                       </div>
                     </div>
-
-                    {booking.proposed_date && (
-                      <div>
-                        <div className="text-xs font-medium text-gray-500 mb-1">Proposed Date</div>
-                        <div className="text-sm text-gray-900">
-                          {formatDate(booking.proposed_date)}
-                          {booking.proposed_end_date && booking.proposed_end_date !== booking.proposed_date && (
-                            <span> - {formatDate(booking.proposed_end_date)}</span>
-                          )}
-                        </div>
-                        {booking.user_response && (() => {
-                          const startTimeMatch = booking.user_response.match(/Start Time: ([^,)]+)/)
-                          const endTimeMatch = booking.user_response.match(/End Time: ([^,)]+)/)
-                          if (startTimeMatch || endTimeMatch) {
-                            const parseTime = (timeStr: string): string | null => {
-                              const match = timeStr.trim().match(/^(\d{1,2}):(\d{2})$/)
-                              if (match) {
-                                const hours = parseInt(match[1], 10)
-                                const minutes = match[2] || '00'
-                                if (hours >= 0 && hours <= 23 && parseInt(minutes) >= 0 && parseInt(minutes) <= 59) {
-                                  return `${hours.toString().padStart(2, '0')}:${minutes}`
-                                }
-                              }
-                              return null
-                            }
-                            const startTime = startTimeMatch ? parseTime(startTimeMatch[1].trim()) : null
-                            const endTime = endTimeMatch ? parseTime(endTimeMatch[1].trim()) : null
-                            return (
-                              <div className="text-sm text-gray-500 flex items-center gap-1 mt-1">
-                                <Clock className="w-3 h-3 flex-shrink-0" />
-                                {startTime && endTime 
-                                  ? `${formatTimeForDisplay(startTime)} - ${formatTimeForDisplay(endTime)}`
-                                  : startTime 
-                                    ? formatTimeForDisplay(startTime)
-                                    : endTime 
-                                      ? formatTimeForDisplay(endTime)
-                                      : null}
-                              </div>
-                            )
-                          }
-                          return null
-                        })()}
-                      </div>
-                    )}
 
                     <div>
                       <div className="text-xs font-medium text-gray-500 mb-1">Created</div>

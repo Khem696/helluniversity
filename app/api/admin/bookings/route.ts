@@ -110,6 +110,7 @@ export async function GET(request: Request) {
     // CRITICAL: Use createBangkokTimestamp to handle YYYY-MM-DD strings in Bangkok timezone
     const transformedBookings = result.bookings.map((booking) => ({
       id: booking.id,
+      reference_number: booking.referenceNumber || null,
       name: booking.name,
       email: booking.email,
       phone: booking.phone,
