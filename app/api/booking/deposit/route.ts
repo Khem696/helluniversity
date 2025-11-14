@@ -118,9 +118,20 @@ export async function POST(request: Request) {
       )
     }
     
-    // Check if token expired (expires at start date/time)
-    if (booking.tokenExpiresAt && booking.tokenExpiresAt < bangkokNow) {
-      await logger.warn('Deposit upload rejected: token expired', { bookingId: booking.id, tokenExpiresAt: booking.tokenExpiresAt, now: bangkokNow })
+    // Check if token expired (expires at start date/time) with 5-minute grace period
+    // This allows users who are mid-upload to complete their action
+    const TOKEN_GRACE_PERIOD = 5 * 60 // 5 minutes in seconds
+    const effectiveExpirationTime = booking.tokenExpiresAt 
+      ? booking.tokenExpiresAt + TOKEN_GRACE_PERIOD 
+      : null
+    
+    if (effectiveExpirationTime && bangkokNow > effectiveExpirationTime) {
+      await logger.warn('Deposit upload rejected: token expired (after grace period)', { 
+        bookingId: booking.id, 
+        tokenExpiresAt: booking.tokenExpiresAt, 
+        now: bangkokNow,
+        gracePeriod: TOKEN_GRACE_PERIOD
+      })
       return errorResponse(
         ErrorCodes.VALIDATION_ERROR,
         "Token has expired. The booking start date has passed.",
@@ -211,9 +222,41 @@ export async function POST(request: Request) {
     
     await logger.info('Deposit image processed and uploaded', { bookingId: booking.id, depositUrl: processed.url })
 
-    // Get old status and updatedAt before update (for optimistic locking)
-    const oldStatus = booking.status
-    const originalUpdatedAt = booking.updatedAt
+    // RE-CHECK BOOKING RIGHT BEFORE UPDATE (minimize race condition window)
+    // This ensures we have the latest booking state before updating
+    const { getBookingById } = await import("@/lib/bookings")
+    const recheckBooking = await getBookingById(booking.id)
+    
+    if (!recheckBooking) {
+      await logger.error('Deposit upload failed: booking not found during re-check', new Error('Booking not found during re-check'), { bookingId: booking.id })
+      return errorResponse(
+        ErrorCodes.NOT_FOUND,
+        "Booking not found. Please refresh and try again.",
+        undefined,
+        404,
+        { requestId }
+      )
+    }
+
+    // Verify booking status still allows deposit upload
+    if (recheckBooking.status !== "pending_deposit" && recheckBooking.status !== "pending") {
+      await logger.warn('Deposit upload rejected: booking status changed', { 
+        bookingId: booking.id, 
+        oldStatus: booking.status, 
+        newStatus: recheckBooking.status 
+      })
+      return errorResponse(
+        ErrorCodes.VALIDATION_ERROR,
+        `Booking status changed to "${recheckBooking.status}". Deposit can only be uploaded for pending or pending_deposit bookings.`,
+        undefined,
+        400,
+        { requestId }
+      )
+    }
+
+    // Get old status and updatedAt from re-checked booking (for optimistic locking)
+    const oldStatus = recheckBooking.status
+    const originalUpdatedAt = recheckBooking.updatedAt
 
     // Update booking with deposit evidence (status changes to "paid_deposit")
     // updateBookingStatus already has optimistic locking, so if booking was modified, it will throw
@@ -274,6 +317,13 @@ export async function POST(request: Request) {
           bookingId: booking.id, 
           error: errorMessage 
         })
+        // Track monitoring metric
+        try {
+          const { trackOptimisticLockConflict } = await import('@/lib/monitoring')
+          trackOptimisticLockConflict('booking', booking.id, { requestId, action: 'deposit_upload' })
+        } catch {
+          // Ignore monitoring errors
+        }
         return errorResponse(
           ErrorCodes.CONFLICT,
           "Booking was modified by another process. Please refresh and try again.",

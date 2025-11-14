@@ -176,10 +176,34 @@ export async function dbTransaction<T>(
       return result
     } catch (error) {
       await tx.rollback()
+      
+      // Track transaction failure
+      try {
+        const { trackTransactionFailure } = await import('./monitoring')
+        const errorObj = error instanceof Error ? error : new Error(String(error))
+        trackTransactionFailure('dbTransaction', errorObj, {
+          operation: 'transaction_rollback'
+        })
+      } catch {
+        // Ignore monitoring errors
+      }
+      
       throw error
     }
   } catch (error) {
     console.error("Database transaction error:", error)
+    
+    // Track transaction failure (outer catch for transaction creation failures)
+    try {
+      const { trackTransactionFailure } = await import('./monitoring')
+      const errorObj = error instanceof Error ? error : new Error(String(error))
+      trackTransactionFailure('dbTransaction', errorObj, {
+        operation: 'transaction_creation'
+      })
+    } catch {
+      // Ignore monitoring errors
+    }
+    
     throw error
   }
 }

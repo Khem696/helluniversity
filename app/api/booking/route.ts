@@ -205,10 +205,82 @@ export async function POST(request: Request): Promise<NextResponse> {
     // Check for booking overlaps with checked-in bookings
     // Use timezone library to properly convert Bangkok timezone dates to timestamps
     const { createBangkokTimestamp, getBangkokTime, getBangkokDateString } = await import('@/lib/timezone')
-    const startDateTimestamp = createBangkokTimestamp(sanitizedData.startDate, sanitizedData.startTime || null)
-    const endDateTimestamp = sanitizedData.endDate
-      ? createBangkokTimestamp(sanitizedData.endDate, sanitizedData.endTime || null)
-      : null
+    const { calculateStartTimestamp } = await import('@/lib/booking-validations')
+    
+    // CRITICAL: Calculate timestamps correctly (date + time)
+    // Pattern: createBangkokTimestamp(dateString, null) then calculateStartTimestamp(timestamp, timeString)
+    const startDateTimestamp = createBangkokTimestamp(sanitizedData.startDate, null)
+    const startTimestamp = calculateStartTimestamp(
+      startDateTimestamp,
+      sanitizedData.startTime || null
+    )
+    
+    let endTimestamp: number
+    if (sanitizedData.endDate) {
+      const endDateTimestamp = createBangkokTimestamp(sanitizedData.endDate, null)
+      if (sanitizedData.endTime) {
+        // Multi-day booking: calculate end timestamp from end_date + end_time
+        // Parse time string locally (parseTimeString is not exported from booking-validations)
+        const parseTime = (timeStr: string): { hour24: number; minutes: number } | null => {
+          if (!timeStr) return null
+          const match = timeStr.trim().match(/^(\d{1,2}):(\d{2})$/)
+          if (match) {
+            const hour24 = parseInt(match[1], 10)
+            const minutes = parseInt(match[2] || '00', 10)
+            if (hour24 >= 0 && hour24 <= 23 && minutes >= 0 && minutes <= 59) {
+              return { hour24, minutes }
+            }
+          }
+          return null
+        }
+        const { TZDate } = await import('@date-fns/tz')
+        const BANGKOK_TIMEZONE = 'Asia/Bangkok'
+        const parsed = parseTime(sanitizedData.endTime)
+        if (parsed) {
+          try {
+            const utcDate = new Date(endDateTimestamp * 1000)
+            const tzDate = new TZDate(utcDate.getTime(), BANGKOK_TIMEZONE)
+            const year = tzDate.getFullYear()
+            const month = tzDate.getMonth()
+            const day = tzDate.getDate()
+            const tzDateWithTime = new TZDate(year, month, day, parsed.hour24, parsed.minutes, 0, BANGKOK_TIMEZONE)
+            endTimestamp = Math.floor(tzDateWithTime.getTime() / 1000)
+          } catch (error) {
+            endTimestamp = endDateTimestamp
+          }
+        } else {
+          endTimestamp = endDateTimestamp
+        }
+      } else {
+        endTimestamp = endDateTimestamp
+      }
+    } else {
+      // Single-day booking: calculate end timestamp from start_date + end_time
+      endTimestamp = calculateStartTimestamp(
+        startDateTimestamp,
+        sanitizedData.endTime || null
+      )
+    }
+    
+    // CRITICAL: Validate that end timestamp > start timestamp (accounts for dates + times)
+    // This catches edge cases like: same date but invalid times, or dates valid but times make it invalid
+    if (endTimestamp <= startTimestamp) {
+      await logger.warn('Booking rejected: end timestamp is not after start timestamp', {
+        startTimestamp,
+        endTimestamp,
+        startDate: sanitizedData.startDate,
+        endDate: sanitizedData.endDate,
+        startTime: sanitizedData.startTime,
+        endTime: sanitizedData.endTime
+      })
+      return errorResponse(
+        ErrorCodes.INVALID_INPUT,
+        'The booking end date and time must be after the start date and time.',
+        {},
+        400,
+        { requestId }
+      )
+    }
     
     // Validate that start date is not today (users cannot book current date)
     const now = getBangkokTime()
@@ -225,8 +297,8 @@ export async function POST(request: Request): Promise<NextResponse> {
     }
     
     // Validate that start date is in the future
-    if (startDateTimestamp <= now) {
-      await logger.warn('Booking attempt for past date rejected', { startDate: sanitizedData.startDate, startDateTimestamp, now })
+    if (startTimestamp <= now) {
+      await logger.warn('Booking attempt for past date rejected', { startDate: sanitizedData.startDate, startTimestamp, now })
       return errorResponse(
         ErrorCodes.INVALID_INPUT,
         'Start date must be in the future. Please select a future date.',
@@ -238,8 +310,8 @@ export async function POST(request: Request): Promise<NextResponse> {
     
     const overlapCheck = await checkBookingOverlap(
       null, // New booking
-      startDateTimestamp,
-      endDateTimestamp,
+      startDateTimestamp, // Pass date timestamp (without time) - checkBookingOverlap will add time
+      sanitizedData.endDate ? createBangkokTimestamp(sanitizedData.endDate, null) : null,
       sanitizedData.startTime || null,
       sanitizedData.endTime || null
     )
@@ -263,8 +335,8 @@ export async function POST(request: Request): Promise<NextResponse> {
     await logger.info('Performing final overlap check before saving booking')
     const finalOverlapCheck = await checkBookingOverlap(
       null, // New booking
-      startDateTimestamp,
-      endDateTimestamp,
+      startDateTimestamp, // Pass date timestamp (without time) - checkBookingOverlap will add time
+      sanitizedData.endDate ? createBangkokTimestamp(sanitizedData.endDate, null) : null,
       sanitizedData.startTime || null,
       sanitizedData.endTime || null
     )

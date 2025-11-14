@@ -58,7 +58,7 @@ export async function GET(
     // Invalidate cache to ensure fresh data when admin views booking
     // This prevents showing stale status (e.g., pending_deposit when it should be paid_deposit)
     const { invalidateCache, CacheKeys } = await import("@/lib/cache")
-    invalidateCache(CacheKeys.booking(id))
+    await invalidateCache(CacheKeys.booking(id))
     
     const booking = await getBookingById(id)
 
@@ -254,6 +254,144 @@ export async function PATCH(
       const checkStartTime = newStartTime !== undefined ? newStartTime : (currentBooking.startTime || null)
       const checkEndTime = newEndTime !== undefined ? newEndTime : (currentBooking.endTime || null)
 
+      // Validate date range consistency: end_date must be >= start_date
+      if (checkEndDate && checkEndDate < checkStartDate) {
+        await logger.warn('Date change rejected: end date is before start date', {
+          bookingId: id,
+          checkStartDate,
+          checkEndDate
+        })
+        return errorResponse(
+          ErrorCodes.VALIDATION_ERROR,
+          "End date must be after or equal to start date.",
+          undefined,
+          400,
+          { requestId }
+        )
+      }
+
+      // CRITICAL: If end_date equals start_date, treat as single-day booking
+      // This prevents invalid multi-day bookings where dates are the same
+      const isEffectivelySingleDay = !checkEndDate || checkEndDate === checkStartDate
+
+      // Parse time strings helper (HH:MM format)
+      const parseTime = (timeStr: string): { hour24: number; minutes: number } | null => {
+        if (!timeStr) return null
+        const match = timeStr.trim().match(/^(\d{1,2}):(\d{2})$/)
+        if (match) {
+          const hour24 = parseInt(match[1], 10)
+          const minutes = parseInt(match[2] || '00', 10)
+          if (hour24 >= 0 && hour24 <= 23 && minutes >= 0 && minutes <= 59) {
+            return { hour24, minutes }
+          }
+        }
+        return null
+      }
+
+      // Validate time range for single-day bookings (including when end_date equals start_date)
+      if (isEffectivelySingleDay && checkStartTime && checkEndTime) {
+        const startParsed = parseTime(checkStartTime)
+        const endParsed = parseTime(checkEndTime)
+        
+        if (startParsed && endParsed) {
+          const startTotal = startParsed.hour24 * 60 + startParsed.minutes
+          const endTotal = endParsed.hour24 * 60 + endParsed.minutes
+          
+          if (endTotal <= startTotal) {
+            await logger.warn('Date change rejected: end time is not after start time for single-day booking', {
+              bookingId: id,
+              checkStartTime,
+              checkEndTime,
+              checkStartDate,
+              checkEndDate
+            })
+            return errorResponse(
+              ErrorCodes.VALIDATION_ERROR,
+              "For single-day bookings, end time must be after start time.",
+              undefined,
+              400,
+              { requestId }
+            )
+          }
+        }
+      }
+
+      // CRITICAL: Validate that end timestamp is > start timestamp (accounts for dates + times)
+      // This catches edge cases like: same date but invalid times, or dates valid but times make it invalid
+      const { calculateStartTimestamp: calcStartTimestamp } = await import('@/lib/booking-validations')
+      const startTimestamp = calcStartTimestamp(checkStartDate, checkStartTime)
+      
+      let endTimestamp: number
+      if (checkEndDate) {
+        // Multi-day booking: calculate end timestamp from end_date + end_time
+        if (checkEndTime) {
+          const endParsed = parseTime(checkEndTime)
+          if (endParsed) {
+            try {
+              const { TZDate } = await import('@date-fns/tz')
+              const BANGKOK_TIMEZONE = 'Asia/Bangkok'
+              const utcDate = new Date(checkEndDate * 1000)
+              const tzDate = new TZDate(utcDate.getTime(), BANGKOK_TIMEZONE)
+              const year = tzDate.getFullYear()
+              const month = tzDate.getMonth()
+              const day = tzDate.getDate()
+              const tzDateWithTime = new TZDate(year, month, day, endParsed.hour24, endParsed.minutes, 0, BANGKOK_TIMEZONE)
+              endTimestamp = Math.floor(tzDateWithTime.getTime() / 1000)
+            } catch (error) {
+              endTimestamp = checkEndDate
+            }
+          } else {
+            endTimestamp = checkEndDate
+          }
+        } else {
+          endTimestamp = checkEndDate
+        }
+      } else {
+        // Single-day booking: calculate end timestamp from start_date + end_time
+        if (checkEndTime) {
+          const endParsed = parseTime(checkEndTime)
+          if (endParsed) {
+            try {
+              const { TZDate } = await import('@date-fns/tz')
+              const BANGKOK_TIMEZONE = 'Asia/Bangkok'
+              const utcDate = new Date(checkStartDate * 1000)
+              const tzDate = new TZDate(utcDate.getTime(), BANGKOK_TIMEZONE)
+              const year = tzDate.getFullYear()
+              const month = tzDate.getMonth()
+              const day = tzDate.getDate()
+              const tzDateWithTime = new TZDate(year, month, day, endParsed.hour24, endParsed.minutes, 0, BANGKOK_TIMEZONE)
+              endTimestamp = Math.floor(tzDateWithTime.getTime() / 1000)
+            } catch (error) {
+              endTimestamp = startTimestamp
+            }
+          } else {
+            endTimestamp = startTimestamp
+          }
+        } else {
+          endTimestamp = startTimestamp
+        }
+      }
+
+      // Final validation: end timestamp must be > start timestamp
+      if (endTimestamp <= startTimestamp) {
+        await logger.warn('Date change rejected: end timestamp is not after start timestamp', {
+          bookingId: id,
+          startTimestamp,
+          endTimestamp,
+          checkStartDate,
+          checkEndDate,
+          checkStartTime,
+          checkEndTime
+        })
+        return errorResponse(
+          ErrorCodes.VALIDATION_ERROR,
+          "The booking end date and time must be after the start date and time.",
+          undefined,
+          400,
+          { requestId }
+        )
+      }
+
       // Check for overlaps with other confirmed bookings
       const overlapCheck = await checkBookingOverlap(
         id, // Exclude current booking
@@ -294,45 +432,180 @@ export async function PATCH(
         // Note: We allow past dates for historical corrections, but log it
       }
 
-      // Update booking dates directly in database
-      const db = getTursoClient()
-      const now = Math.floor(Date.now() / 1000)
-      
-      const updateFields: string[] = ["updated_at = ?"]
-      const updateArgs: any[] = [now]
-      
-      if (newStartDate) {
-        const startDateValue = typeof newStartDate === 'string' ? createBangkokTimestamp(newStartDate) : newStartDate
-        updateFields.push("start_date = ?")
-        updateArgs.push(startDateValue)
+      // FINAL VALIDATION: Re-check everything right before updating to prevent race conditions
+      // 1. Re-check booking status (might have changed)
+      const recheckBooking = await getBookingById(id)
+      if (!recheckBooking) {
+        await logger.warn('Date change rejected: booking not found during re-check', { bookingId: id })
+        return notFoundResponse('Booking', { requestId })
       }
       
-      if (newEndDate !== undefined) {
-        if (newEndDate === null) {
-          updateFields.push("end_date = NULL")
-          updateFields.push("date_range = 0")
-        } else {
-          const endDateValue = typeof newEndDate === 'string' ? createBangkokTimestamp(newEndDate) : newEndDate
-          updateFields.push("end_date = ?")
-          updateArgs.push(endDateValue)
-          updateFields.push("date_range = 1")
-        }
-      }
-      
-      if (newStartTime !== undefined) {
-        updateFields.push("start_time = ?")
-        updateArgs.push(newStartTime || null)
-      }
-      
-      if (newEndTime !== undefined) {
-        updateFields.push("end_time = ?")
-        updateArgs.push(newEndTime || null)
+      if (recheckBooking.status !== "confirmed") {
+        await logger.warn('Date change rejected: booking status changed during update', {
+          bookingId: id,
+          originalStatus: currentBooking.status,
+          currentStatus: recheckBooking.status
+        })
+        return errorResponse(
+          ErrorCodes.VALIDATION_ERROR,
+          `Booking status has changed from "confirmed" to "${recheckBooking.status}". Date changes are only allowed for confirmed bookings. Please refresh and try again.`,
+          undefined,
+          409,
+          { requestId }
+        )
       }
 
-      await db.execute({
-        sql: `UPDATE bookings SET ${updateFields.join(", ")} WHERE id = ?`,
-        args: [...updateArgs, id],
-      })
+      // 2. Re-check overlaps (catch any bookings that became confirmed)
+      await logger.info('Performing final overlap check before updating booking dates')
+      const finalOverlapCheck = await checkBookingOverlap(
+        id, // Exclude current booking
+        checkStartDate,
+        checkEndDate,
+        checkStartTime,
+        checkEndTime
+      )
+
+      if (finalOverlapCheck.overlaps) {
+        const overlappingNames = finalOverlapCheck.overlappingBookings
+          ?.map((b: any) => b.name || "Unknown")
+          .join(", ") || "existing booking"
+        await logger.warn('Final overlap check detected conflict - date became unavailable', {
+          bookingId: id,
+          overlappingNames
+        })
+        return errorResponse(
+          ErrorCodes.BOOKING_OVERLAP,
+          `The selected date and time is no longer available. It overlaps with a recently confirmed booking (${overlappingNames}). Please refresh and choose a different date.`,
+          { overlappingBookings: finalOverlapCheck.overlappingBookings },
+          409,
+          { requestId }
+        )
+      }
+
+      // Update booking dates in a transaction with optimistic locking
+      const { dbTransaction } = await import("@/lib/turso")
+      const now = Math.floor(Date.now() / 1000)
+      
+      // CRITICAL: Use updated_at from recheckBooking (latest value) for optimistic locking
+      // This ensures we catch any modifications that happened during validation
+      // Using currentBooking.updatedAt would be stale if booking was modified between initial fetch and re-check
+      const originalUpdatedAt = recheckBooking.updatedAt
+      
+      try {
+        const updateResult = await dbTransaction(async (tx) => {
+          const updateFields: string[] = ["updated_at = ?"]
+          const updateArgs: any[] = [now]
+          
+          if (newStartDate) {
+            const startDateValue = typeof newStartDate === 'string' ? createBangkokTimestamp(newStartDate) : newStartDate
+            updateFields.push("start_date = ?")
+            updateArgs.push(startDateValue)
+          }
+          
+          if (newEndDate !== undefined) {
+            if (newEndDate === null) {
+              updateFields.push("end_date = NULL")
+              updateFields.push("date_range = 0")
+            } else {
+              const endDateValue = typeof newEndDate === 'string' ? createBangkokTimestamp(newEndDate) : newEndDate
+              updateFields.push("end_date = ?")
+              updateArgs.push(endDateValue)
+              updateFields.push("date_range = 1")
+            }
+          } else if (newStartDate) {
+            // If only start_date is updated, ensure date_range flag is consistent with end_date
+            // If end_date exists, set date_range = 1; if null, set date_range = 0
+            if (currentBooking.endDate) {
+              updateFields.push("date_range = 1")
+            } else {
+              updateFields.push("date_range = 0")
+            }
+          }
+          
+          if (newStartTime !== undefined) {
+            updateFields.push("start_time = ?")
+            updateArgs.push(newStartTime || null)
+          }
+          
+          if (newEndTime !== undefined) {
+            updateFields.push("end_time = ?")
+            updateArgs.push(newEndTime || null)
+          }
+
+          // UPDATE TOKEN EXPIRATION if booking date changes and booking has a token
+          // Token expiration should match booking start date/time
+          // Only update if booking status allows tokens (pending/pending_deposit)
+          if (recheckBooking.responseToken && 
+              (recheckBooking.status === "pending" || recheckBooking.status === "pending_deposit") &&
+              (newStartDate || newStartTime !== undefined)) {
+            // Recalculate start timestamp with new date/time
+            const effectiveStartDate = newStartDate 
+              ? (typeof newStartDate === 'string' ? createBangkokTimestamp(newStartDate) : newStartDate)
+              : recheckBooking.startDate
+            const effectiveStartTime = newStartTime !== undefined 
+              ? newStartTime 
+              : recheckBooking.startTime
+            
+            const { calculateStartTimestamp } = await import("@/lib/booking-validations")
+            const newTokenExpiration = calculateStartTimestamp(
+              effectiveStartDate,
+              effectiveStartTime || null
+            )
+            
+            updateFields.push("token_expires_at = ?")
+            updateArgs.push(newTokenExpiration)
+            
+            await logger.info('Updating token expiration to match new booking date', {
+              bookingId: id,
+              newTokenExpiration,
+              effectiveStartDate,
+              effectiveStartTime
+            })
+          }
+
+          // Execute UPDATE with optimistic locking (check updated_at) within transaction
+          const result = await tx.execute({
+            sql: `UPDATE bookings SET ${updateFields.join(", ")} WHERE id = ? AND updated_at = ?`,
+            args: [...updateArgs, id, originalUpdatedAt],
+          })
+
+          return result
+        })
+
+        // Check if update succeeded (optimistic locking)
+        if (updateResult.rowsAffected === 0) {
+          await logger.warn('Date change rejected: booking was modified by another process', {
+            bookingId: id,
+            originalUpdatedAt
+          })
+          // Track monitoring metric
+          try {
+            const { trackOptimisticLockConflict } = await import('@/lib/monitoring')
+            trackOptimisticLockConflict('booking', id, { requestId, action: 'date_change' })
+          } catch {
+            // Ignore monitoring errors
+          }
+          return errorResponse(
+            ErrorCodes.VALIDATION_ERROR,
+            "Booking was modified by another process. Please refresh the page and try again.",
+            undefined,
+            409,
+            { requestId }
+          )
+        }
+      } catch (txError) {
+        await logger.error('Date change transaction failed', txError instanceof Error ? txError : new Error(String(txError)), {
+          bookingId: id,
+          originalUpdatedAt
+        })
+        return errorResponse(
+          ErrorCodes.INTERNAL_ERROR,
+          "Failed to update booking dates. The transaction was rolled back. Please try again.",
+          undefined,
+          500,
+          { requestId }
+        )
+      }
 
       await logger.info('Booking dates updated successfully', {
         bookingId: id,
@@ -341,6 +614,18 @@ export async function PATCH(
         newStartTime: checkStartTime,
         newEndTime: checkEndTime
       })
+
+      // Invalidate cache to ensure fresh data
+      try {
+        const { invalidateCache, CacheKeys } = await import("@/lib/cache")
+        await invalidateCache(CacheKeys.booking(id))
+        await invalidateCache('bookings:list')
+      } catch (cacheError) {
+        await logger.warn("Failed to invalidate cache after date change", { 
+          bookingId: id,
+          error: cacheError instanceof Error ? cacheError.message : String(cacheError)
+        })
+      }
 
       // Log admin action
       try {
@@ -416,6 +701,66 @@ export async function PATCH(
       }
 
       await logger.info('Booking dates updated successfully', { bookingId: id })
+
+      // Send email notification to user about date change
+      try {
+        // Format old and new dates for email notification
+        // Booking dates are stored as strings (YYYY-MM-DD) in Booking interface
+        const formatDateTime = (date: string | number | null, time: string | null | undefined): string => {
+          if (!date) return "Not specified"
+          
+          // Convert to Date object (handle both string and number)
+          let dateObj: Date
+          if (typeof date === 'string') {
+            // String format: YYYY-MM-DD
+            const [year, month, day] = date.split('-').map(Number)
+            dateObj = new Date(Date.UTC(year, month - 1, day, 0, 0, 0))
+          } else {
+            // Number format: Unix timestamp
+            dateObj = new Date(date * 1000)
+          }
+          
+          const formattedDate = dateObj.toLocaleDateString('en-US', {
+            weekday: 'long',
+            year: 'numeric',
+            month: 'long',
+            day: 'numeric',
+            timeZone: 'Asia/Bangkok'
+          })
+          if (time) {
+            return `${formattedDate} at ${time}`
+          }
+          return formattedDate
+        }
+        
+        const oldStart = formatDateTime(currentBooking.startDate, currentBooking.startTime)
+        const oldEnd = currentBooking.endDate 
+          ? formatDateTime(currentBooking.endDate, currentBooking.endTime)
+          : null
+        const newStart = formatDateTime(updatedBooking.startDate, updatedBooking.startTime)
+        const newEnd = updatedBooking.endDate 
+          ? formatDateTime(updatedBooking.endDate, updatedBooking.endTime)
+          : null
+        
+        const oldDateRange = oldEnd && oldEnd !== oldStart 
+          ? `${oldStart} to ${oldEnd}`
+          : oldStart
+        const newDateRange = newEnd && newEnd !== newStart
+          ? `${newStart} to ${newEnd}`
+          : newStart
+        
+        const dateChangeReason = changeReason 
+          ? `${changeReason}\n\nPrevious Date & Time: ${oldDateRange}\nNew Date & Time: ${newDateRange}`
+          : `Your booking dates have been updated.\n\nPrevious Date & Time: ${oldDateRange}\nNew Date & Time: ${newDateRange}`
+        
+        await sendBookingStatusNotification(updatedBooking, updatedBooking.status, {
+          changeReason: dateChangeReason,
+        })
+        await logger.info('Date change notification email sent successfully', { bookingId: id })
+      } catch (emailError) {
+        await logger.error("Failed to send date change notification email", emailError instanceof Error ? emailError : new Error(String(emailError)), { bookingId: id })
+        // Don't fail the request - email is secondary
+      }
       
       return successResponse(
         {

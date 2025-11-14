@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useEffect, useRef, useMemo } from "react"
+import { useState, useEffect, useRef, useMemo, useCallback } from "react"
 import { redirect } from "next/navigation"
 import { useSession } from "next-auth/react"
 import { Button } from "@/components/ui/button"
@@ -166,6 +166,11 @@ export default function BookingsPage() {
   const [newStartTime, setNewStartTime] = useState<string>("")
   const [newEndTime, setNewEndTime] = useState<string>("")
   const [showPastDateWarning, setShowPastDateWarning] = useState(false)
+  // Date range toggle for date change (controls whether end date is shown)
+  const [dateRangeToggle, setDateRangeToggle] = useState<"single" | "multiple">("single")
+  // Unavailable dates for date change calendar (excludes current booking's dates)
+  const [unavailableDatesForDateChange, setUnavailableDatesForDateChange] = useState<Set<string>>(new Set())
+  const [calendarMonth, setCalendarMonth] = useState<Date>(new Date())
   const [newResponsesCount, setNewResponsesCount] = useState<number>(0)
   const [confirmationDialogOpen, setConfirmationDialogOpen] = useState(false)
   const [pendingAction, setPendingAction] = useState<ActionDefinition | null>(null)
@@ -175,6 +180,7 @@ export default function BookingsPage() {
   
   // Use refs to track current values without causing dependency array changes
   const selectedBookingRef = useRef<Booking | null>(null)
+  const selectedActionRef = useRef<string | null>(null)
   const viewDialogOpenRef = useRef<boolean>(false)
   const lastCheckedAtRef = useRef<number>(Date.now())
   const seenResponseIdsRef = useRef<Set<string>>(new Set())
@@ -183,7 +189,8 @@ export default function BookingsPage() {
   // Update refs when values change
   useEffect(() => {
     selectedBookingRef.current = selectedBooking
-  }, [selectedBooking])
+    selectedActionRef.current = selectedAction
+  }, [selectedBooking, selectedAction])
   
   useEffect(() => {
     viewDialogOpenRef.current = viewDialogOpen
@@ -475,6 +482,7 @@ export default function BookingsPage() {
             if (isDialogOpen && currentSelectedBookingId) {
               fetchBookingDetails(currentSelectedBookingId)
             }
+            // Note: Unavailable dates refresh is handled by dedicated useEffect when date change dialog is open
           }
 
             // Update last checked time
@@ -487,7 +495,58 @@ export default function BookingsPage() {
     }, 30000) // Poll every 30 seconds
 
     return () => clearInterval(pollInterval)
-  }, [session]) // Only depend on session to prevent constant re-renders
+  }, [session]) // Note: fetchUnavailableDatesForDateChange is accessed via ref in polling
+
+  // Fetch unavailable dates for date change calendar (excludes current booking's dates)
+  const fetchUnavailableDatesForDateChange = useCallback(async (bookingId: string | null) => {
+    try {
+      const url = bookingId 
+        ? `/api/booking/availability?bookingId=${encodeURIComponent(bookingId)}`
+        : "/api/booking/availability"
+      
+      const response = await fetch(url)
+      const json = await response.json()
+      
+      if (json.success) {
+        const unavailableDatesArray = json.data?.unavailableDates || json.unavailableDates || []
+        setUnavailableDatesForDateChange(new Set(unavailableDatesArray))
+        console.log(`[Admin] Unavailable dates fetched for date change (excluding booking ${bookingId || 'none'}): ${unavailableDatesArray.length} dates`)
+      } else {
+        console.error("[Admin] Failed to fetch unavailable dates for date change:", json)
+        setUnavailableDatesForDateChange(new Set())
+      }
+    } catch (error) {
+      console.error("Failed to fetch unavailable dates for date change:", error)
+      setUnavailableDatesForDateChange(new Set())
+    }
+  }, [])
+
+  // Fetch unavailable dates when date change dialog opens and initialize date range toggle
+  useEffect(() => {
+    if (selectedAction === "change_date" && selectedBooking?.id && selectedBooking.status === "confirmed") {
+      // Fetch unavailable dates excluding current booking's dates
+      fetchUnavailableDatesForDateChange(selectedBooking.id)
+      // Initialize date range toggle based on current booking
+      setDateRangeToggle(selectedBooking.end_date ? "multiple" : "single")
+    } else {
+      // Clear unavailable dates when dialog closes
+      setUnavailableDatesForDateChange(new Set())
+      // Reset date range toggle
+      setDateRangeToggle("single")
+    }
+  }, [selectedAction, selectedBooking?.id, selectedBooking?.status, selectedBooking?.end_date, fetchUnavailableDatesForDateChange])
+
+  // Polling integration: Refresh unavailable dates when date change dialog is open
+  useEffect(() => {
+    if (selectedAction === "change_date" && selectedBooking?.id && selectedBooking.status === "confirmed") {
+      // Set up interval to refresh unavailable dates every 30 seconds while dialog is open
+      const refreshInterval = setInterval(() => {
+        fetchUnavailableDatesForDateChange(selectedBooking.id)
+      }, 30000) // Same interval as main polling
+
+      return () => clearInterval(refreshInterval)
+    }
+  }, [selectedAction, selectedBooking?.id, selectedBooking?.status, fetchUnavailableDatesForDateChange])
 
   // Fetch booking details and history
   const fetchBookingDetails = async (bookingId: string) => {
@@ -683,12 +742,148 @@ export default function BookingsPage() {
         return
       }
       
-      // Check for past date warning
-      const bangkokNow = getBangkokTime()
+      // PRE-SUBMIT REFRESH: Refresh unavailable dates right before submission to minimize race condition window
+      try {
+        await fetchUnavailableDatesForDateChange(selectedBooking.id)
+        console.log("[Admin] Refreshed unavailable dates before submission")
+      } catch (error) {
+        console.error("[Admin] Failed to refresh unavailable dates before submission:", error)
+        // Continue anyway - backend will catch overlaps
+      }
+      
+      // Validate selected dates against latest unavailable dates
+      // CRITICAL: Validate date range consistency (frontend validation matching backend)
+      const startDateStr = dateToBangkokDateString(newStartDate)
+      if (unavailableDatesForDateChange.has(startDateStr)) {
+        toast.error("The selected start date is no longer available. Please choose a different date.")
+        setSaving(false)
+        return
+      }
+      if (newEndDate) {
+        const endDateStr = dateToBangkokDateString(newEndDate)
+        
+        // Check if end date is unavailable
+        if (unavailableDatesForDateChange.has(endDateStr)) {
+          toast.error("The selected end date is no longer available. Please choose a different date.")
+          setSaving(false)
+          return
+        }
+        
+        // Validate that end_date >= start_date
+        if (endDateStr < startDateStr) {
+          toast.error("End date must be after or equal to start date.")
+          setSaving(false)
+          return
+        }
+      }
+      
+      // CRITICAL: If end_date equals start_date, treat as single-day booking
+      // This matches backend validation logic
+      const isEffectivelySingleDay = !newEndDate || dateToBangkokDateString(newEndDate) === startDateStr
+      
+      // Validate time range for single-day bookings (including when end_date equals start_date)
+      if (isEffectivelySingleDay) {
+        const effectiveStartTime = newStartTime || selectedBooking.start_time || null
+        const effectiveEndTime = newEndTime || selectedBooking.end_time || null
+        
+        if (effectiveStartTime && effectiveEndTime) {
+          const parseTime = (timeStr: string): { hour24: number; minutes: number } | null => {
+            const match = timeStr.trim().match(/^(\d{1,2}):(\d{2})$/)
+            if (match) {
+              const hour24 = parseInt(match[1], 10)
+              const minutes = parseInt(match[2] || '00', 10)
+              if (hour24 >= 0 && hour24 <= 23 && minutes >= 0 && minutes <= 59) {
+                return { hour24, minutes }
+              }
+            }
+            return null
+          }
+          
+          const startParsed = parseTime(effectiveStartTime)
+          const endParsed = parseTime(effectiveEndTime)
+          
+          if (startParsed && endParsed) {
+            const startTotal = startParsed.hour24 * 60 + startParsed.minutes
+            const endTotal = endParsed.hour24 * 60 + endParsed.minutes
+            
+            if (endTotal <= startTotal) {
+              toast.error("For single-day bookings, end time must be after start time.")
+              setSaving(false)
+              return
+            }
+          }
+        }
+      }
+      
+      // CRITICAL: Validate that end timestamp > start timestamp (accounts for dates + times)
+      // Use createBangkokTimestamp to ensure correct timezone handling
+      // Pattern: createBangkokTimestamp(dateString, null) then calculateStartTimestamp(timestamp, timeString)
+      const { createBangkokTimestamp: createBangkokTimestampClient } = await import("@/lib/timezone-client")
+      const startDateTimestamp = createBangkokTimestampClient(startDateStr, null)
       const startTimestamp = calculateStartTimestamp(
-        Math.floor(newStartDate.getTime() / 1000),
+        startDateTimestamp,
         newStartTime || selectedBooking.start_time || null
       )
+      
+      let endTimestamp: number
+      if (newEndDate) {
+        const endDateStr = dateToBangkokDateString(newEndDate)
+        const endDateTimestamp = createBangkokTimestampClient(endDateStr, null)
+        const effectiveEndTime = newEndTime || selectedBooking.end_time || null
+        
+        // For multi-day bookings, calculate end timestamp from end_date + end_time
+        if (effectiveEndTime) {
+          const parseTime = (timeStr: string): { hour24: number; minutes: number } | null => {
+            const match = timeStr.trim().match(/^(\d{1,2}):(\d{2})$/)
+            if (match) {
+              const hour24 = parseInt(match[1], 10)
+              const minutes = parseInt(match[2] || '00', 10)
+              if (hour24 >= 0 && hour24 <= 23 && minutes >= 0 && minutes <= 59) {
+                return { hour24, minutes }
+              }
+            }
+            return null
+          }
+          
+          const endParsed = parseTime(effectiveEndTime)
+          if (endParsed) {
+            try {
+              const { TZDate } = await import('@date-fns/tz')
+              const BANGKOK_TIMEZONE = 'Asia/Bangkok'
+              const utcDate = new Date(endDateTimestamp * 1000)
+              const tzDate = new TZDate(utcDate.getTime(), BANGKOK_TIMEZONE)
+              const year = tzDate.getFullYear()
+              const month = tzDate.getMonth()
+              const day = tzDate.getDate()
+              const tzDateWithTime = new TZDate(year, month, day, endParsed.hour24, endParsed.minutes, 0, BANGKOK_TIMEZONE)
+              endTimestamp = Math.floor(tzDateWithTime.getTime() / 1000)
+            } catch (error) {
+              endTimestamp = endDateTimestamp
+            }
+          } else {
+            endTimestamp = endDateTimestamp
+          }
+        } else {
+          endTimestamp = endDateTimestamp
+        }
+      } else {
+        // Single-day booking: calculate end timestamp from start_date + end_time
+        const effectiveEndTime = newEndTime || selectedBooking.end_time || null
+        endTimestamp = calculateStartTimestamp(
+          startDateTimestamp,
+          effectiveEndTime || null
+        )
+      }
+      
+      // Final validation: end timestamp must be > start timestamp
+      if (endTimestamp <= startTimestamp) {
+        toast.error("The booking end date and time must be after the start date and time.")
+        setSaving(false)
+        return
+      }
+      
+      // Check for past date warning
+      const bangkokNow = getBangkokTime()
       const isPast = startTimestamp < bangkokNow
       
       if (isPast && !showPastDateWarning) {
@@ -697,9 +892,15 @@ export default function BookingsPage() {
         return
       }
 
+      // Simplified end date handling: if toggle is "single", send null to clear end_date
+      // If toggle is "multiple" and newEndDate is set, send it; otherwise send undefined to keep existing
+      const endDateValue = dateRangeToggle === "single" 
+        ? null 
+        : (newEndDate ? dateToBangkokDateString(newEndDate) : undefined)
+      
       dateChangePayload = {
         newStartDate: dateToBangkokDateString(newStartDate),
-        newEndDate: newEndDate ? dateToBangkokDateString(newEndDate) : (selectedBooking.end_date ? null : undefined),
+        newEndDate: endDateValue,
         newStartTime: newStartTime || selectedBooking.start_time || undefined,
         newEndTime: newEndTime || selectedBooking.end_time || undefined,
       }
@@ -750,7 +951,25 @@ export default function BookingsPage() {
           cancel: "cancelled",
           change_date: "date changed"
         }
-        toast.success(`Booking ${actionLabels[selectedAction || ""] || "updated"} successfully. Email notification sent.`)
+        const actionLabel = actionLabels[selectedAction || ""] || "updated"
+        const emailMessage = selectedAction === "change_date" 
+          ? "Email notification sent to user about date change."
+          : "Email notification sent."
+        toast.success(`Booking ${actionLabel} successfully. ${emailMessage}`)
+        
+        // Reset date change state
+        setNewStartDate(null)
+        setNewEndDate(null)
+        setNewStartTime("")
+        setNewEndTime("")
+        setShowPastDateWarning(false)
+        setDateRangeToggle("single")
+        
+        // Refresh unavailable dates if date was changed (to reflect new blocked dates)
+        if (selectedAction === "change_date" && selectedBooking?.id) {
+          fetchUnavailableDatesForDateChange(selectedBooking.id)
+        }
+        
         setStatusDialogOpen(false)
         setSelectedAction(null)
         setSelectedStatusInForm("")
@@ -2045,8 +2264,9 @@ export default function BookingsPage() {
                     <div>
                       <Label>Date Range</Label>
                       <Select
-                        value={selectedBooking.end_date ? "multiple" : "single"}
-                        onValueChange={(value) => {
+                        value={dateRangeToggle}
+                        onValueChange={(value: "single" | "multiple") => {
+                          setDateRangeToggle(value)
                           if (value === "single") {
                             setNewEndDate(null)
                           } else if (!newEndDate && selectedBooking.end_date) {
@@ -2085,16 +2305,43 @@ export default function BookingsPage() {
                         <PopoverContent className="w-auto p-0" align="start">
                           <SimpleCalendar
                             selected={newStartDate || undefined}
+                            month={calendarMonth}
+                            onMonthChange={(date) => {
+                              setCalendarMonth(date)
+                              // Refresh unavailable dates when month changes
+                              if (selectedBooking?.id) {
+                                fetchUnavailableDatesForDateChange(selectedBooking.id)
+                              }
+                            }}
                             onSelect={(date) => {
                               setNewStartDate(date || null)
-                              // If end date is before new start date, clear it
-                              if (newEndDate && date && date > newEndDate) {
-                                setNewEndDate(null)
+                              // If end date is before or equal to new start date, clear it
+                              // Use Bangkok timezone date strings for proper date-only comparison
+                              if (newEndDate && date && dateRangeToggle === "multiple") {
+                                const startDateStr = dateToBangkokDateString(date)
+                                const endDateStr = dateToBangkokDateString(newEndDate)
+                                // Clear end date if it's before or equal to start date
+                                if (endDateStr <= startDateStr) {
+                                  setNewEndDate(null)
+                                }
                               }
                             }}
                             disabled={(date) => {
-                              // Allow past dates (for historical corrections) but show warning
-                              return false
+                              // Check if date is unavailable (has confirmed booking)
+                              // Convert date to Bangkok timezone for proper comparison
+                              const dateStr = dateToBangkokDateString(date)
+                              const isUnavailable = unavailableDatesForDateChange.has(dateStr)
+                              if (isUnavailable) {
+                                console.log(`[Admin] Start date ${dateStr} is unavailable (blocked by confirmed booking)`)
+                              }
+                              // CRITICAL: In multiple day mode, prevent selecting start date that equals end date
+                              if (dateRangeToggle === "multiple" && newEndDate) {
+                                const endDateStr = dateToBangkokDateString(newEndDate)
+                                if (dateStr === endDateStr) {
+                                  return true // Disable start date if it equals end date
+                                }
+                              }
+                              return isUnavailable
                             }}
                           />
                         </PopoverContent>
@@ -2102,7 +2349,7 @@ export default function BookingsPage() {
                     </div>
 
                     {/* End Date (for multiple days) */}
-                    {selectedBooking.end_date && (
+                    {dateRangeToggle === "multiple" && (
                       <div>
                         <Label htmlFor="new_end_date">New End Date</Label>
                         <Popover>
@@ -2121,14 +2368,31 @@ export default function BookingsPage() {
                           <PopoverContent className="w-auto p-0" align="start">
                             <SimpleCalendar
                               selected={newEndDate || undefined}
+                              month={calendarMonth}
+                              onMonthChange={(date) => {
+                                setCalendarMonth(date)
+                                // Refresh unavailable dates when month changes
+                                if (selectedBooking?.id) {
+                                  fetchUnavailableDatesForDateChange(selectedBooking.id)
+                                }
+                              }}
                               onSelect={(date) => {
                                 setNewEndDate(date || null)
                               }}
                               disabled={(date) => {
                                 if (!newStartDate) return true
-                                // End date must be after start date
-                                if (date && date <= newStartDate) return true
-                                return false
+                                // CRITICAL: Use Bangkok timezone date strings for proper date-only comparison
+                                // This prevents selecting the same date for start and end in multiple day mode
+                                const startDateStr = dateToBangkokDateString(newStartDate)
+                                const dateStr = dateToBangkokDateString(date)
+                                // End date must be after start date (not equal, not before)
+                                if (dateStr <= startDateStr) return true
+                                // Check if date is unavailable (has confirmed booking)
+                                const isUnavailable = unavailableDatesForDateChange.has(dateStr)
+                                if (isUnavailable) {
+                                  console.log(`[Admin] End date ${dateStr} is unavailable (blocked by confirmed booking)`)
+                                }
+                                return isUnavailable
                               }}
                             />
                           </PopoverContent>

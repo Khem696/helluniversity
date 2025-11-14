@@ -44,6 +44,16 @@ export function isValidStatusTransition(
     return { valid: true }
   }
 
+  // CRITICAL: Finished bookings are immutable (cannot be changed)
+  // This prevents accidental modifications to completed bookings
+  if (fromStatus === "finished") {
+    return {
+      valid: false,
+      reason: `Cannot modify finished bookings. Finished bookings are immutable and cannot be changed.`,
+    }
+  }
+
+  // Check if transition is allowed by the transition matrix
   const allowedTransitions = VALID_STATUS_TRANSITIONS[fromStatus] || []
   
   if (!allowedTransitions.includes(toStatus)) {

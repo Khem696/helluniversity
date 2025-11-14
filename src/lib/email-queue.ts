@@ -84,11 +84,51 @@ export async function addEmailToQueue(
 }
 
 /**
+ * Cleanup stuck emails in 'processing' state (older than 30 minutes)
+ * This handles cases where an email was marked as processing but the process crashed/timed out
+ */
+export async function cleanupStuckEmails(): Promise<number> {
+  const db = getTursoClient()
+  const now = Math.floor(Date.now() / 1000)
+  const STUCK_THRESHOLD = 30 * 60 // 30 minutes in seconds
+  
+  // Reset emails stuck in 'processing' state for more than 30 minutes
+  const result = await db.execute({
+    sql: `UPDATE email_queue
+          SET status = 'pending', updated_at = ?
+          WHERE status = 'processing' 
+            AND updated_at < ?
+            AND retry_count < max_retries`,
+    args: [now, now - STUCK_THRESHOLD],
+  })
+  
+  const resetCount = result.rowsAffected || 0
+  if (resetCount > 0) {
+    console.log(`[email-queue] Reset ${resetCount} stuck email(s) from 'processing' to 'pending'`)
+    // Track monitoring metric
+    try {
+      const { trackStuckItemReset } = await import('./monitoring')
+      trackStuckItemReset('email', resetCount)
+    } catch {
+      // Ignore monitoring errors
+    }
+  }
+  
+  return resetCount
+}
+
+/**
  * Get pending emails ready for retry
  */
 export async function getPendingEmails(limit: number = 10): Promise<EmailQueueItem[]> {
   const db = getTursoClient()
   const now = Math.floor(Date.now() / 1000)
+
+  // Cleanup stuck emails before fetching (non-blocking)
+  cleanupStuckEmails().catch(err => {
+    console.error('[email-queue] Failed to cleanup stuck emails:', err)
+    // Don't throw - cleanup failure shouldn't block email processing
+  })
 
   const result = await db.execute({
     sql: `
@@ -112,6 +152,12 @@ export async function getPendingEmails(limit: number = 10): Promise<EmailQueueIt
 export async function getPendingCriticalStatusEmails(limit: number = 20): Promise<EmailQueueItem[]> {
   const db = getTursoClient()
   const now = Math.floor(Date.now() / 1000)
+
+  // Cleanup stuck emails before fetching (non-blocking)
+  cleanupStuckEmails().catch(err => {
+    console.error('[email-queue] Failed to cleanup stuck emails:', err)
+    // Don't throw - cleanup failure shouldn't block email processing
+  })
 
   // Get all pending status_change emails
   // Optimized: Uses idx_email_queue_critical (status, email_type, created_at) index
@@ -187,20 +233,27 @@ export async function updateEmailQueueStatus(
 }
 
 /**
- * Mark email as processing
+ * Mark email as processing (atomic - prevents concurrent processing)
+ * Returns true if successfully claimed, false if already claimed by another process
  */
-export async function markEmailProcessing(id: string): Promise<void> {
+export async function markEmailProcessing(id: string): Promise<boolean> {
   const db = getTursoClient()
   const now = Math.floor(Date.now() / 1000)
 
-  await db.execute({
+  // ATOMIC STATUS UPDATE: Only update if status is 'pending'
+  // This prevents multiple cron jobs from processing the same email
+  const result = await db.execute({
     sql: `
       UPDATE email_queue
       SET status = 'processing', updated_at = ?
-      WHERE id = ?
+      WHERE id = ? AND status = 'pending'
     `,
     args: [now, id],
   })
+
+  // If rowsAffected > 0, we successfully claimed the email
+  // If rowsAffected = 0, another process already claimed it
+  return (result.rowsAffected || 0) > 0
 }
 
 /**
@@ -263,6 +316,30 @@ export async function scheduleNextRetry(id: string, errorMessage: string): Promi
 
   if (status === "failed") {
     console.error(`Email queue item ${id} failed after ${retryCount} retries`)
+    
+    // Notify admin when email fails after max retries (non-blocking)
+    // This ensures admins are aware of failed notifications
+    try {
+      // Fetch email details from queue for better notification
+      const emailDetails = await db.execute({
+        sql: `SELECT email_type, recipient_email, subject FROM email_queue WHERE id = ?`,
+        args: [id],
+      })
+      
+      const emailData = emailDetails.rows[0] as any
+      const { sendAdminEmailFailureNotification } = await import('./email')
+      await sendAdminEmailFailureNotification({
+        emailId: id,
+        emailType: emailData?.email_type || 'unknown',
+        recipientEmail: emailData?.recipient_email || 'unknown',
+        subject: emailData?.subject || 'Unknown',
+        retryCount,
+        errorMessage,
+      })
+    } catch (notificationError) {
+      // Don't fail if admin notification fails - just log it
+      console.error(`Failed to send admin notification for failed email ${id}:`, notificationError)
+    }
   } else {
     console.log(`Email queue item ${id} scheduled for retry #${retryCount} at ${new Date(nextRetryAt * 1000).toISOString()}`)
   }
@@ -287,10 +364,16 @@ export async function processEmailQueue(limit: number = 10): Promise<{
 
   for (const email of pendingEmails) {
     try {
-      results.processed++
+      // ATOMIC CLAIM: Try to claim email atomically
+      // If another process already claimed it, skip this email
+      const claimed = await markEmailProcessing(email.id)
+      if (!claimed) {
+        // Another process already claimed this email, skip it
+        console.log(`Email ${email.id} already claimed by another process, skipping`)
+        continue
+      }
       
-      // Mark as processing
-      await markEmailProcessing(email.id)
+      results.processed++
 
       // Send email
       const transporter = await getTransporter()
@@ -343,6 +426,22 @@ export async function processEmailQueue(limit: number = 10): Promise<{
       
       if (email.retryCount + 1 >= email.maxRetries) {
         results.failed++
+        
+        // Notify admin when email fails after max retries (non-blocking)
+        try {
+          const { sendAdminEmailFailureNotification } = await import('./email')
+          await sendAdminEmailFailureNotification({
+            emailId: email.id,
+            emailType: email.emailType,
+            recipientEmail: email.recipientEmail,
+            subject: email.subject,
+            retryCount: email.retryCount + 1,
+            errorMessage,
+          })
+        } catch (notificationError) {
+          // Don't fail if admin notification fails - just log it
+          console.error(`Failed to send admin notification for failed email ${email.id}:`, notificationError)
+        }
       }
       
       console.error(`Email queue item ${email.id} failed: ${errorMessage}`)
@@ -374,10 +473,16 @@ export async function processCriticalStatusEmails(limit: number = 20): Promise<{
 
   for (const email of pendingEmails) {
     try {
-      results.processed++
+      // ATOMIC CLAIM: Try to claim email atomically
+      // If another process already claimed it, skip this email
+      const claimed = await markEmailProcessing(email.id)
+      if (!claimed) {
+        // Another process already claimed this email, skip it
+        console.log(`Email ${email.id} already claimed by another process, skipping`)
+        continue
+      }
       
-      // Mark as processing
-      await markEmailProcessing(email.id)
+      results.processed++
 
       // Send email
       const transporter = await getTransporter()

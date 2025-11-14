@@ -2579,3 +2579,188 @@ Hell University Reservation System
   }
 }
 
+/**
+ * Send admin notification when an email fails after max retries
+ * This ensures admins are aware of failed email notifications
+ */
+export async function sendAdminEmailFailureNotification(data: {
+  emailId: string
+  emailType: string
+  recipientEmail: string
+  subject: string
+  retryCount: number
+  errorMessage: string
+}): Promise<void> {
+  const recipientEmail = process.env.RESERVATION_EMAIL || process.env.SMTP_USER
+
+  if (!recipientEmail) {
+    console.error('RESERVATION_EMAIL or SMTP_USER not configured - cannot send email failure notification')
+    return // Don't throw - this is a monitoring function
+  }
+
+  // Get email queue item details if available
+  let emailDetails = ''
+  try {
+    const { getTursoClient } = await import('./turso')
+    const db = getTursoClient()
+    const result = await db.execute({
+      sql: `SELECT * FROM email_queue WHERE id = ?`,
+      args: [data.emailId],
+    })
+    
+    if (result.rows.length > 0) {
+      const emailItem = result.rows[0] as any
+      emailDetails = `
+        <tr>
+          <td style="color: #6b7280; font-size: 14px; width: 150px;">Email Type:</td>
+          <td style="color: #111827; font-size: 14px; font-weight: 500;">${sanitizeHTML(emailItem.email_type || data.emailType)}</td>
+        </tr>
+        <tr>
+          <td style="color: #6b7280; font-size: 14px;">Recipient:</td>
+          <td style="color: #111827; font-size: 14px; font-weight: 500;">${sanitizeHTML(emailItem.recipient_email || data.recipientEmail)}</td>
+        </tr>
+        <tr>
+          <td style="color: #6b7280; font-size: 14px;">Subject:</td>
+          <td style="color: #111827; font-size: 14px; font-weight: 500;">${sanitizeHTML(emailItem.subject || data.subject)}</td>
+        </tr>
+        <tr>
+          <td style="color: #6b7280; font-size: 14px;">Retry Count:</td>
+          <td style="color: #111827; font-size: 14px; font-weight: 500;">${emailItem.retry_count || data.retryCount} / ${emailItem.max_retries || 5}</td>
+        </tr>
+        <tr>
+          <td style="color: #6b7280; font-size: 14px;">Failed At:</td>
+          <td style="color: #111827; font-size: 14px; font-weight: 500;">${new Date((emailItem.updated_at || Date.now() / 1000) * 1000).toLocaleString('en-US', { timeZone: 'Asia/Bangkok' })} GMT+7</td>
+        </tr>
+      `
+    }
+  } catch (error) {
+    // If we can't fetch details, use provided data
+    emailDetails = `
+      <tr>
+        <td style="color: #6b7280; font-size: 14px; width: 150px;">Email Type:</td>
+        <td style="color: #111827; font-size: 14px; font-weight: 500;">${sanitizeHTML(data.emailType)}</td>
+      </tr>
+      <tr>
+        <td style="color: #6b7280; font-size: 14px;">Recipient:</td>
+        <td style="color: #111827; font-size: 14px; font-weight: 500;">${sanitizeHTML(data.recipientEmail)}</td>
+      </tr>
+      <tr>
+        <td style="color: #6b7280; font-size: 14px;">Subject:</td>
+        <td style="color: #111827; font-size: 14px; font-weight: 500;">${sanitizeHTML(data.subject)}</td>
+      </tr>
+      <tr>
+        <td style="color: #6b7280; font-size: 14px;">Retry Count:</td>
+        <td style="color: #111827; font-size: 14px; font-weight: 500;">${data.retryCount}</td>
+      </tr>
+    `
+  }
+
+  const htmlContent = `
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Email Delivery Failed</title>
+</head>
+<body style="margin: 0; padding: 0; font-family: Arial, sans-serif; background-color: #f5f5f5;">
+  <table width="100%" cellpadding="0" cellspacing="0" style="background-color: #f5f5f5; padding: 20px;">
+    <tr>
+      <td align="center">
+        <table width="600" cellpadding="0" cellspacing="0" style="background-color: #ffffff; border-radius: 8px; overflow: hidden; box-shadow: 0 2px 4px rgba(0,0,0,0.1);">
+          <!-- Header -->
+          <tr>
+            <td style="background-color: #ef4444; padding: 30px; text-align: center;">
+              <h1 style="margin: 0; color: #ffffff; font-size: 24px; font-weight: bold;">
+                ⚠️ Email Delivery Failed
+              </h1>
+            </td>
+          </tr>
+          
+          <!-- Content -->
+          <tr>
+            <td style="padding: 30px;">
+              <p style="margin: 0 0 20px 0; color: #333333; font-size: 16px; line-height: 1.6;">
+                An email notification failed to deliver after multiple retry attempts. The user may not have received their notification.
+              </p>
+              
+              <div style="background-color: #fef2f2; border-left: 4px solid #ef4444; padding: 20px; margin: 20px 0; border-radius: 4px;">
+                <h3 style="margin: 0 0 15px 0; color: #111827; font-size: 18px;">Failed Email Details</h3>
+                <table width="100%" cellpadding="5" cellspacing="0">
+                  <tr>
+                    <td style="color: #6b7280; font-size: 14px; width: 150px;">Email ID:</td>
+                    <td style="color: #111827; font-size: 14px; font-weight: 500;">${sanitizeHTML(data.emailId)}</td>
+                  </tr>
+                  ${emailDetails}
+                  <tr>
+                    <td style="color: #6b7280; font-size: 14px; vertical-align: top;">Error:</td>
+                    <td style="color: #dc2626; font-size: 14px; font-weight: 500;">${sanitizeHTML(data.errorMessage)}</td>
+                  </tr>
+                </table>
+              </div>
+              
+              <div style="background-color: #fffbeb; border-left: 4px solid #f59e0b; padding: 20px; margin: 20px 0; border-radius: 4px;">
+                <p style="margin: 0; color: #92400e; font-size: 14px; line-height: 1.6;">
+                  <strong>Action Required:</strong> Please check the email queue in the admin panel and consider manually sending the notification to the user if it's critical.
+                </p>
+              </div>
+              
+              <p style="margin: 30px 0 0 0; color: #6b7280; font-size: 14px; line-height: 1.6;">
+                This is an automated notification from the email queue system.
+              </p>
+              
+              <p style="margin: 20px 0 0 0; color: #6b7280; font-size: 14px; line-height: 1.6;">
+                Best regards,<br>
+                <strong>Hell University Reservation System</strong>
+              </p>
+            </td>
+          </tr>
+        </table>
+      </td>
+    </tr>
+  </table>
+</body>
+</html>
+  `.trim()
+
+  const textContent = `Email Delivery Failed
+
+An email notification failed to deliver after multiple retry attempts. The user may not have received their notification.
+
+FAILED EMAIL DETAILS:
+Email ID: ${data.emailId}
+Email Type: ${data.emailType}
+Recipient: ${data.recipientEmail}
+Subject: ${data.subject}
+Retry Count: ${data.retryCount}
+Error: ${data.errorMessage}
+
+ACTION REQUIRED: Please check the email queue in the admin panel and consider manually sending the notification to the user if it's critical.
+
+This is an automated notification from the email queue system.
+
+Best regards,
+Hell University Reservation System
+  `.trim()
+
+  const mailOptions: nodemailer.SendMailOptions = {
+    from: `"Hell University Reservation System" <${process.env.SMTP_USER}>`,
+    to: recipientEmail,
+    subject: `⚠️ Email Delivery Failed [ID: ${data.emailId.substring(0, 8)}...] - ${data.emailType}`,
+    text: textContent,
+    html: htmlContent,
+  }
+
+  try {
+    const emailTransporter = await getTransporter()
+    const result = await emailTransporter.sendMail(mailOptions)
+    
+    console.log('Admin email failure notification sent:', result.messageId)
+  } catch (error) {
+    // Don't throw - this is a monitoring function and shouldn't break the system
+    // Just log the error
+    console.error('Failed to send admin email failure notification:', error)
+    // Don't queue this notification - it would create an infinite loop
+  }
+}
+

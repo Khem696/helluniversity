@@ -6,15 +6,21 @@
 
 import { getTursoClient } from "./turso"
 import { getTransporter } from "./email"
+import { getBangkokDateString, createBangkokTimestamp } from "./timezone"
 
 /**
  * Send daily digest email to admin with booking statistics
  */
 export async function sendDailyBookingDigest(): Promise<void> {
   const db = getTursoClient()
-  const now = Math.floor(Date.now() / 1000)
-  const oneDayAgo = now - (24 * 60 * 60)
-  const oneWeekAgo = now - (7 * 24 * 60 * 60)
+  
+  // Use Bangkok timezone day boundaries for "today" and "this week" calculations
+  // This ensures "new_today" and "new_week" represent calendar days in Bangkok timezone,
+  // not just "last 24 hours" or "last 7 days" in UTC
+  const todayBangkok = getBangkokDateString() // "2024-12-19"
+  const todayStart = createBangkokTimestamp(todayBangkok, "00:00") // Start of today in Bangkok (UTC timestamp)
+  const oneDayAgo = todayStart // Start of today in Bangkok timezone
+  const oneWeekAgo = todayStart - (7 * 24 * 60 * 60) // 7 days ago from start of today
 
   // Get booking statistics
   const stats = await db.execute({
@@ -216,9 +222,13 @@ Hell University Reservation System
  */
 export async function sendWeeklyBookingDigest(): Promise<void> {
   const db = getTursoClient()
-  const now = Math.floor(Date.now() / 1000)
-  const oneWeekAgo = now - (7 * 24 * 60 * 60)
-  const twoWeeksAgo = now - (14 * 24 * 60 * 60)
+  
+  // Use Bangkok timezone day boundaries for "this week" and "last week" calculations
+  // This ensures "new_week" and "new_last_week" represent calendar weeks in Bangkok timezone
+  const todayBangkok = getBangkokDateString() // "2024-12-19"
+  const todayStart = createBangkokTimestamp(todayBangkok, "00:00") // Start of today in Bangkok (UTC timestamp)
+  const oneWeekAgo = todayStart - (7 * 24 * 60 * 60) // 7 days ago from start of today
+  const twoWeeksAgo = todayStart - (14 * 24 * 60 * 60) // 14 days ago from start of today
 
   // Get booking statistics
   const stats = await db.execute({
@@ -257,8 +267,9 @@ export async function sendWeeklyBookingDigest(): Promise<void> {
     throw new Error('RESERVATION_EMAIL or SMTP_USER not configured')
   }
 
-  const weekStart = new Date(now * 1000 - (7 * 24 * 60 * 60 * 1000))
-  const weekEnd = new Date(now * 1000)
+  // Use Bangkok timezone for date formatting in email
+  const weekStart = new Date(oneWeekAgo * 1000)
+  const weekEnd = new Date(todayStart * 1000)
 
   const htmlContent = `
 <!DOCTYPE html>

@@ -107,6 +107,7 @@ export function Header() {
     endDate: number
   }>>([])
   const [bookingsEnabled, setBookingsEnabled] = useState<boolean>(true)
+  const [calendarMonth, setCalendarMonth] = useState<Date>(new Date())
 
   // Ensure component is mounted (client-side only)
   useEffect(() => {
@@ -175,6 +176,25 @@ export function Header() {
       return () => clearInterval(refreshInterval)
     }
   }, [bookingOpen, mounted])
+
+  // Function to refresh unavailable dates (called on month navigation)
+  const refreshUnavailableDates = () => {
+    if (bookingOpen && mounted) {
+      fetch("/api/booking/availability")
+        .then((res) => res.json())
+        .then((json) => {
+          const unavailableDatesArray = json.data?.unavailableDates || json.unavailableDates || []
+          if (json.success) {
+            const dates = new Set<string>(unavailableDatesArray)
+            setUnavailableDates(dates)
+            console.log(`[Header] Unavailable dates refreshed on month change: ${unavailableDatesArray.length} dates`)
+          }
+        })
+        .catch((err) => {
+          console.error("Failed to refresh unavailable dates:", err)
+        })
+    }
+  }
 
   // Load form data from localStorage on component mount
   useEffect(() => {
@@ -1076,20 +1096,28 @@ export function Header() {
                               <PopoverContent className="w-auto p-0" align="start">
                                 <SimpleCalendar
                                   selected={startDate}
+                                  month={calendarMonth}
+                                  onMonthChange={(date) => {
+                                    setCalendarMonth(date)
+                                    // Refresh unavailable dates when month changes
+                                    refreshUnavailableDates()
+                                  }}
                                   onSelect={handleStartDateChange}
                                   disabled={(date) => {
                                     // Disable past dates and today (users cannot book current date)
-                                    if (date < new Date()) return true
-                                    // Check if date is today in Bangkok timezone
+                                    // Use Bangkok timezone for date comparison to ensure consistent behavior
+                                    // regardless of user's browser timezone
                                     const todayStr = dateToBangkokDateString(new Date())
                                     const dateStr = dateToBangkokDateString(date)
-                                    if (todayStr === dateStr) return true
+                                    if (dateStr < todayStr) return true  // Disable past dates (Bangkok timezone)
+                                    if (todayStr === dateStr) return true  // Disable today
                                     if (!isRecaptchaVerified) return true
                                     if (process.env.NEXT_PUBLIC_USE_STATIC_IMAGES === '1') return true
-                                    // Check if date is unavailable (has checked-in booking or postponed booking with deposit_verified_at)
+                                    // Check if date is unavailable (has confirmed booking)
+                                    // Convert date to Bangkok timezone for proper comparison
                                     const isUnavailable = unavailableDates.has(dateStr)
                                     if (isUnavailable) {
-                                      console.log(`[Header] Date ${dateStr} is unavailable (blocked by booking)`)
+                                      console.log(`[Header] Date ${dateStr} is unavailable (blocked by confirmed booking)`)
                                     }
                                     return isUnavailable
                                   }}
@@ -1146,23 +1174,31 @@ export function Header() {
                                 <PopoverContent className="w-auto p-0" align="start">
                                   <SimpleCalendar
                                     selected={endDate}
+                                    month={calendarMonth}
+                                    onMonthChange={(date) => {
+                                      setCalendarMonth(date)
+                                      // Refresh unavailable dates when month changes
+                                      refreshUnavailableDates()
+                                    }}
                                     onSelect={handleEndDateChange}
                                     disabled={(date) => {
                                       if (!isRecaptchaVerified) return true
                                       if (process.env.NEXT_PUBLIC_USE_STATIC_IMAGES === '1') return true
-                                      if (date < new Date()) return true
+                                      // Use Bangkok timezone for date comparison to ensure consistent behavior
+                                      // regardless of user's browser timezone
+                                      const todayStr = dateToBangkokDateString(new Date())
+                                      const dateStr = dateToBangkokDateString(date)
+                                      if (dateStr < todayStr) return true  // Disable past dates (Bangkok timezone)
                                       if (startDate) {
                                         const startDateStr = dateToBangkokDateString(startDate)
-                                        const dateStr = dateToBangkokDateString(date)
                                         // Disable if date is before start date OR same as start date
-                                        if (date < startDate || startDateStr === dateStr) return true
+                                        if (dateStr < startDateStr || startDateStr === dateStr) return true
                                       }
-                                      // Check if date is unavailable (has checked-in booking or postponed booking with deposit_verified_at)
+                                      // Check if date is unavailable (has confirmed booking)
                                       // Convert date to Bangkok timezone for proper comparison
-                                      const dateStr = dateToBangkokDateString(date)
                                       const isUnavailable = unavailableDates.has(dateStr)
                                       if (isUnavailable) {
-                                        console.log(`[Header] End date ${dateStr} is unavailable (blocked by booking)`)
+                                        console.log(`[Header] End date ${dateStr} is unavailable (blocked by confirmed booking)`)
                                       }
                                       return isUnavailable
                                     }}

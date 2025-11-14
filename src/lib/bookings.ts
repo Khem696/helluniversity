@@ -82,6 +82,43 @@ function generateBookingReference(): string {
 }
 
 /**
+ * Generate a unique booking reference number with retry logic for collision handling
+ * Retries up to 3 times if unique constraint violation occurs
+ */
+async function generateUniqueBookingReference(
+  db: ReturnType<typeof getTursoClient> | Awaited<ReturnType<ReturnType<typeof getTursoClient>['transaction']>>,
+  maxRetries: number = 3
+): Promise<string> {
+  for (let attempt = 0; attempt < maxRetries; attempt++) {
+    const reference = generateBookingReference()
+    
+    // Check if reference already exists in database
+    const checkResult = await db.execute({
+      sql: `SELECT id FROM bookings WHERE reference_number = ? LIMIT 1`,
+      args: [reference],
+    })
+    
+    if (checkResult.rows.length === 0) {
+      // Reference is unique, return it
+      return reference
+    }
+    
+    // Reference collision detected (rare but possible with timestamp-based generation)
+    console.warn(`Reference number collision detected on attempt ${attempt + 1}/${maxRetries}, generating new reference...`)
+    // Track monitoring metric
+    try {
+      const { trackCollisionRetry } = await import('./monitoring')
+      trackCollisionRetry('reference', attempt + 1)
+    } catch {
+      // Ignore monitoring errors
+    }
+  }
+  
+  // All retries exhausted (should be very rare)
+  throw new Error(`Failed to generate unique booking reference after ${maxRetries} attempts`)
+}
+
+/**
  * Create a new booking
  * @param data - Booking data
  * @param referenceNumber - Optional reference number (if not provided, will be generated)
@@ -89,7 +126,30 @@ function generateBookingReference(): string {
 export async function createBooking(data: BookingData, referenceNumber?: string): Promise<Booking> {
   const db = getTursoClient()
   const bookingId = randomUUID()
-  const finalReferenceNumber = referenceNumber || generateBookingReference()
+  
+  // CRITICAL: Ensure reference number is unique
+  // If provided, check for uniqueness; if not provided or collision, generate unique one
+  let finalReferenceNumber: string
+  if (referenceNumber) {
+    // Check if provided reference number is unique
+    const checkResult = await db.execute({
+      sql: `SELECT id FROM bookings WHERE reference_number = ? LIMIT 1`,
+      args: [referenceNumber],
+    })
+    
+    if (checkResult.rows.length > 0) {
+      // Provided reference number collides - generate unique one
+      console.warn(`Provided reference number ${referenceNumber} collides, generating unique reference`)
+      finalReferenceNumber = await generateUniqueBookingReference(db)
+    } else {
+      // Provided reference number is unique
+      finalReferenceNumber = referenceNumber
+    }
+  } else {
+    // No reference provided - generate unique one
+    finalReferenceNumber = await generateUniqueBookingReference(db)
+  }
+  
   const now = Math.floor(Date.now() / 1000)
 
   // Convert dates to Unix timestamps using Bangkok timezone
@@ -150,7 +210,7 @@ export async function createBooking(data: BookingData, referenceNumber?: string)
   const booking = formatBooking(result.rows[0] as any)
   
   // Invalidate list caches when new booking is created
-  invalidateCache('bookings:list')
+  await invalidateCache('bookings:list')
   
   return booking
 }
@@ -480,13 +540,17 @@ async function calculateReservationEndTimestamp(
 ): Promise<number | null> {
   let endTimestamp: number | null = null
 
+  // CRITICAL: If end_date equals start_date, treat as single-day booking
+  // This matches the validation logic in all API routes (isEffectivelySingleDay)
+  const isEffectivelySingleDay = !endDate || endDate === startDate
+
   // Determine which date to use
-  if (endDate) {
+  if (isEffectivelySingleDay) {
+    // Single day (including when end_date === start_date): use start_date
+    endTimestamp = startDate
+  } else {
     // Multiple day: use end_date
     endTimestamp = endDate
-  } else {
-    // Single day: use start_date
-    endTimestamp = startDate
   }
 
   // Parse end_time if available
@@ -539,13 +603,20 @@ export async function autoUpdateFinishedBookings(): Promise<{
   // Optimized: Uses idx_bookings_status_start_date for status filtering
   // Note: SQLite can use the index for IN clause with multiple statuses
   // Include deposit_evidence_url for cleanup when cancelling/finishing bookings
+  // CRITICAL: Skip bookings updated in last 5 minutes to avoid conflicts with admin actions
+  // This gives admin actions time to complete before cron processes the booking
+  const SKIP_RECENTLY_UPDATED_SECONDS = 5 * 60 // 5 minutes
+  const skipThreshold = now - SKIP_RECENTLY_UPDATED_SECONDS
+  
   const result = await db.execute({
     sql: `
-      SELECT id, start_date, end_date, start_time, end_time, status, deposit_evidence_url
+      SELECT id, start_date, end_date, start_time, end_time, status, deposit_evidence_url, updated_at
       FROM bookings
       WHERE status IN ('pending', 'pending_deposit', 'paid_deposit', 'confirmed')
+        AND (updated_at IS NULL OR updated_at < ?)
       ORDER BY start_date ASC
     `,
+    args: [skipThreshold],
   })
 
   let finishedCount = 0
@@ -871,6 +942,43 @@ export function generateResponseToken(): string {
 }
 
 /**
+ * Generate a unique response token with retry logic for collision handling
+ * Retries up to 3 times if unique constraint violation occurs
+ */
+export async function generateUniqueResponseToken(
+  db: ReturnType<typeof getTursoClient> | Awaited<ReturnType<ReturnType<typeof getTursoClient>['transaction']>>,
+  maxRetries: number = 3
+): Promise<string> {
+  for (let attempt = 0; attempt < maxRetries; attempt++) {
+    const token = generateResponseToken()
+    
+    // Check if token already exists in database
+    const checkResult = await db.execute({
+      sql: `SELECT id FROM bookings WHERE response_token = ? LIMIT 1`,
+      args: [token],
+    })
+    
+    if (checkResult.rows.length === 0) {
+      // Token is unique, return it
+      return token
+    }
+    
+    // Token collision detected (extremely rare)
+    console.warn(`Token collision detected on attempt ${attempt + 1}/${maxRetries}, generating new token...`)
+    // Track monitoring metric
+    try {
+      const { trackCollisionRetry } = await import('./monitoring')
+      trackCollisionRetry('token', attempt + 1)
+    } catch {
+      // Ignore monitoring errors
+    }
+  }
+  
+  // All retries exhausted (should never happen with 32-byte random tokens)
+  throw new Error(`Failed to generate unique response token after ${maxRetries} attempts`)
+}
+
+/**
  * Update booking status
  */
 export async function updateBookingStatus(
@@ -1013,8 +1121,8 @@ export async function updateBookingStatus(
       console.log(`Preserving existing token for booking ${bookingId} (recently generated, preventing rapid regeneration)`)
     } 
     else if (needsNewToken && (finalStatus === "pending_deposit" || finalStatus === "pending")) {
-      // Generate new token
-      responseToken = generateResponseToken()
+      // Generate new token with collision handling
+      responseToken = await generateUniqueResponseToken(db)
       updateFields.push("response_token = ?")
       updateArgs.push(responseToken)
       
@@ -1040,7 +1148,7 @@ export async function updateBookingStatus(
       } else if (!currentBooking.response_token || (currentBooking.token_expires_at && currentBooking.token_expires_at < now)) {
         // If token is missing or expired, generate a new one
         // This handles the case where booking transitions to pending_deposit without a valid token
-        responseToken = generateResponseToken()
+        responseToken = await generateUniqueResponseToken(db)
         updateFields.push("response_token = ?")
         updateArgs.push(responseToken)
         
@@ -1082,9 +1190,9 @@ export async function updateBookingStatus(
         console.log(`[updateBookingStatus] Start date passed, cancelling booking instead of rejecting deposit`)
       } else {
         // Generate new token with expiration at start date/time (same as original)
-      responseToken = generateResponseToken()
-      updateFields.push("response_token = ?")
-      updateArgs.push(responseToken)
+        responseToken = await generateUniqueResponseToken(db)
+        updateFields.push("response_token = ?")
+        updateArgs.push(responseToken)
       
         // Token expires exactly at booking start date/time (Bangkok timezone)
         tokenExpiresAt = startTimestamp
@@ -1153,6 +1261,7 @@ export async function updateBookingStatus(
 
     // Optimistic locking: Check if booking was modified since we read it
     // This prevents race conditions when multiple admins act simultaneously
+    // CRITICAL: Use updated_at (snake_case) since currentBooking is a raw database row (from line 1010), not a formatted Booking object
     const originalUpdatedAt = currentBooking.updated_at
     
     // Update with version check (optimistic locking)
@@ -1164,6 +1273,13 @@ export async function updateBookingStatus(
     // Check if update succeeded (rows affected > 0)
     // If rows affected = 0, booking was modified by another process
     if (updateResult.rowsAffected === 0) {
+      // Track monitoring metric
+      try {
+        const { trackOptimisticLockConflict } = await import('./monitoring')
+        trackOptimisticLockConflict('booking', bookingId, { newStatus, oldStatus })
+      } catch {
+        // Ignore monitoring errors
+      }
       throw new Error(
         "Booking was modified by another process. Please refresh the page and try again."
       )
@@ -1199,20 +1315,20 @@ export async function updateBookingStatus(
     const updatedBooking = formatBooking(result.rows[0] as any)
     
     // Invalidate cache for this booking
-    invalidateCache(CacheKeys.booking(bookingId))
+    await invalidateCache(CacheKeys.booking(bookingId))
     
     // Invalidate token cache if token exists
     if (currentBooking.response_token) {
-      invalidateCache(CacheKeys.bookingByToken(currentBooking.response_token))
+      await invalidateCache(CacheKeys.bookingByToken(currentBooking.response_token))
     }
     
     // If new token was generated, invalidate old token cache
     if (responseToken && currentBooking.response_token && responseToken !== currentBooking.response_token) {
-      invalidateCache(CacheKeys.bookingByToken(currentBooking.response_token))
+      await invalidateCache(CacheKeys.bookingByToken(currentBooking.response_token))
     }
     
     // Invalidate list caches (bookings list may have changed)
-    invalidateCache('bookings:list')
+    await invalidateCache('bookings:list')
     
     return updatedBooking
   })
@@ -1380,9 +1496,16 @@ export async function getBookingByToken(token: string): Promise<Booking | null> 
 
   const booking = result.rows[0] as any
 
-  // Check if token is expired
-  if (booking.token_expires_at && booking.token_expires_at < now) {
-    // Token expired - log for debugging
+  // Check if token is expired (with 5-minute grace period for better UX)
+  // This allows users who are mid-submission to complete their action even if token expires during submission
+  // The grace period is small enough to maintain security while improving user experience
+  const TOKEN_GRACE_PERIOD = 5 * 60 // 5 minutes in seconds
+  const effectiveExpirationTime = booking.token_expires_at 
+    ? booking.token_expires_at + TOKEN_GRACE_PERIOD 
+    : null
+  
+  if (effectiveExpirationTime && now > effectiveExpirationTime) {
+    // Token expired (even with grace period) - log for debugging
     // CRITICAL: Format timestamps in Bangkok timezone for debug logging
     const { TZDate } = await import('@date-fns/tz')
     const { format } = await import('date-fns')
@@ -1391,7 +1514,7 @@ export async function getBookingByToken(token: string): Promise<Booking | null> 
     const currentDate = new TZDate(now * 1000, BANGKOK_TIMEZONE)
     const expiredAtStr = format(expiredDate, 'yyyy-MM-dd HH:mm:ss') + ' GMT+7'
     const currentTimeStr = format(currentDate, 'yyyy-MM-dd HH:mm:ss') + ' GMT+7'
-    console.warn(`[getBookingByToken] Token expired for booking ${booking.id}. Expired at: ${expiredAtStr}, Current time: ${currentTimeStr}`)
+    console.warn(`[getBookingByToken] Token expired for booking ${booking.id}. Expired at: ${expiredAtStr}, Current time: ${currentTimeStr}, Grace period: 5 minutes`)
     return null
   }
   
@@ -1686,20 +1809,20 @@ export async function submitUserResponse(
     const updatedBooking = formatBooking(result.rows[0] as any)
     
     // Invalidate cache for this booking
-    invalidateCache(CacheKeys.booking(bookingId))
+    await invalidateCache(CacheKeys.booking(bookingId))
     
     // Invalidate token cache if token exists
     if (currentBooking.response_token) {
-      invalidateCache(CacheKeys.bookingByToken(currentBooking.response_token))
+      await invalidateCache(CacheKeys.bookingByToken(currentBooking.response_token))
     }
     
     // If new token was generated, invalidate old token cache
     if (responseToken && currentBooking.response_token && responseToken !== currentBooking.response_token) {
-      invalidateCache(CacheKeys.bookingByToken(currentBooking.response_token))
+      await invalidateCache(CacheKeys.bookingByToken(currentBooking.response_token))
     }
     
     // Invalidate list caches (bookings list may have changed)
-    invalidateCache('bookings:list')
+    await invalidateCache('bookings:list')
     
     return updatedBooking
   })
