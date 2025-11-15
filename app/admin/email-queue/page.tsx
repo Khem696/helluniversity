@@ -35,26 +35,8 @@ import {
 import { toast } from "sonner"
 import { format } from "date-fns"
 import { TZDate } from '@date-fns/tz'
-import { useAdminData } from "@/hooks/useAdminData"
-
-interface EmailQueueItem {
-  id: string
-  emailType: "admin_notification" | "user_confirmation" | "status_change" | "user_response" | "auto_update"
-  recipientEmail: string
-  subject: string
-  htmlContent: string
-  textContent: string
-  metadata?: any
-  retryCount: number
-  maxRetries: number
-  status: "pending" | "processing" | "sent" | "failed" | "cancelled"
-  errorMessage?: string
-  scheduledAt: number
-  nextRetryAt?: number
-  sentAt?: number
-  createdAt: number
-  updatedAt: number
-}
+import { useAdminEmails, type EmailQueueItem } from "@/hooks/useAdminEmails"
+import { API_PATHS, buildApiUrl } from "@/lib/api-config"
 
 interface EmailQueueStats {
   pending: number
@@ -89,29 +71,26 @@ export default function EmailQueuePage() {
       params.append("emailType", emailTypeFilter)
     }
     params.append("limit", "50")
-    return `/api/admin/email-queue?${params.toString()}`
+    return buildApiUrl(API_PATHS.adminEmailQueue, Object.fromEntries(params))
   }, [statusFilter, emailTypeFilter])
   
-  // Use useAdminData hook for emails with optimistic updates
+  // Use React Query hook for emails with event-based updates
   const {
-    data: emails,
+    emails,
+    stats: emailStats,
     loading,
-    fetchData: fetchEmails,
+    refetch: fetchEmails,
     updateItem,
     removeItem,
     replaceItem
-  } = useAdminData<EmailQueueItem>({
+  } = useAdminEmails({
     endpoint,
-    transformResponse: (json) => {
-      const responseData = json.data || json
-      const items = responseData.items || []
-      const statsData = responseData.stats || {}
-      setStats(statsData)
-      return items
-    },
+    refetchInterval: 30000, // Refetch every 30 seconds
+    enabled: !!session,
     isDialogOpen: () => viewDialogOpen,
-    enablePolling: true,
-    pollInterval: 30000
+    onStatsUpdate: (stats) => {
+      setStats(stats)
+    },
   })
 
   // Redirect if not authenticated
@@ -126,7 +105,7 @@ export default function EmailQueuePage() {
   const handleProcessQueue = async () => {
     try {
       setProcessing(true)
-      const response = await fetch("/api/admin/email-queue", {
+      const response = await fetch("/api/v1/admin/email-queue", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ action: "process", limit: 10 }),
@@ -137,8 +116,11 @@ export default function EmailQueuePage() {
         const responseData = json.data || json
         const result = responseData.result || responseData
         toast.success(`Processed: ${result.sent} sent, ${result.failed} failed`)
-        // Refresh to get updated stats and email statuses
-        fetchEmails()
+        // Invalidate emails cache to trigger refetch
+        if (typeof window !== 'undefined') {
+          const event = new CustomEvent('invalidateAdminEmails')
+          window.dispatchEvent(event)
+        }
       } else {
         const errorMsg = typeof json.error === 'string' ? json.error : json.error?.message || JSON.stringify(json.error) || "Failed to process queue"
         toast.error(errorMsg)
@@ -155,7 +137,7 @@ export default function EmailQueuePage() {
   // Retry specific email
   const handleRetryEmail = async (id: string) => {
     try {
-      const response = await fetch(`/api/admin/email-queue/${id}`, {
+      const response = await fetch(API_PATHS.adminEmailQueueItem(id), {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ action: "retry" }),
@@ -182,6 +164,11 @@ export default function EmailQueuePage() {
           replaceItem(id, updatedEmail)
         }
         toast.success("Email retried successfully")
+        // Invalidate emails cache to trigger refetch
+        if (typeof window !== 'undefined') {
+          const event = new CustomEvent('invalidateAdminEmails')
+          window.dispatchEvent(event)
+        }
       } else {
         const errorMsg = typeof json.error === 'string' ? json.error : json.error?.message || JSON.stringify(json.error) || "Failed to retry email"
         toast.error(errorMsg)
@@ -203,15 +190,23 @@ export default function EmailQueuePage() {
       // Optimistically remove from list
       removeItem(id)
       
-      const response = await fetch(`/api/admin/email-queue/${id}`, {
+      const response = await fetch(API_PATHS.adminEmailQueueItem(id), {
         method: "DELETE",
       })
       const json = await response.json()
       if (json.success) {
         toast.success("Email deleted successfully")
+        // Invalidate emails cache to trigger refetch
+        if (typeof window !== 'undefined') {
+          const event = new CustomEvent('invalidateAdminEmails')
+          window.dispatchEvent(event)
+        }
       } else {
-        // Rollback on error
-        fetchEmails()
+        // Rollback on error - invalidate to refetch
+        if (typeof window !== 'undefined') {
+          const event = new CustomEvent('invalidateAdminEmails')
+          window.dispatchEvent(event)
+        }
         const errorMsg = typeof json.error === 'string' ? json.error : json.error?.message || JSON.stringify(json.error) || "Failed to delete email"
         toast.error(errorMsg)
       }
@@ -229,7 +224,7 @@ export default function EmailQueuePage() {
     }
 
     try {
-      const response = await fetch("/api/admin/email-queue", {
+      const response = await fetch("/api/v1/admin/email-queue", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ action: "cleanup", daysOld: 30 }),
@@ -312,14 +307,14 @@ export default function EmailQueuePage() {
   }
 
   return (
-    <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-      <div className="mb-8">
-        <h1 className="text-3xl font-bold text-gray-900 mb-2">Email Queue Management</h1>
-        <p className="text-gray-600">Manage failed and pending email notifications</p>
+    <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 sm:py-8 lg:py-12">
+      <div className="mb-6 sm:mb-8">
+        <h1 className="text-2xl sm:text-3xl lg:text-4xl font-bold text-gray-900 mb-2">Email Queue Management</h1>
+        <p className="text-sm sm:text-base text-gray-600">Manage failed and pending email notifications</p>
       </div>
 
       {/* Stats Cards */}
-      <div className="grid grid-cols-1 md:grid-cols-5 gap-4 mb-6">
+      <div className="grid grid-cols-2 md:grid-cols-5 gap-3 sm:gap-4 mb-6">
         <div className="bg-white p-4 rounded-lg shadow">
           <div className="text-sm text-gray-600">Total</div>
           <div className="text-2xl font-bold text-gray-900">{stats.total}</div>
@@ -343,8 +338,8 @@ export default function EmailQueuePage() {
       </div>
 
       {/* Actions */}
-      <div className="mb-6 flex gap-4 items-center">
-        <Button onClick={handleProcessQueue} disabled={processing}>
+      <div className="mb-6 flex flex-col sm:flex-row gap-3 sm:gap-4 items-stretch sm:items-center">
+        <Button onClick={handleProcessQueue} disabled={processing} className="w-full sm:w-auto">
           {processing ? (
             <>
               <Loader2 className="w-4 h-4 mr-2 animate-spin" />
@@ -357,20 +352,21 @@ export default function EmailQueuePage() {
             </>
           )}
         </Button>
-        <Button onClick={handleCleanup} variant="outline">
+        <Button onClick={handleCleanup} variant="outline" className="w-full sm:w-auto">
           <Trash className="w-4 h-4 mr-2" />
-          Cleanup Old Sent Emails
+          <span className="hidden sm:inline">Cleanup Old Sent Emails</span>
+          <span className="sm:hidden">Cleanup</span>
         </Button>
-        <Button onClick={fetchEmails} variant="outline">
+        <Button onClick={fetchEmails} variant="outline" className="w-full sm:w-auto">
           <RefreshCw className="w-4 h-4 mr-2" />
           Refresh
         </Button>
       </div>
 
       {/* Filters */}
-      <div className="mb-6 flex gap-4">
+      <div className="mb-6 flex flex-col sm:flex-row gap-3 sm:gap-4">
         <Select value={statusFilter} onValueChange={setStatusFilter}>
-          <SelectTrigger className="w-48">
+          <SelectTrigger className="w-full sm:w-48">
             <SelectValue placeholder="Filter by status" />
           </SelectTrigger>
           <SelectContent>
@@ -383,7 +379,7 @@ export default function EmailQueuePage() {
           </SelectContent>
         </Select>
         <Select value={emailTypeFilter} onValueChange={setEmailTypeFilter}>
-          <SelectTrigger className="w-48">
+          <SelectTrigger className="w-full sm:w-48">
             <SelectValue placeholder="Filter by type" />
           </SelectTrigger>
           <SelectContent>
@@ -404,93 +400,169 @@ export default function EmailQueuePage() {
           <p className="text-gray-600">No emails found</p>
         </div>
       ) : (
-        <div className="bg-white rounded-lg shadow overflow-hidden">
-          <div className="overflow-x-auto">
-            <table className="min-w-full divide-y divide-gray-200">
-              <thead className="bg-gray-50">
-                <tr>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Type</th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Recipient</th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Subject</th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Status</th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Retries</th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Created</th>
-                  <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase">Actions</th>
-                </tr>
-              </thead>
-              <tbody className="bg-white divide-y divide-gray-200">
-                {emails.map((email) => (
-                  <tr key={email.id} className="hover:bg-gray-50">
-                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                      {getEmailTypeLabel(email.emailType)}
-                    </td>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                      <div className="flex items-center gap-1">
-                        <Mail className="w-3 h-3" />
-                        {email.recipientEmail}
-                      </div>
-                    </td>
-                    <td className="px-6 py-4 text-sm text-gray-900 max-w-md truncate">
-                      {email.subject}
-                    </td>
-                    <td className="px-6 py-4 whitespace-nowrap">
-                      {getStatusBadge(email.status)}
-                    </td>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                      {email.retryCount} / {email.maxRetries}
-                    </td>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                      {formatTimestamp(email.createdAt)}
-                    </td>
-                    <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
-                      <div className="flex gap-2 justify-end">
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          onClick={() => {
-                            setSelectedEmail(email)
-                            setViewDialogOpen(true)
-                          }}
-                        >
-                          View
-                        </Button>
-                        {email.status === "pending" || email.status === "failed" ? (
+        <>
+          {/* Desktop Table View */}
+          <div className="hidden lg:block bg-white rounded-lg shadow overflow-hidden">
+            <div className="overflow-x-auto">
+              <table className="min-w-full divide-y divide-gray-200">
+                <thead className="bg-gray-50">
+                  <tr>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Type</th>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Recipient</th>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Subject</th>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Status</th>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Retries</th>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Created</th>
+                    <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase">Actions</th>
+                  </tr>
+                </thead>
+                <tbody className="bg-white divide-y divide-gray-200">
+                  {emails.map((email) => (
+                    <tr key={email.id} className="hover:bg-gray-50">
+                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                        {getEmailTypeLabel(email.emailType)}
+                      </td>
+                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                        <div className="flex items-center gap-1">
+                          <Mail className="w-3 h-3" />
+                          {email.recipientEmail}
+                        </div>
+                      </td>
+                      <td className="px-6 py-4 text-sm text-gray-900 max-w-md truncate">
+                        {email.subject}
+                      </td>
+                      <td className="px-6 py-4 whitespace-nowrap">
+                        {getStatusBadge(email.status)}
+                      </td>
+                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                        {email.retryCount} / {email.maxRetries}
+                      </td>
+                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                        {formatTimestamp(email.createdAt)}
+                      </td>
+                      <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
+                        <div className="flex gap-2 justify-end">
                           <Button
                             size="sm"
-                            variant="default"
-                            onClick={() => handleRetryEmail(email.id)}
+                            variant="outline"
+                            onClick={() => {
+                              setSelectedEmail(email)
+                              setViewDialogOpen(true)
+                            }}
                           >
-                            <Play className="w-3 h-3 mr-1" />
-                            Retry
+                            View
                           </Button>
-                        ) : null}
-                        <Button
-                          size="sm"
-                          variant="destructive"
-                          onClick={() => handleDeleteEmail(email.id)}
-                        >
-                          <Trash2 className="w-3 h-3" />
-                        </Button>
-                      </div>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+                          {email.status === "pending" || email.status === "failed" ? (
+                            <Button
+                              size="sm"
+                              variant="default"
+                              onClick={() => handleRetryEmail(email.id)}
+                            >
+                              <Play className="w-3 h-3 mr-1" />
+                              Retry
+                            </Button>
+                          ) : null}
+                          <Button
+                            size="sm"
+                            variant="destructive"
+                            onClick={() => handleDeleteEmail(email.id)}
+                          >
+                            <Trash2 className="w-3 h-3" />
+                          </Button>
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
           </div>
-        </div>
+
+          {/* Mobile/Tablet Card View */}
+          <div className="lg:hidden space-y-4">
+            {emails.map((email) => (
+              <div
+                key={email.id}
+                className="bg-white rounded-lg shadow p-4 sm:p-6"
+              >
+                <div className="flex items-start justify-between mb-3">
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2 mb-2">
+                      {getStatusBadge(email.status)}
+                      <span className="text-xs font-medium text-gray-500">
+                        {getEmailTypeLabel(email.emailType)}
+                      </span>
+                    </div>
+                    <h3 className="text-base sm:text-lg font-semibold text-gray-900 mb-1 truncate">
+                      {email.subject}
+                    </h3>
+                    <div className="flex items-center gap-1 text-sm text-gray-600 mb-2">
+                      <Mail className="w-3 h-3 flex-shrink-0" />
+                      <span className="truncate">{email.recipientEmail}</span>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="space-y-2 mb-4 text-sm">
+                  <div className="flex items-center justify-between">
+                    <span className="text-gray-500">Retries:</span>
+                    <span className="text-gray-900 font-medium">{email.retryCount} / {email.maxRetries}</span>
+                  </div>
+                  <div className="flex items-center justify-between">
+                    <span className="text-gray-500">Created:</span>
+                    <span className="text-gray-900">{formatTimestamp(email.createdAt)}</span>
+                  </div>
+                </div>
+
+                <div className="flex flex-col sm:flex-row gap-2 pt-3 border-t">
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="flex-1"
+                    onClick={() => {
+                      setSelectedEmail(email)
+                      setViewDialogOpen(true)
+                    }}
+                  >
+                    View
+                  </Button>
+                  {email.status === "pending" || email.status === "failed" ? (
+                    <Button
+                      size="sm"
+                      variant="default"
+                      className="flex-1"
+                      onClick={() => handleRetryEmail(email.id)}
+                    >
+                      <Play className="w-4 h-4 mr-1" />
+                      Retry
+                    </Button>
+                  ) : null}
+                  <Button
+                    size="sm"
+                    variant="destructive"
+                    className="flex-1"
+                    onClick={() => handleDeleteEmail(email.id)}
+                  >
+                    <Trash2 className="w-4 h-4 mr-1" />
+                    Delete
+                  </Button>
+                </div>
+              </div>
+            ))}
+          </div>
+        </>
       )}
 
       {/* View Email Dialog */}
       <Dialog open={viewDialogOpen} onOpenChange={setViewDialogOpen}>
-        <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
+        <DialogContent className="max-w-[95vw] sm:max-w-4xl max-h-[90vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>Email Queue Item Details</DialogTitle>
             <DialogDescription>View email details and metadata</DialogDescription>
           </DialogHeader>
           {selectedEmail && (
             <div className="space-y-4">
-              <div className="grid grid-cols-2 gap-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div>
                   <div className="text-sm font-medium text-gray-600">Type</div>
                   <div className="text-sm text-gray-900">{getEmailTypeLabel(selectedEmail.emailType)}</div>

@@ -10,7 +10,8 @@ import { withErrorHandling, successResponse, errorResponse, ErrorCodes } from "@
  * 
  * POST /api/booking/deposit
  * - Uploads deposit evidence image
- * - Updates booking status to "paid_deposit"
+ * - Updates booking status to "pending_deposit" (if coming from pending_deposit without deposit)
+ * - Status remains "pending_deposit" after upload (admin needs to accept/reject)
  * 
  * Body (FormData):
  * - token: Response token from booking email
@@ -85,21 +86,86 @@ export async function POST(request: Request) {
     
     await logger.info('Booking found for deposit upload', { bookingId: booking.id, currentStatus: booking.status })
 
-    // Validate booking status - must be "accepted", "pending_deposit", or "postponed" (if no deposit uploaded yet)
-    // Allow postponed status if:
-    // 1. No deposit evidence uploaded yet (user hasn't uploaded)
-    // 2. No proposed_date (admin just postponed, not user proposing) OR has proposed_date but still no deposit
-    // This handles the case where admin postpones from "accepted" and preserves the deposit link
-    const canUploadDeposit = 
-      booking.status === "accepted" || 
-      booking.status === "pending_deposit" ||
-      (booking.status === "postponed" && !booking.depositEvidenceUrl)
+    // Validate booking status - must be "pending_deposit"
+    // User can upload deposit when booking is in pending_deposit status
+    const canUploadDeposit = booking.status === "pending_deposit"
     
     if (!canUploadDeposit) {
-      await logger.warn('Deposit upload rejected: invalid status', { bookingId: booking.id, status: booking.status, hasDeposit: !!booking.depositEvidenceUrl })
+      await logger.warn('Deposit upload rejected: invalid status', { bookingId: booking.id, status: booking.status })
       return errorResponse(
         ErrorCodes.VALIDATION_ERROR,
-        `Deposit can only be uploaded for accepted, pending_deposit, or postponed bookings (without existing deposit). Current status: ${booking.status}`,
+        `Deposit can only be uploaded for bookings with pending_deposit status. Current status: ${booking.status}`,
+        undefined,
+        400,
+        { requestId }
+      )
+    }
+    
+    // Check if token is valid and not expired
+    const { getBangkokTime } = await import("@/lib/timezone")
+    const { calculateStartTimestamp } = await import("@/lib/booking-validations")
+    const bangkokNow = getBangkokTime()
+    
+    // Token should match current token
+    if (booking.responseToken !== token) {
+      await logger.warn('Deposit upload rejected: token mismatch', { bookingId: booking.id })
+      return errorResponse(
+        ErrorCodes.VALIDATION_ERROR,
+        "This token is no longer valid. Please use the latest token from your email.",
+        undefined,
+        400,
+        { requestId }
+      )
+    }
+    
+    // Check if token expired (expires at start date/time) with 5-minute grace period
+    // This allows users who are mid-upload to complete their action
+    const TOKEN_GRACE_PERIOD = 5 * 60 // 5 minutes in seconds
+    const effectiveExpirationTime = booking.tokenExpiresAt 
+      ? booking.tokenExpiresAt + TOKEN_GRACE_PERIOD 
+      : null
+    
+    if (effectiveExpirationTime && bangkokNow > effectiveExpirationTime) {
+      await logger.warn('Deposit upload rejected: token expired (after grace period)', { 
+        bookingId: booking.id, 
+        tokenExpiresAt: booking.tokenExpiresAt, 
+        now: bangkokNow,
+        gracePeriod: TOKEN_GRACE_PERIOD
+      })
+      return errorResponse(
+        ErrorCodes.VALIDATION_ERROR,
+        "Token has expired. The booking start date has passed.",
+        undefined,
+        400,
+        { requestId }
+      )
+    }
+    
+    // Check if booking start date has passed
+    // Convert startDate string (YYYY-MM-DD) to timestamp
+    if (!booking.startDate) {
+      await logger.warn('Deposit upload rejected: missing start date', { bookingId: booking.id })
+      return errorResponse(
+        ErrorCodes.VALIDATION_ERROR,
+        "Booking is missing start date.",
+        undefined,
+        400,
+        { requestId }
+      )
+    }
+    
+    const { createBangkokTimestamp } = await import("@/lib/timezone")
+    const startDateTimestamp = createBangkokTimestamp(booking.startDate)
+    const startTimestamp = calculateStartTimestamp(
+      startDateTimestamp,
+      booking.startTime || null
+    )
+    
+    if (startTimestamp < bangkokNow) {
+      await logger.warn('Deposit upload rejected: start date passed', { bookingId: booking.id, startTimestamp, now: bangkokNow })
+      return errorResponse(
+        ErrorCodes.VALIDATION_ERROR,
+        "Cannot upload deposit: booking start date has passed.",
         undefined,
         400,
         { requestId }
@@ -108,9 +174,8 @@ export async function POST(request: Request) {
 
     // Prevent concurrent deposit uploads - check if deposit was recently uploaded (within last 5 seconds)
     const DEPOSIT_UPLOAD_COOLDOWN = 5 // seconds
-    const { getBangkokTime } = await import("@/lib/timezone")
-    const now = getBangkokTime()
-    if (booking.updated_at && (now - booking.updated_at) < DEPOSIT_UPLOAD_COOLDOWN && booking.deposit_evidence_url) {
+    const now = bangkokNow
+    if (booking.updatedAt && (now - booking.updatedAt) < DEPOSIT_UPLOAD_COOLDOWN && booking.depositEvidenceUrl) {
       await logger.warn('Deposit upload rejected: cooldown period', { bookingId: booking.id })
       return errorResponse(
         ErrorCodes.RATE_LIMIT_EXCEEDED,
@@ -119,6 +184,27 @@ export async function POST(request: Request) {
         429,
         { requestId }
       )
+    }
+
+    // Delete old deposit evidence image if it exists (before uploading new one)
+    if (booking.depositEvidenceUrl) {
+      try {
+        const { deleteImage } = await import("@/lib/blob")
+        await deleteImage(booking.depositEvidenceUrl)
+        await logger.info('Deleted old deposit evidence blob before uploading new one', { oldBlobUrl: booking.depositEvidenceUrl, bookingId: booking.id })
+      } catch (blobError) {
+        // Log error but continue with upload - queue cleanup job as fallback
+        await logger.error("Failed to delete old deposit evidence blob", blobError instanceof Error ? blobError : new Error(String(blobError)), { blobUrl: booking.depositEvidenceUrl, bookingId: booking.id })
+        
+        // Queue cleanup job for retry (fail-safe approach)
+        try {
+          const { enqueueJob } = await import("@/lib/job-queue")
+          await enqueueJob("cleanup-orphaned-blob", { blobUrl: booking.depositEvidenceUrl }, { priority: 1 })
+          await logger.info('Queued orphaned blob cleanup job for old deposit evidence', { blobUrl: booking.depositEvidenceUrl })
+        } catch (queueError) {
+          await logger.error("Failed to queue orphaned blob cleanup", queueError instanceof Error ? queueError : new Error(String(queueError)), { blobUrl: booking.depositEvidenceUrl })
+        }
+      }
     }
 
     // Process and upload deposit evidence image
@@ -136,22 +222,54 @@ export async function POST(request: Request) {
     
     await logger.info('Deposit image processed and uploaded', { bookingId: booking.id, depositUrl: processed.url })
 
-    // Get old status and updated_at before update (for optimistic locking)
-    const oldStatus = booking.status
-    const originalUpdatedAt = booking.updated_at
+    // RE-CHECK BOOKING RIGHT BEFORE UPDATE (minimize race condition window)
+    // This ensures we have the latest booking state before updating
+    const { getBookingById } = await import("@/lib/bookings")
+    const recheckBooking = await getBookingById(booking.id)
+    
+    if (!recheckBooking) {
+      await logger.error('Deposit upload failed: booking not found during re-check', new Error('Booking not found during re-check'), { bookingId: booking.id })
+      return errorResponse(
+        ErrorCodes.NOT_FOUND,
+        "Booking not found. Please refresh and try again.",
+        undefined,
+        404,
+        { requestId }
+      )
+    }
 
-    // Update booking with deposit evidence and change status to "paid_deposit"
+    // Verify booking status still allows deposit upload
+    if (recheckBooking.status !== "pending_deposit" && recheckBooking.status !== "pending") {
+      await logger.warn('Deposit upload rejected: booking status changed', { 
+        bookingId: booking.id, 
+        oldStatus: booking.status, 
+        newStatus: recheckBooking.status 
+      })
+      return errorResponse(
+        ErrorCodes.VALIDATION_ERROR,
+        `Booking status changed to "${recheckBooking.status}". Deposit can only be uploaded for pending or pending_deposit bookings.`,
+        undefined,
+        400,
+        { requestId }
+      )
+    }
+
+    // Get old status and updatedAt from re-checked booking (for optimistic locking)
+    const oldStatus = recheckBooking.status
+    const originalUpdatedAt = recheckBooking.updatedAt
+
+    // Update booking with deposit evidence (status changes to "paid_deposit")
     // updateBookingStatus already has optimistic locking, so if booking was modified, it will throw
     try {
       const updatedBooking = await updateBookingStatus(booking.id, "paid_deposit", {
         depositEvidenceUrl: processed.url,
-        sendNotification: false, // We'll send email manually with proper token
+        sendNotification: false, // We'll send email manually
       })
 
-      // Send user notification for deposit upload (status: paid_deposit)
+      // Send user notification for deposit upload
       try {
         await sendBookingStatusNotification(updatedBooking, "paid_deposit", {
-          changeReason: "Your deposit evidence has been uploaded successfully. Our admin team will review it and confirm your check-in shortly.",
+          changeReason: "Your deposit evidence has been uploaded successfully. Our admin team will review it and confirm your booking shortly.",
           responseToken: updatedBooking.responseToken, // Token for future access if needed
         })
         await logger.info('User notification sent for deposit upload', { bookingId: booking.id })
@@ -178,7 +296,7 @@ export async function POST(request: Request) {
       await logger.info('Deposit upload completed successfully', { bookingId: booking.id, depositUrl: processed.url })
       return successResponse(
         {
-          message: "Deposit evidence uploaded successfully. Admin will verify and confirm check-in.",
+          message: "Deposit evidence uploaded successfully. Admin will review and confirm your booking shortly.",
           depositUrl: processed.url,
         },
         { requestId }
@@ -186,11 +304,26 @@ export async function POST(request: Request) {
     } catch (updateError) {
       // Check if error is due to optimistic locking conflict
       const errorMessage = updateError instanceof Error ? updateError.message : "Failed to update booking"
+      
+      // Log the full error for debugging
+      await logger.error('Deposit upload failed: database update error', updateError instanceof Error ? updateError : new Error(String(updateError)), {
+        bookingId: booking.id,
+        errorMessage,
+        depositUrl: processed.url, // Blob was uploaded successfully
+      })
+      
       if (errorMessage.includes("modified by another process") || errorMessage.includes("Invalid status transition")) {
         await logger.warn('Deposit upload failed: booking conflict', { 
           bookingId: booking.id, 
           error: errorMessage 
         })
+        // Track monitoring metric
+        try {
+          const { trackOptimisticLockConflict } = await import('@/lib/monitoring')
+          trackOptimisticLockConflict('booking', booking.id, { requestId, action: 'deposit_upload' })
+        } catch {
+          // Ignore monitoring errors
+        }
         return errorResponse(
           ErrorCodes.CONFLICT,
           "Booking was modified by another process. Please refresh and try again.",
@@ -199,8 +332,27 @@ export async function POST(request: Request) {
           { requestId }
         )
       }
-      // Re-throw other errors
-      throw updateError
+      
+      // Check if error is due to missing database column
+      if (errorMessage.includes("no such column") || errorMessage.includes("deposit_verified_from_other_channel")) {
+        await logger.error('Deposit upload failed: database schema missing column', updateError instanceof Error ? updateError : new Error(String(updateError)), {
+          bookingId: booking.id,
+          suggestion: "Database needs to be reinitialized to add the new deposit_verified_from_other_channel column"
+        })
+        return errorResponse(
+          ErrorCodes.INTERNAL_ERROR,
+          "Database schema error. Please contact administrator. The deposit image was uploaded successfully but the booking could not be updated.",
+          {
+            depositUrl: processed.url,
+            error: "Database column missing. Please reinitialize the database.",
+          },
+          500,
+          { requestId }
+        )
+      }
+      
+      // Re-throw other errors with more context
+      throw new Error(`Failed to update booking after deposit upload: ${errorMessage}. Deposit image was uploaded successfully to: ${processed.url}`)
     }
   }, { endpoint: '/api/booking/deposit' })
 }

@@ -3,13 +3,14 @@
  * 
  * This endpoint is called by Vercel cron jobs
  * Processes failed emails for critical status changes
- * Handles status_change emails with status: accepted, postponed, cancelled, rejected
+ * Handles status_change emails with status: pending_deposit, confirmed, cancelled
  */
 
 import { NextResponse } from "next/server"
 import { processCriticalStatusEmails } from "@/lib/email-queue"
 import { createRequestLogger } from "@/lib/logger"
 import { withErrorHandling, successResponse, errorResponse, ErrorCodes } from "@/lib/api-response"
+import { verifyCronSecret, withTimeout, CRON_TIMEOUT_MS, CRON_LIMITS } from '@/lib/cron-utils'
 
 export async function GET(request: Request) {
   return withErrorHandling(async () => {
@@ -19,44 +20,39 @@ export async function GET(request: Request) {
     await logger.info('Email queue cron job started')
     
     // Verify Vercel cron secret
-    const authHeader = request.headers.get('authorization')
-    const cronSecret = process.env.CRON_SECRET
-    
-    if (!cronSecret) {
-      await logger.error('CRON_SECRET not configured', new Error('CRON_SECRET not configured'))
+    try {
+      verifyCronSecret(request)
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : 'Authentication failed'
+      await logger.error(errorMessage, error instanceof Error ? error : new Error(errorMessage))
       return errorResponse(
-        ErrorCodes.INTERNAL_ERROR,
-        'Cron secret not configured',
+        errorMessage.includes('not configured') ? ErrorCodes.INTERNAL_ERROR : ErrorCodes.UNAUTHORIZED,
+        errorMessage,
         undefined,
-        500,
+        errorMessage.includes('not configured') ? 500 : 401,
         { requestId }
       )
     }
 
-    if (authHeader !== `Bearer ${cronSecret}`) {
-      await logger.warn('Unauthorized cron job attempt')
-      return errorResponse(
-        ErrorCodes.UNAUTHORIZED,
-        'Unauthorized',
-        undefined,
-        401,
-        { requestId }
-      )
-    }
-
-    // Process critical status change emails (accepted/postponed/cancelled/rejected)
+    // Process critical status change emails (pending_deposit/confirmed/cancelled)
     const startTime = Date.now()
-    const limit = 20
+    const limit = CRON_LIMITS.EMAIL_QUEUE
     await logger.info('Processing critical status emails', {
       limit,
+      timeout: `${CRON_TIMEOUT_MS}ms`,
       timestamp: new Date().toISOString(),
       timezone: 'UTC'
     })
     
-    console.log(`[email-queue] Starting email queue processing (limit: ${limit})`)
+    console.log(`[email-queue] Starting email queue processing (limit: ${limit}, timeout: ${CRON_TIMEOUT_MS}ms)`)
     
     try {
-      const result = await processCriticalStatusEmails(limit)
+      // Execute with timeout to prevent hanging
+      const result = await withTimeout(
+        () => processCriticalStatusEmails(limit),
+        CRON_TIMEOUT_MS,
+        'Email queue processing timed out'
+      )
       const duration = Date.now() - startTime
       
       await logger.info('Email queue processed', {
@@ -79,7 +75,7 @@ export async function GET(request: Request) {
       
       return successResponse(
         {
-          message: "Critical status email queue processed (accepted/postponed/cancelled/rejected)",
+          message: "Critical status email queue processed (pending_deposit/confirmed/cancelled)",
           result: {
             processed: result.processed,
             sent: result.sent,

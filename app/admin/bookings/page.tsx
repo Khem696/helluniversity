@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useEffect, useRef, useMemo } from "react"
+import { useState, useEffect, useRef, useMemo, useCallback } from "react"
 import { redirect } from "next/navigation"
 import { useSession } from "next-auth/react"
 import { Button } from "@/components/ui/button"
@@ -11,9 +11,11 @@ import {
   Dialog,
   DialogContent,
   DialogDescription,
+  DialogFooter,
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog"
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import {
   Select,
   SelectContent,
@@ -42,6 +44,8 @@ import {
   CalendarX,
   Archive,
   Trash2,
+  MessageCircle,
+  AlertTriangle,
 } from "lucide-react"
 import Link from "next/link"
 import { toast } from "sonner"
@@ -49,11 +53,17 @@ import { format } from "date-fns"
 import { TZDate } from '@date-fns/tz'
 import { BookingStateInfo } from "@/components/admin/BookingStateInfo"
 import { ActionConfirmationDialog } from "@/components/admin/ActionConfirmationDialog"
+import { DeleteConfirmationDialog } from "@/components/admin/DeleteConfirmationDialog"
 import { useBookingActions } from "@/hooks/useBookingActions"
-import { getAvailableActions, type ActionDefinition } from "@/lib/booking-state-machine"
+import { getAvailableActions, mapActionToStatus, type ActionDefinition } from "@/lib/booking-state-machine"
 import { calculateStartTimestamp } from "@/lib/booking-validations"
 import { getBangkokTime } from "@/lib/timezone"
-import { useAdminData } from "@/hooks/useAdminData"
+import { useAdminBookings, type Booking as BookingType } from "@/hooks/useAdminBookings"
+import { API_PATHS, buildApiUrl } from "@/lib/api-config"
+import { SimpleCalendar } from "@/components/ui/simple-calendar"
+import { TimePicker } from "@/components/ui/time-picker"
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
+import { dateToBangkokDateString } from "@/lib/timezone-client"
 
 // Helper function to add AM/PM to 24-hour time format for display
 // Converts "13:00" -> "13:00 PM", "09:30" -> "09:30 AM", "00:00" -> "00:00 AM"
@@ -75,38 +85,8 @@ function formatTimeForDisplay(time24: string | null | undefined): string {
   }
 }
 
-interface Booking {
-  id: string
-  name: string
-  email: string
-  phone: string
-  participants: string | null
-  event_type: string
-  other_event_type: string | null
-  date_range: number
-  start_date: number
-  end_date: number | null
-  start_time: string
-  end_time: string
-  organization_type: string | null
-  organized_person: string | null
-  introduction: string | null
-  biography: string | null
-  special_requests: string | null
-  status: "pending" | "accepted" | "rejected" | "postponed" | "cancelled" | "finished" | "checked-in" | "paid_deposit" | "pending_deposit"
-  admin_notes: string | null
-  response_token: string | null
-  token_expires_at: number | null
-  proposed_date: number | null
-  proposed_end_date: number | null
-  user_response: string | null
-  response_date: number | null
-  deposit_evidence_url: string | null
-  deposit_verified_at: number | null
-  deposit_verified_by: string | null
-  created_at: number
-  updated_at: number
-}
+// Use Booking type from hook to ensure consistency
+type Booking = BookingType
 
 interface StatusHistory {
   id: string
@@ -118,26 +98,81 @@ interface StatusHistory {
   created_at: number
 }
 
+// Helper function to get booking reference number with fallback for old records
+// Generates a deterministic reference number based on booking ID if missing
+// Updated to match new format: 3 chars timestamp + 3 chars random (HU-XXXXXX)
+function getBookingReferenceNumber(booking: Booking): string {
+  if (booking.reference_number) {
+    return booking.reference_number
+  }
+  // For old records without reference_number, generate a deterministic one based on ID
+  // Use last 8 characters of UUID and convert to base36-like format
+  // This ensures the same booking always gets the same reference number
+  // Updated to new format: 3 chars + 3 chars (was 3 chars + 2 chars)
+  const idPart = booking.id.replace(/-/g, '').slice(-8)
+  const numValue = parseInt(idPart, 16) % 46656 // 36^3
+  // Use first 4 hex chars of ID for deterministic "random" part (was 2 chars)
+  const deterministicPart = parseInt(idPart.slice(0, 4), 16) % 46656 // 36^3
+  return `HU-${numValue.toString(36).toUpperCase().padStart(3, '0')}${deterministicPart.toString(36).toUpperCase().padStart(3, '0')}`
+}
+
 export default function BookingsPage() {
   const { data: session, status } = useSession()
   const [saving, setSaving] = useState(false)
   const [selectedBooking, setSelectedBooking] = useState<Booking | null>(null)
   const [statusHistory, setStatusHistory] = useState<StatusHistory[]>([])
+  const [overlappingBookings, setOverlappingBookings] = useState<Array<{
+    id: string
+    name: string
+    email: string
+    reference_number: string | null
+    start_date: number
+    end_date: number | null
+    start_time: string | null
+    end_time: string | null
+    status: string
+    created_at: number
+  }>>([])
+  const [hasConfirmedOverlap, setHasConfirmedOverlap] = useState(false)
   const [viewDialogOpen, setViewDialogOpen] = useState(false)
+  const [loadingBookingDetails, setLoadingBookingDetails] = useState(false)
   const [statusDialogOpen, setStatusDialogOpen] = useState(false)
   const [statusFilter, setStatusFilter] = useState<string>("all")
   const [emailFilter, setEmailFilter] = useState("")
+  const [referenceNumberFilter, setReferenceNumberFilter] = useState("")
+  const [nameFilter, setNameFilter] = useState("")
+  const [phoneFilter, setPhoneFilter] = useState("")
+  const [eventTypeFilter, setEventTypeFilter] = useState<string>("all")
+  const [showOverlappingOnly, setShowOverlappingOnly] = useState(false)
+  const [sortBy, setSortBy] = useState<"created_at" | "start_date" | "name" | "updated_at">("created_at")
+  const [sortOrder, setSortOrder] = useState<"ASC" | "DESC">("DESC")
   const [proposedDateRange, setProposedDateRange] = useState<"single" | "multiple">("single")
   const [postponeMode, setPostponeMode] = useState<"user-propose" | "admin-propose">("user-propose")
   const [selectedStatusInForm, setSelectedStatusInForm] = useState<string>("")
-  const [selectedAction, setSelectedAction] = useState<"accept" | "reject" | "postpone" | null>(null)
+  const [selectedAction, setSelectedAction] = useState<"accept" | "reject" | "accept_deposit" | "accept_deposit_other_channel" | "reject_deposit" | "cancel" | "change_date" | "confirm_other_channel" | null>(null)
+  // Date change state
+  const [newStartDate, setNewStartDate] = useState<Date | null>(null)
+  const [newEndDate, setNewEndDate] = useState<Date | null>(null)
+  const [newStartTime, setNewStartTime] = useState<string>("")
+  const [newEndTime, setNewEndTime] = useState<string>("")
+  const [showPastDateWarning, setShowPastDateWarning] = useState(false)
+  // Date range toggle for date change (controls whether end date is shown)
+  const [dateRangeToggle, setDateRangeToggle] = useState<"single" | "multiple">("single")
+  // Unavailable dates for date change calendar (excludes current booking's dates)
+  const [unavailableDatesForDateChange, setUnavailableDatesForDateChange] = useState<Set<string>>(new Set())
+  const [calendarMonth, setCalendarMonth] = useState<Date>(new Date())
   const [newResponsesCount, setNewResponsesCount] = useState<number>(0)
   const [confirmationDialogOpen, setConfirmationDialogOpen] = useState(false)
   const [pendingAction, setPendingAction] = useState<ActionDefinition | null>(null)
   const [pendingValidation, setPendingValidation] = useState<any>(null)
+  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false)
+  const [bookingToDelete, setBookingToDelete] = useState<Booking | null>(null)
+  const [otherChannelConfirmText, setOtherChannelConfirmText] = useState("")
+  const [otherChannelDialogOpen, setOtherChannelDialogOpen] = useState(false)
   
   // Use refs to track current values without causing dependency array changes
   const selectedBookingRef = useRef<Booking | null>(null)
+  const selectedActionRef = useRef<string | null>(null)
   const viewDialogOpenRef = useRef<boolean>(false)
   const lastCheckedAtRef = useRef<number>(Date.now())
   const seenResponseIdsRef = useRef<Set<string>>(new Set())
@@ -146,11 +181,55 @@ export default function BookingsPage() {
   // Update refs when values change
   useEffect(() => {
     selectedBookingRef.current = selectedBooking
-  }, [selectedBooking])
+    selectedActionRef.current = selectedAction
+  }, [selectedBooking, selectedAction])
   
   useEffect(() => {
     viewDialogOpenRef.current = viewDialogOpen
   }, [viewDialogOpen])
+  
+  // Fix accessibility issue: When nested dialogs open, blur focused elements in underlying dialogs
+  // This prevents aria-hidden violation when a dialog is hidden behind another dialog
+  useEffect(() => {
+    // Check if any nested dialog is open (confirmation, delete, other channel)
+    const hasNestedDialog = confirmationDialogOpen || deleteDialogOpen || otherChannelDialogOpen
+    const hasParentDialog = viewDialogOpen || statusDialogOpen
+    
+    if (hasNestedDialog && hasParentDialog) {
+      // When nested dialog opens, blur any focused elements in the parent dialog
+      // This prevents the accessibility violation where aria-hidden is set on a dialog with focused elements
+      const blurFocusedElements = () => {
+        // Find all dialogs
+        const dialogs = Array.from(document.querySelectorAll('[role="dialog"]'))
+        if (dialogs.length > 1) {
+          // The parent dialog should be the one before the nested dialog
+          // Blur focused elements in all dialogs except the last one (the topmost dialog)
+          for (let i = 0; i < dialogs.length - 1; i++) {
+            const dialog = dialogs[i] as HTMLElement
+            if (dialog) {
+              const focusedElement = dialog.querySelector(':focus') as HTMLElement
+              if (focusedElement && focusedElement.blur) {
+                focusedElement.blur()
+              }
+            }
+          }
+        }
+      }
+      // Use setTimeout to ensure the nested dialog has rendered and set aria-hidden
+      const timeoutId = setTimeout(blurFocusedElements, 0)
+      return () => clearTimeout(timeoutId)
+    }
+  }, [confirmationDialogOpen, deleteDialogOpen, otherChannelDialogOpen, viewDialogOpen, statusDialogOpen])
+  
+  // Event types for filter dropdown
+  const eventTypes = [
+    { value: "all", label: "All Event Types" },
+    { value: "Arts & Design Coaching", label: "Arts & Design Coaching Workshop" },
+    { value: "Seminar & Workshop", label: "Seminar & Workshop" },
+    { value: "Family Gathering", label: "Family Gathering" },
+    { value: "Holiday Festive", label: "Holiday Festive" },
+    { value: "Other", label: "Other" },
+  ]
   
   // Build endpoint with filters (memoized to trigger refetch when filters change)
   const endpoint = useMemo(() => {
@@ -161,25 +240,40 @@ export default function BookingsPage() {
     if (emailFilter) {
       params.append("email", emailFilter)
     }
+    if (referenceNumberFilter) {
+      params.append("referenceNumber", referenceNumberFilter)
+    }
+    if (nameFilter) {
+      params.append("name", nameFilter)
+    }
+    if (phoneFilter) {
+      params.append("phone", phoneFilter)
+    }
+    if (eventTypeFilter !== "all") {
+      params.append("eventType", eventTypeFilter)
+    }
+    if (showOverlappingOnly) {
+      params.append("showOverlappingOnly", "true")
+    }
+    params.append("sortBy", sortBy)
+    params.append("sortOrder", sortOrder)
     params.append("limit", "1000")
-    return `/api/admin/bookings?${params.toString()}`
-  }, [statusFilter, emailFilter])
+    return buildApiUrl(API_PATHS.adminBookings, Object.fromEntries(params))
+  }, [statusFilter, emailFilter, referenceNumberFilter, nameFilter, phoneFilter, eventTypeFilter, showOverlappingOnly, sortBy, sortOrder])
   
-  // Use useAdminData hook for bookings (polling disabled - we have custom polling)
+  // Use React Query hook for bookings with event-based updates
   const {
-    data: bookings,
+    bookings,
     loading,
-    fetchData: fetchBookings,
+    refetch: fetchBookings,
     updateItem,
     removeItem,
     replaceItem
-  } = useAdminData<Booking>({
+  } = useAdminBookings({
     endpoint,
-    transformResponse: (json) => {
-      return json.data?.bookings || json.bookings || []
-    },
+    refetchInterval: 30000, // Fallback polling every 30 seconds
+    enabled: !!session,
     isDialogOpen: () => viewDialogOpen || statusDialogOpen,
-    enablePolling: false // Disable hook polling - we have custom polling below
   })
   
   // Initialize booking actions hook
@@ -190,14 +284,39 @@ export default function BookingsPage() {
     validateActionBeforeExecution,
     executeAction,
   } = useBookingActions({
-    onSuccess: () => {
+    onSuccess: (updatedBooking) => {
+      // CRITICAL: Close ALL dialogs when booking is cancelled or restored
+      // This prevents showing stale data in modals after status changes
+      const newStatus = updatedBooking?.status || selectedBooking?.status
+      const isCancelled = newStatus === "cancelled"
+      const isRestoration = selectedBooking?.status === "cancelled" && 
+        (newStatus === "pending_deposit" || newStatus === "paid_deposit" || newStatus === "confirmed")
+      
       setStatusDialogOpen(false)
       setSelectedAction(null)
+      // Reset date change state
+      setNewStartDate(null)
+      setNewEndDate(null)
+      setNewStartTime("")
+      setNewEndTime("")
+      setShowPastDateWarning(false)
       setSelectedStatusInForm("")
       setPostponeMode("user-propose")
       setProposedDateRange("single")
+      // Invalidate bookings cache to trigger refetch
+      if (typeof window !== 'undefined') {
+        const event = new CustomEvent('invalidateAdminBookings')
+        window.dispatchEvent(event)
+      }
       fetchBookings()
-      if (viewDialogOpen) {
+      
+      // Close view dialog if booking is cancelled or restored
+      // This ensures user sees updated booking list immediately without stale modal data
+      if (isCancelled || isRestoration) {
+        setViewDialogOpen(false)
+        setSelectedBooking(null)
+      } else if (viewDialogOpen) {
+        // For other status changes, refresh booking details in view dialog
         fetchBookingDetails(selectedBooking?.id || "")
       }
     },
@@ -210,19 +329,26 @@ export default function BookingsPage() {
     }
   }, [status])
 
-  // Initial fetch and refetch when filters change
+  // Initialize last checked time when bookings load
   useEffect(() => {
-    if (session) {
-      fetchBookings()
+    if (bookings.length > 0 && lastCheckedAtRef.current === 0) {
       lastCheckedAtRef.current = Date.now()
     }
-  }, [session, endpoint])
+  }, [bookings.length])
 
   // Poll for new user responses and status changes every 30 seconds
+  // This runs alongside React Query's refetch to detect changes and show notifications
+  // It compares current bookings with latest data to detect new responses/status changes
+  // CRITICAL: Pause polling when dialogs are open to reduce unnecessary refreshes and improve UX
   useEffect(() => {
-    if (!session) return
+    if (!session || bookings.length === 0) return
 
     const pollInterval = setInterval(async () => {
+      // Skip polling if any dialog is open to prevent unnecessary refreshes
+      // This reduces the "page refresh" feeling when working with dialogs
+      if (viewDialogOpen || statusDialogOpen || confirmationDialogOpen || deleteDialogOpen || otherChannelDialogOpen) {
+        return
+      }
       // Get current selected booking ID to avoid stale closure using refs
       const currentSelectedBookingId = selectedBookingRef.current?.id
       const isDialogOpen = viewDialogOpenRef.current
@@ -230,13 +356,42 @@ export default function BookingsPage() {
         // Check for bookings with new user responses and status changes
         const params = new URLSearchParams()
         params.append("limit", "1000")
-        const response = await fetch(`/api/admin/bookings?${params.toString()}`)
+        const url = buildApiUrl(API_PATHS.adminBookings, Object.fromEntries(params))
+        
+        // Use AbortController for timeout (more compatible than AbortSignal.timeout)
+        const controller = new AbortController()
+        const timeoutId = setTimeout(() => controller.abort(), 10000) // 10 second timeout
+        
+        const response = await fetch(url, {
+          signal: controller.signal,
+        }).catch((fetchError) => {
+          // Handle network errors gracefully
+          if (fetchError.name === 'AbortError') {
+            console.warn('[BookingsPage] Polling request timed out')
+          } else {
+            console.warn('[BookingsPage] Polling fetch failed:', fetchError)
+          }
+          return null
+        }).finally(() => {
+          clearTimeout(timeoutId)
+        })
+        
+        if (!response) {
+          // Network error - skip this poll cycle
+          return
+        }
+        
+        if (!response.ok) {
+          console.warn('[BookingsPage] Polling response not ok:', response.status, response.statusText)
+          return
+        }
+        
         const json = await response.json()
         
         if (json.success && json.data) {
-          const bookings = json.data.bookings || []
-          if (Array.isArray(bookings)) {
-            const currentBookings = bookings as Booking[]
+          const latestBookings = json.data.bookings || []
+          if (Array.isArray(latestBookings)) {
+            const currentBookings = latestBookings as Booking[]
             
             // Find bookings with new user responses (response_date after lastCheckedAt)
           const newResponses = currentBookings.filter(booking => {
@@ -342,10 +497,12 @@ export default function BookingsPage() {
               const lastKnown = lastStatusCheckRef.current.get(booking.id)
               if (lastKnown && lastKnown.status !== booking.status) {
                 // Special notification for deposit uploads
-                const isDepositUpload = lastKnown.status === "accepted" && booking.status === "paid_deposit"
+                const isDepositUpload = lastKnown.status === "pending_deposit" && booking.status === "pending_deposit" && booking.deposit_evidence_url
                 
                 if (isDepositUpload) {
+                  // Use booking ID as toast ID to prevent duplicate notifications
                   toast.success(`Deposit Evidence Uploaded: ${booking.name}`, {
+                    id: `deposit-uploaded-${booking.id}`,
                     description: "A deposit evidence has been uploaded and requires verification.",
                     action: {
                       label: "View",
@@ -358,7 +515,9 @@ export default function BookingsPage() {
                     duration: 8000,
                   })
                 } else {
+                // Use booking ID as toast ID to prevent duplicate notifications
                 toast.info(`Booking status updated: ${booking.name}`, {
+                  id: `booking-status-${booking.id}`,
                   description: `Status changed from "${lastKnown.status}" to "${booking.status}"`,
                   action: {
                     label: "View",
@@ -372,19 +531,23 @@ export default function BookingsPage() {
                 })
                 }
                 
-                // If this booking is currently selected and dialog is open, refresh it
-                if (currentSelectedBookingId === booking.id && isDialogOpen) {
+                // If this booking is currently selected and view dialog is open, refresh it
+                // Skip if status dialog is open to avoid interrupting user actions
+                if (currentSelectedBookingId === booking.id && viewDialogOpen && !statusDialogOpen) {
                   fetchBookingDetails(booking.id)
                 }
               } else {
                 // Booking was updated but status didn't change (might be auto-update or other admin)
+                // Use booking ID as toast ID to prevent duplicate notifications
                 toast.info(`Booking updated: ${booking.name}`, {
+                  id: `booking-updated-${booking.id}`,
                   description: "This booking was recently updated. Refreshing...",
                   duration: 3000,
                 })
                 
-                // If this booking is currently selected and dialog is open, refresh it
-                if (currentSelectedBookingId === booking.id && isDialogOpen) {
+                // If this booking is currently selected and view dialog is open, refresh it
+                // Skip if status dialog is open to avoid interrupting user actions
+                if (currentSelectedBookingId === booking.id && viewDialogOpen && !statusDialogOpen) {
                   fetchBookingDetails(booking.id)
                 }
               }
@@ -401,10 +564,12 @@ export default function BookingsPage() {
               replaceItem(booking.id, booking)
             })
             
-            // If dialog is open, refresh selected booking details to get latest data
-            if (isDialogOpen && currentSelectedBookingId) {
+            // If view dialog is open, refresh selected booking details to get latest data
+            // Skip if status dialog is open to avoid interrupting user actions
+            if (viewDialogOpen && currentSelectedBookingId && !statusDialogOpen) {
               fetchBookingDetails(currentSelectedBookingId)
             }
+            // Note: Unavailable dates refresh is handled by dedicated useEffect when date change dialog is open
           }
 
             // Update last checked time
@@ -415,14 +580,67 @@ export default function BookingsPage() {
         console.error("Error polling for updates:", error)
       }
     }, 30000) // Poll every 30 seconds
-
+    
     return () => clearInterval(pollInterval)
-  }, [session]) // Only depend on session to prevent constant re-renders
+  }, [session, bookings, replaceItem])
+
+  // Fetch unavailable dates for date change calendar (excludes current booking's dates)
+  const fetchUnavailableDatesForDateChange = useCallback(async (bookingId: string | null) => {
+    try {
+      const url = bookingId 
+        ? `/api/v1/booking/availability?bookingId=${encodeURIComponent(bookingId)}`
+        : "/api/v1/booking/availability"
+      
+      const response = await fetch(url)
+      const json = await response.json()
+      
+      if (json.success) {
+        const unavailableDatesArray = json.data?.unavailableDates || json.unavailableDates || []
+        setUnavailableDatesForDateChange(new Set(unavailableDatesArray))
+        console.log(`[Admin] Unavailable dates fetched for date change (excluding booking ${bookingId || 'none'}): ${unavailableDatesArray.length} dates`)
+      } else {
+        console.error("[Admin] Failed to fetch unavailable dates for date change:", json)
+        setUnavailableDatesForDateChange(new Set())
+      }
+    } catch (error) {
+      console.error("Failed to fetch unavailable dates for date change:", error)
+      setUnavailableDatesForDateChange(new Set())
+    }
+  }, [])
+
+  // Fetch unavailable dates when date change dialog opens and initialize date range toggle
+  useEffect(() => {
+    if (selectedAction === "change_date" && selectedBooking?.id && selectedBooking.status === "confirmed") {
+      // Fetch unavailable dates excluding current booking's dates
+      fetchUnavailableDatesForDateChange(selectedBooking.id)
+      // Initialize date range toggle based on current booking
+      setDateRangeToggle(selectedBooking.end_date ? "multiple" : "single")
+    } else {
+      // Clear unavailable dates when dialog closes
+      setUnavailableDatesForDateChange(new Set())
+      // Reset date range toggle
+      setDateRangeToggle("single")
+    }
+  }, [selectedAction, selectedBooking?.id, selectedBooking?.status, selectedBooking?.end_date, fetchUnavailableDatesForDateChange])
+
+  // Polling integration: Refresh unavailable dates when date change dialog is open
+  useEffect(() => {
+    if (selectedAction === "change_date" && selectedBooking?.id && selectedBooking.status === "confirmed") {
+      // Set up interval to refresh unavailable dates every 30 seconds while dialog is open
+      const refreshInterval = setInterval(() => {
+        fetchUnavailableDatesForDateChange(selectedBooking.id)
+      }, 30000) // Same interval as main polling
+
+      return () => clearInterval(refreshInterval)
+    }
+  }, [selectedAction, selectedBooking?.id, selectedBooking?.status, fetchUnavailableDatesForDateChange])
 
   // Fetch booking details and history
   const fetchBookingDetails = async (bookingId: string) => {
+    setLoadingBookingDetails(true)
     try {
-      const response = await fetch(`/api/admin/bookings/${bookingId}`)
+      // Add cache-busting parameter to ensure fresh data
+      const response = await fetch(buildApiUrl(API_PATHS.adminBooking(bookingId), { t: Date.now() }))
       const json = await response.json()
       
       if (json.success && json.data) {
@@ -434,6 +652,9 @@ export default function BookingsPage() {
         if (booking) {
           setSelectedBooking(booking)
           setStatusHistory(statusHistory)
+          // Store overlapping bookings and confirmed overlap status
+          setOverlappingBookings(json.data.overlappingBookings || [])
+          setHasConfirmedOverlap(json.data.hasConfirmedOverlap || false)
           // Reset postpone mode when opening dialog
           setPostponeMode("user-propose")
           setProposedDateRange("single")
@@ -448,29 +669,27 @@ export default function BookingsPage() {
     } catch (error) {
       toast.error("Failed to load booking details")
       console.error(error)
+    } finally {
+      setLoadingBookingDetails(false)
     }
   }
 
-  // Handle delete booking
-  const handleDeleteBooking = async (bookingId: string) => {
-    // Find the booking to check its status
+  // Handle delete booking - open confirmation dialog
+  const handleDeleteBooking = (bookingId: string) => {
     const booking = bookings.find(b => b.id === bookingId)
-    let statusText = ""
-    if (booking?.status === "rejected" || booking?.status === "cancelled" || booking?.status === "finished") {
-      statusText = booking?.status === "finished"
-        ? "Only admin will be notified. No user email will be sent as the event has already finished."
-        : "Only admin will be notified of this deletion."
-    } else {
-      statusText = "A cancellation email will be sent to the user, and admin will be notified."
+    if (booking) {
+      setBookingToDelete(booking)
+      setDeleteDialogOpen(true)
     }
-    
-    if (!confirm(`Are you sure you want to delete this booking? This action cannot be undone. ${statusText}`)) {
-      return
-    }
+  }
+
+  // Confirm delete booking - actually perform the deletion
+  const confirmDeleteBooking = async () => {
+    if (!bookingToDelete) return
 
     setSaving(true)
     try {
-      const response = await fetch(`/api/admin/bookings/${bookingId}`, {
+      const response = await fetch(API_PATHS.adminBooking(bookingToDelete.id), {
         method: "DELETE",
       })
 
@@ -499,38 +718,37 @@ export default function BookingsPage() {
       
       if (json.success) {
         // Optimistically remove from list
-        if (selectedBooking) {
-          removeItem(selectedBooking.id)
-        }
+        removeItem(bookingToDelete.id)
         const message = json.data?.message || "Booking deleted successfully. Notifications sent if applicable."
-        toast.success(message)
+        toast.success(message, {
+          id: `delete-success-${bookingToDelete.id}`,
+        })
         setViewDialogOpen(false)
         setStatusDialogOpen(false)
+        setDeleteDialogOpen(false)
+        setBookingToDelete(null)
       } else {
         // Rollback on error
         fetchBookings()
         const errorMessage = json.error?.message || "Failed to delete booking"
-        toast.error(errorMessage)
+        toast.error(errorMessage, {
+          id: `delete-error-${bookingToDelete.id}`,
+        })
       }
     } catch (error) {
-      toast.error("Failed to delete booking")
+      toast.error("Failed to delete booking", {
+        id: `delete-error-${bookingToDelete.id}`,
+      })
       console.error(error)
     } finally {
       setSaving(false)
     }
   }
 
-  // Map admin action to status
-  const mapActionToStatus = (action: "accept" | "reject" | "postpone", currentStatus: string): string => {
-    if (action === "accept") {
-      // Accept always maps to "accepted" - backend will handle deposit carry-over logic
-      return "accepted"
-    } else if (action === "reject") {
-      return "rejected"
-    } else if (action === "postpone") {
-      return "postponed"
-    }
-    return currentStatus
+  // Map admin action to status (using state machine)
+  const mapActionToStatusLocal = (action: string, currentStatus: string): string => {
+    // Use state machine to get target status
+    return mapActionToStatus(action as any, currentStatus as any) || currentStatus
   }
 
   // Handle action update with validation
@@ -538,40 +756,25 @@ export default function BookingsPage() {
     e.preventDefault()
     if (!selectedBooking) return
 
-    // Prevent action updates for checked-in bookings
-    if ((selectedBooking.status as string) === "checked-in") {
-      toast.error("Cannot update status for checked-in bookings. Only deletion is allowed.")
-      return
-    }
-
     if (!selectedAction) {
-      toast.error("Please select an action (Accept, Reject, or Postpone)")
+      toast.error("Please select an action")
       return
     }
 
     // Check if booking date is in the past
     const now = getBangkokTime()
-    const checkDate = selectedBooking.proposed_date && selectedBooking.status === "postponed" 
-      ? selectedBooking.proposed_date 
-      : selectedBooking.start_date
-    const startTimestamp = calculateStartTimestamp(checkDate, selectedBooking.start_time || null)
+    const startTimestamp = calculateStartTimestamp(selectedBooking.start_date, selectedBooking.start_time || null)
     const isDateInPast = startTimestamp < now
 
     // Get available actions from state machine
     const availableActions = getAvailableActions(
       selectedBooking.status as any,
-      Boolean(selectedBooking.proposed_date),
       Boolean(selectedBooking.deposit_evidence_url),
       isDateInPast
     )
     
     // Find the selected action definition
-    const actionDef = availableActions.find(
-      (a) => 
-        (selectedAction === "accept" && a.id === "accept") ||
-        (selectedAction === "reject" && a.id === "reject") ||
-        (selectedAction === "postpone" && a.id === "postpone")
-    )
+    const actionDef = availableActions.find((a) => a.id === selectedAction)
 
     if (!actionDef) {
       toast.error(`Action "${selectedAction}" is not available for status "${selectedBooking.status}"`)
@@ -617,29 +820,205 @@ export default function BookingsPage() {
     const adminNotes = formData.get("admin_notes") as string
     
     // Map action to status
-    const status = mapActionToStatus(selectedAction!, selectedBooking.status)
+    const status = mapActionToStatusLocal(selectedAction!, selectedBooking.status)
     
-    // For postpone action: Admin requests user to propose - no dates from admin
-    let proposedDate: string | null = null
-    
-    if (selectedAction === "postpone") {
-      proposedDate = null
+    // Handle date change for confirmed bookings
+    let dateChangePayload: any = {}
+    if (selectedAction === "change_date" && selectedBooking.status === "confirmed") {
+      if (!newStartDate) {
+        toast.error("Please select a new start date")
+        setSaving(false)
+        return
+      }
+      
+      // PRE-SUBMIT REFRESH: Refresh unavailable dates right before submission to minimize race condition window
+      try {
+        await fetchUnavailableDatesForDateChange(selectedBooking.id)
+        console.log("[Admin] Refreshed unavailable dates before submission")
+      } catch (error) {
+        console.error("[Admin] Failed to refresh unavailable dates before submission:", error)
+        // Continue anyway - backend will catch overlaps
+      }
+      
+      // Validate selected dates against latest unavailable dates
+      // CRITICAL: Validate date range consistency (frontend validation matching backend)
+      const startDateStr = dateToBangkokDateString(newStartDate)
+      if (unavailableDatesForDateChange.has(startDateStr)) {
+        toast.error("The selected start date is no longer available. Please choose a different date.")
+        setSaving(false)
+        return
+      }
+      if (newEndDate) {
+        const endDateStr = dateToBangkokDateString(newEndDate)
+        
+        // Check if end date is unavailable
+        if (unavailableDatesForDateChange.has(endDateStr)) {
+          toast.error("The selected end date is no longer available. Please choose a different date.")
+          setSaving(false)
+          return
+        }
+        
+        // Validate that end_date >= start_date
+        if (endDateStr < startDateStr) {
+          toast.error("End date must be after or equal to start date.")
+          setSaving(false)
+          return
+        }
+      }
+      
+      // CRITICAL: If end_date equals start_date, treat as single-day booking
+      // This matches backend validation logic
+      const isEffectivelySingleDay = !newEndDate || dateToBangkokDateString(newEndDate) === startDateStr
+      
+      // Validate time range for single-day bookings (including when end_date equals start_date)
+      if (isEffectivelySingleDay) {
+        const effectiveStartTime = newStartTime || selectedBooking.start_time || null
+        const effectiveEndTime = newEndTime || selectedBooking.end_time || null
+        
+        if (effectiveStartTime && effectiveEndTime) {
+          const parseTime = (timeStr: string): { hour24: number; minutes: number } | null => {
+            const match = timeStr.trim().match(/^(\d{1,2}):(\d{2})$/)
+            if (match) {
+              const hour24 = parseInt(match[1], 10)
+              const minutes = parseInt(match[2] || '00', 10)
+              if (hour24 >= 0 && hour24 <= 23 && minutes >= 0 && minutes <= 59) {
+                return { hour24, minutes }
+              }
+            }
+            return null
+          }
+          
+          const startParsed = parseTime(effectiveStartTime)
+          const endParsed = parseTime(effectiveEndTime)
+          
+          if (startParsed && endParsed) {
+            const startTotal = startParsed.hour24 * 60 + startParsed.minutes
+            const endTotal = endParsed.hour24 * 60 + endParsed.minutes
+            
+            if (endTotal <= startTotal) {
+              toast.error("For single-day bookings, end time must be after start time.")
+              setSaving(false)
+              return
+            }
+          }
+        }
+      }
+      
+      // CRITICAL: Validate that end timestamp > start timestamp (accounts for dates + times)
+      // Use createBangkokTimestamp to ensure correct timezone handling
+      // Pattern: createBangkokTimestamp(dateString, null) then calculateStartTimestamp(timestamp, timeString)
+      const { createBangkokTimestamp: createBangkokTimestampClient } = await import("@/lib/timezone-client")
+      const startDateTimestamp = createBangkokTimestampClient(startDateStr, null)
+      const startTimestamp = calculateStartTimestamp(
+        startDateTimestamp,
+        newStartTime || selectedBooking.start_time || null
+      )
+      
+      let endTimestamp: number
+      if (newEndDate) {
+        const endDateStr = dateToBangkokDateString(newEndDate)
+        const endDateTimestamp = createBangkokTimestampClient(endDateStr, null)
+        const effectiveEndTime = newEndTime || selectedBooking.end_time || null
+        
+        // For multi-day bookings, calculate end timestamp from end_date + end_time
+        if (effectiveEndTime) {
+          const parseTime = (timeStr: string): { hour24: number; minutes: number } | null => {
+            const match = timeStr.trim().match(/^(\d{1,2}):(\d{2})$/)
+            if (match) {
+              const hour24 = parseInt(match[1], 10)
+              const minutes = parseInt(match[2] || '00', 10)
+              if (hour24 >= 0 && hour24 <= 23 && minutes >= 0 && minutes <= 59) {
+                return { hour24, minutes }
+              }
+            }
+            return null
+          }
+          
+          const endParsed = parseTime(effectiveEndTime)
+          if (endParsed) {
+            try {
+              const { TZDate } = await import('@date-fns/tz')
+              const BANGKOK_TIMEZONE = 'Asia/Bangkok'
+              const utcDate = new Date(endDateTimestamp * 1000)
+              const tzDate = new TZDate(utcDate.getTime(), BANGKOK_TIMEZONE)
+              const year = tzDate.getFullYear()
+              const month = tzDate.getMonth()
+              const day = tzDate.getDate()
+              const tzDateWithTime = new TZDate(year, month, day, endParsed.hour24, endParsed.minutes, 0, BANGKOK_TIMEZONE)
+              endTimestamp = Math.floor(tzDateWithTime.getTime() / 1000)
+            } catch (error) {
+              endTimestamp = endDateTimestamp
+            }
+          } else {
+            endTimestamp = endDateTimestamp
+          }
+        } else {
+          endTimestamp = endDateTimestamp
+        }
+      } else {
+        // Single-day booking: calculate end timestamp from start_date + end_time
+        const effectiveEndTime = newEndTime || selectedBooking.end_time || null
+        endTimestamp = calculateStartTimestamp(
+          startDateTimestamp,
+          effectiveEndTime || null
+        )
+      }
+      
+      // Final validation: end timestamp must be > start timestamp
+      if (endTimestamp <= startTimestamp) {
+        toast.error("The booking end date and time must be after the start date and time.")
+        setSaving(false)
+        return
+      }
+      
+      // Check for past date warning
+      const bangkokNow = getBangkokTime()
+      const isPast = startTimestamp < bangkokNow
+      
+      if (isPast && !showPastDateWarning) {
+        toast.error("Please acknowledge the past date warning before proceeding")
+        setSaving(false)
+        return
+      }
+
+      // Simplified end date handling: if toggle is "single", send null to clear end_date
+      // If toggle is "multiple" and newEndDate is set, send it; otherwise send undefined to keep existing
+      const endDateValue = dateRangeToggle === "single" 
+        ? null 
+        : (newEndDate ? dateToBangkokDateString(newEndDate) : undefined)
+      
+      dateChangePayload = {
+        newStartDate: dateToBangkokDateString(newStartDate),
+        newEndDate: endDateValue,
+        newStartTime: newStartTime || selectedBooking.start_time || undefined,
+        newEndTime: newEndTime || selectedBooking.end_time || undefined,
+      }
     }
 
+    // No proposed dates in new flow (date changes handled separately for confirmed bookings)
+    let proposedDate: string | null = null
+
+    // Automatically use admin email for deposit verification when accepting deposit
+    const adminEmail = session?.user?.email || session?.user?.name || "Admin"
+    const shouldVerifyDeposit = (selectedAction === "accept_deposit" && status === "confirmed")
+    const depositVerifiedBy = shouldVerifyDeposit ? adminEmail : undefined
+
     try {
-      const response = await fetch(`/api/admin/bookings/${selectedBooking.id}`, {
+      const response = await fetch(`/api/v1/admin/bookings/${selectedBooking.id}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           status: status,
+          action: selectedAction, // Pass action to API to detect "other channel" actions
           changeReason: changeReason || null,
           adminNotes: adminNotes || null,
+          depositVerifiedBy: depositVerifiedBy, // Automatically use admin email
           proposedDate: proposedDate,
           proposedStartDate: null,
           proposedEndDate: null,
           proposedStartTime: null,
           proposedEndTime: null,
-          depositVerifiedBy: null,
+          ...dateChangePayload,
         }),
       })
 
@@ -651,7 +1030,56 @@ export default function BookingsPage() {
         if (updatedBooking && selectedBooking) {
           replaceItem(selectedBooking.id, updatedBooking)
         }
-        toast.success(`Booking ${selectedAction === "accept" ? "accepted" : selectedAction === "reject" ? "rejected" : "postponed"} successfully. Email notification sent.`)
+        const actionLabels: Record<string, string> = {
+          accept: "accepted",
+          reject: "rejected",
+          accept_deposit: "deposit accepted",
+          accept_deposit_other_channel: "confirmed (other channel)",
+          confirm_other_channel: "confirmed (other channel)",
+          reject_deposit: "deposit rejected",
+          cancel: "cancelled",
+          change_date: "date changed"
+        }
+        const actionLabel = actionLabels[selectedAction || ""] || "updated"
+        const emailMessage = selectedAction === "change_date" 
+          ? "Email notification sent to user about date change."
+          : "Email notification sent."
+        toast.success(`Booking ${actionLabel} successfully. ${emailMessage}`)
+        
+        // Invalidate admin stats cache to update notification badges
+        // This triggers automatic refetch of stats without manual polling
+        if (typeof window !== 'undefined') {
+          const event = new CustomEvent('invalidateAdminStats')
+          window.dispatchEvent(event)
+        }
+        
+        // Invalidate bookings cache to trigger refetch
+        // This ensures the list updates immediately after action
+        if (typeof window !== 'undefined') {
+          const event = new CustomEvent('invalidateAdminBookings')
+          window.dispatchEvent(event)
+        }
+        
+        // Reset date change state
+        setNewStartDate(null)
+        setNewEndDate(null)
+        setNewStartTime("")
+        setNewEndTime("")
+        setShowPastDateWarning(false)
+        setDateRangeToggle("single")
+        
+        // Refresh unavailable dates if date was changed (to reflect new blocked dates)
+        if (selectedAction === "change_date" && selectedBooking?.id) {
+          fetchUnavailableDatesForDateChange(selectedBooking.id)
+        }
+        
+        // CRITICAL: Close ALL dialogs when booking is cancelled or restored
+        // This prevents showing stale data in modals after status changes
+        const newStatus = updatedBooking?.status || selectedBooking?.status
+        const isCancelled = newStatus === "cancelled"
+        const isRestoration = selectedBooking?.status === "cancelled" && 
+          (newStatus === "pending_deposit" || newStatus === "paid_deposit" || newStatus === "confirmed")
+        
         setStatusDialogOpen(false)
         setSelectedAction(null)
         setSelectedStatusInForm("")
@@ -660,7 +1088,14 @@ export default function BookingsPage() {
         setConfirmationDialogOpen(false)
         setPendingAction(null)
         setPendingValidation(null)
-        if (viewDialogOpen) {
+        
+        // Close view dialog if booking is cancelled or restored
+        // This ensures user sees updated booking list immediately without stale modal data
+        if (isCancelled || isRestoration) {
+          setViewDialogOpen(false)
+          setSelectedBooking(null)
+        } else if (viewDialogOpen) {
+          // For other status changes, refresh booking details in view dialog
           fetchBookingDetails(selectedBooking.id)
         }
       } else {
@@ -740,28 +1175,21 @@ export default function BookingsPage() {
   const getStatusBadge = (status: string) => {
     const variants: Record<string, "default" | "secondary" | "destructive" | "outline"> = {
       pending: "outline",
-      accepted: "default",
-      paid_deposit: "secondary",
-      rejected: "destructive",
-      postponed: "secondary",
+      pending_deposit: "secondary",
+      confirmed: "default",
       cancelled: "destructive",
       finished: "default",
-      "checked-in": "default",
     }
     const colors: Record<string, string> = {
       pending: "bg-yellow-100 text-yellow-800 border-yellow-300",
-      accepted: "bg-green-100 text-green-800 border-green-300",
-      paid_deposit: "bg-purple-100 text-purple-800 border-purple-300",
       pending_deposit: "bg-orange-100 text-orange-800 border-orange-300",
-      rejected: "bg-red-100 text-red-800 border-red-300",
-      postponed: "bg-blue-100 text-blue-800 border-blue-300",
+      confirmed: "bg-green-100 text-green-800 border-green-300",
       cancelled: "bg-gray-100 text-gray-800 border-gray-300",
       finished: "bg-gray-100 text-gray-800 border-gray-300",
-      "checked-in": "bg-emerald-100 text-emerald-800 border-emerald-300",
     }
     return (
       <Badge className={colors[status] || ""} variant={variants[status] || "default"}>
-        {status === "checked-in" ? "Checked In" : status === "paid_deposit" ? "Paid Deposit" : status === "pending_deposit" ? "Pending Deposit" : status.charAt(0).toUpperCase() + status.slice(1)}
+        {status === "pending_deposit" ? "Pending Deposit" : status === "confirmed" ? "Confirmed" : status.charAt(0).toUpperCase() + status.slice(1)}
       </Badge>
     )
   }
@@ -852,7 +1280,9 @@ export default function BookingsPage() {
       </div>
 
       {/* Filters */}
-      <div className="mb-6 flex flex-col sm:flex-row gap-4">
+      <div className="mb-6 space-y-4">
+        {/* First Row: Status, Event Type, Sort By, Sort Order */}
+        <div className="flex flex-col sm:flex-row gap-4">
         <Select value={statusFilter} onValueChange={setStatusFilter}>
           <SelectTrigger className="w-full sm:w-48">
             <SelectValue placeholder="Filter by status" />
@@ -860,16 +1290,81 @@ export default function BookingsPage() {
           <SelectContent>
             <SelectItem value="all">All Statuses</SelectItem>
             <SelectItem value="pending">Pending</SelectItem>
-            <SelectItem value="accepted">Accepted</SelectItem>
-            <SelectItem value="postponed">Postponed</SelectItem>
+              <SelectItem value="pending_deposit">Pending Deposit</SelectItem>
+              <SelectItem value="confirmed">Confirmed</SelectItem>
           </SelectContent>
         </Select>
+          <Select value={eventTypeFilter} onValueChange={setEventTypeFilter}>
+            <SelectTrigger className="w-full sm:w-48">
+              <SelectValue placeholder="Filter by event type" />
+            </SelectTrigger>
+            <SelectContent>
+              {eventTypes.map((type) => (
+                <SelectItem key={type.value} value={type.value}>
+                  {type.label}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          <Select value={sortBy} onValueChange={(value) => setSortBy(value as typeof sortBy)}>
+            <SelectTrigger className="w-full sm:w-48">
+              <SelectValue placeholder="Sort by" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="created_at">Created Date</SelectItem>
+              <SelectItem value="start_date">Start Date</SelectItem>
+              <SelectItem value="name">Name</SelectItem>
+              <SelectItem value="updated_at">Updated Date</SelectItem>
+            </SelectContent>
+          </Select>
+          <Select value={sortOrder} onValueChange={(value) => setSortOrder(value as typeof sortOrder)}>
+            <SelectTrigger className="w-full sm:w-32">
+              <SelectValue placeholder="Order" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="DESC">Descending</SelectItem>
+              <SelectItem value="ASC">Ascending</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
+        {/* Second Row: Search Fields */}
+        <div className="flex flex-col sm:flex-row gap-4">
+          <Input
+            placeholder="Search by reference number..."
+            value={referenceNumberFilter}
+            onChange={(e) => setReferenceNumberFilter(e.target.value)}
+            className="w-full sm:w-48"
+          />
+          <Input
+            placeholder="Search by name..."
+            value={nameFilter}
+            onChange={(e) => setNameFilter(e.target.value)}
+            className="w-full sm:w-48"
+          />
+          <Input
+            placeholder="Search by phone..."
+            value={phoneFilter}
+            onChange={(e) => setPhoneFilter(e.target.value)}
+            className="w-full sm:w-48"
+          />
         <Input
           placeholder="Filter by email..."
           value={emailFilter}
           onChange={(e) => setEmailFilter(e.target.value)}
           className="w-full sm:w-64"
         />
+        </div>
+        <div className="flex items-center gap-2 mt-2">
+          <label className="flex items-center gap-2 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={showOverlappingOnly}
+              onChange={(e) => setShowOverlappingOnly(e.target.checked)}
+              className="w-4 h-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500"
+            />
+            <span className="text-sm font-medium text-gray-700">Show Overlapping Bookings Only</span>
+          </label>
+        </div>
       </div>
 
       {/* Bookings Table */}
@@ -886,6 +1381,12 @@ export default function BookingsPage() {
             <table className="min-w-full divide-y divide-gray-200">
               <thead className="bg-gray-50">
                 <tr>
+                    <th className="px-6 xl:px-8 py-4 text-left text-xs font-medium text-gray-500 uppercase tracking-wider w-16">
+                    No.
+                  </th>
+                    <th className="px-6 xl:px-8 py-4 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    Booking Reference
+                  </th>
                     <th className="px-6 xl:px-8 py-4 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                     Name
                   </th>
@@ -894,9 +1395,6 @@ export default function BookingsPage() {
                   </th>
                     <th className="px-6 xl:px-8 py-4 text-left text-xs font-medium text-gray-500 uppercase tracking-wider min-w-[180px]">
                     Date/Time
-                  </th>
-                    <th className="px-6 xl:px-8 py-4 text-left text-xs font-medium text-gray-500 uppercase tracking-wider min-w-[180px]">
-                    Proposed Date
                   </th>
                     <th className="px-6 xl:px-8 py-4 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                     Status
@@ -910,7 +1408,7 @@ export default function BookingsPage() {
                 </tr>
               </thead>
               <tbody className="bg-white divide-y divide-gray-200">
-                {bookings.map((booking) => {
+                {bookings.map((booking, index) => {
                   const hasNewResponse = booking.user_response && booking.response_date && 
                     (booking.response_date * 1000) > lastCheckedAtRef.current - 300000 // New if within last 5 minutes
                   
@@ -919,6 +1417,14 @@ export default function BookingsPage() {
                     key={booking.id} 
                     className={`hover:bg-gray-50 ${hasNewResponse ? 'bg-blue-50 border-l-4 border-l-blue-500' : ''}`}
                   >
+                    <td className="px-6 xl:px-8 py-4 whitespace-nowrap text-sm text-gray-500">
+                      {index + 1}
+                    </td>
+                    <td className="px-6 xl:px-8 py-4 whitespace-nowrap">
+                      <div className="text-sm font-medium text-gray-900">
+                        {getBookingReferenceNumber(booking)}
+                      </div>
+                    </td>
                     <td className="px-6 xl:px-8 py-4 whitespace-nowrap">
                       <div className="flex items-center gap-2">
                         <div className="text-sm font-medium text-gray-900">{booking.name}</div>
@@ -962,54 +1468,6 @@ export default function BookingsPage() {
                         <span className="whitespace-normal break-words">{formatTimeForDisplay(booking.start_time)} - {formatTimeForDisplay(booking.end_time)}</span>
                       </div>
                     </td>
-                    <td className="px-6 xl:px-8 py-4 min-w-[180px] whitespace-normal">
-                      {booking.proposed_date ? (
-                        <div>
-                        <div className="text-sm text-gray-900">
-                          {formatDate(booking.proposed_date)}
-                          {booking.proposed_end_date && booking.proposed_end_date !== booking.proposed_date && (
-                            <span> - {formatDate(booking.proposed_end_date)}</span>
-                          )}
-                          </div>
-                          {/* Parse and display times from user_response */}
-                          {booking.user_response && (() => {
-                            const startTimeMatch = booking.user_response.match(/Start Time: ([^,)]+)/)
-                            const endTimeMatch = booking.user_response.match(/End Time: ([^,)]+)/)
-                            if (startTimeMatch || endTimeMatch) {
-                              // Parse 24-hour format times from user_response
-                              const parseTime = (timeStr: string): string | null => {
-                                const match = timeStr.trim().match(/^(\d{1,2}):(\d{2})$/)
-                                if (match) {
-                                  const hours = parseInt(match[1], 10)
-                                  const minutes = match[2] || '00'
-                                  if (hours >= 0 && hours <= 23 && parseInt(minutes) >= 0 && parseInt(minutes) <= 59) {
-                                    return `${hours.toString().padStart(2, '0')}:${minutes}`
-                                  }
-                                }
-                                return null
-                              }
-                              const startTime = startTimeMatch ? parseTime(startTimeMatch[1].trim()) : null
-                              const endTime = endTimeMatch ? parseTime(endTimeMatch[1].trim()) : null
-                              return (
-                                <div className="text-sm text-gray-500 flex items-center gap-1 mt-1">
-                                  <Clock className="w-3 h-3" />
-                                  {startTime && endTime 
-                                    ? `${formatTimeForDisplay(startTime)} - ${formatTimeForDisplay(endTime)}`
-                                    : startTime 
-                                      ? formatTimeForDisplay(startTime)
-                                      : endTime 
-                                        ? formatTimeForDisplay(endTime)
-                                        : null}
-                                </div>
-                              )
-                            }
-                            return null
-                          })()}
-                        </div>
-                      ) : (
-                        <div className="text-sm text-gray-400">-</div>
-                      )}
-                    </td>
                     <td className="px-6 xl:px-8 py-4 whitespace-nowrap">
                       {getStatusBadge(booking.status)}
                     </td>
@@ -1021,10 +1479,10 @@ export default function BookingsPage() {
                         <Button
                           size="sm"
                           variant="outline"
-                          onClick={() => {
-                            setSelectedBooking(booking)
+                          onClick={async () => {
                             setViewDialogOpen(true)
-                            fetchBookingDetails(booking.id)
+                            // Don't set selectedBooking from list - wait for fresh data from API
+                            await fetchBookingDetails(booking.id)
                           }}
                         >
                           <Eye className="w-4 h-4 mr-1" />
@@ -1051,7 +1509,7 @@ export default function BookingsPage() {
 
           {/* Mobile/Tablet Card View */}
           <div className="lg:hidden space-y-4">
-            {bookings.map((booking) => {
+            {bookings.map((booking, index) => {
               const hasNewResponse = booking.user_response && booking.response_date && 
                 (booking.response_date * 1000) > lastCheckedAtRef.current - 300000
               
@@ -1063,6 +1521,7 @@ export default function BookingsPage() {
                   <div className="flex items-start justify-between mb-3">
                     <div className="flex-1">
                       <div className="flex items-center gap-2 mb-2">
+                        <span className="text-xs font-medium text-gray-500">#{index + 1}</span>
                         <h3 className="text-base sm:text-lg font-semibold text-gray-900">{booking.name}</h3>
                         {booking.user_response && (
                           <Badge variant="outline" className="bg-blue-100 text-blue-800 border-blue-300">
@@ -1070,6 +1529,10 @@ export default function BookingsPage() {
                             Response
                           </Badge>
                         )}
+                      </div>
+                      <div className="mb-2">
+                        <div className="text-xs font-medium text-gray-500 mb-0.5">Booking Reference</div>
+                        <div className="text-sm font-medium text-gray-900">{getBookingReferenceNumber(booking)}</div>
                       </div>
                       <div className="flex flex-wrap gap-x-4 gap-y-1 text-sm text-gray-500">
                         <div className="flex items-center gap-1">
@@ -1116,50 +1579,6 @@ export default function BookingsPage() {
                       </div>
                     </div>
 
-                    {booking.proposed_date && (
-                      <div>
-                        <div className="text-xs font-medium text-gray-500 mb-1">Proposed Date</div>
-                        <div className="text-sm text-gray-900">
-                          {formatDate(booking.proposed_date)}
-                          {booking.proposed_end_date && booking.proposed_end_date !== booking.proposed_date && (
-                            <span> - {formatDate(booking.proposed_end_date)}</span>
-                          )}
-                        </div>
-                        {booking.user_response && (() => {
-                          const startTimeMatch = booking.user_response.match(/Start Time: ([^,)]+)/)
-                          const endTimeMatch = booking.user_response.match(/End Time: ([^,)]+)/)
-                          if (startTimeMatch || endTimeMatch) {
-                            const parseTime = (timeStr: string): string | null => {
-                              const match = timeStr.trim().match(/^(\d{1,2}):(\d{2})$/)
-                              if (match) {
-                                const hours = parseInt(match[1], 10)
-                                const minutes = match[2] || '00'
-                                if (hours >= 0 && hours <= 23 && parseInt(minutes) >= 0 && parseInt(minutes) <= 59) {
-                                  return `${hours.toString().padStart(2, '0')}:${minutes}`
-                                }
-                              }
-                              return null
-                            }
-                            const startTime = startTimeMatch ? parseTime(startTimeMatch[1].trim()) : null
-                            const endTime = endTimeMatch ? parseTime(endTimeMatch[1].trim()) : null
-                            return (
-                              <div className="text-sm text-gray-500 flex items-center gap-1 mt-1">
-                                <Clock className="w-3 h-3 flex-shrink-0" />
-                                {startTime && endTime 
-                                  ? `${formatTimeForDisplay(startTime)} - ${formatTimeForDisplay(endTime)}`
-                                  : startTime 
-                                    ? formatTimeForDisplay(startTime)
-                                    : endTime 
-                                      ? formatTimeForDisplay(endTime)
-                                      : null}
-                              </div>
-                            )
-                          }
-                          return null
-                        })()}
-                      </div>
-                    )}
-
                     <div>
                       <div className="text-xs font-medium text-gray-500 mb-1">Created</div>
                       <div className="text-sm text-gray-500">{formatTimestamp(booking.created_at)}</div>
@@ -1171,10 +1590,10 @@ export default function BookingsPage() {
                       size="sm"
                       variant="outline"
                       className="flex-1"
-                      onClick={() => {
-                        setSelectedBooking(booking)
+                      onClick={async () => {
                         setViewDialogOpen(true)
-                        fetchBookingDetails(booking.id)
+                        // Don't set selectedBooking from list - wait for fresh data from API
+                        await fetchBookingDetails(booking.id)
                       }}
                     >
                       <Eye className="w-4 h-4 mr-1" />
@@ -1207,7 +1626,12 @@ export default function BookingsPage() {
               View and manage booking information
             </DialogDescription>
           </DialogHeader>
-          {selectedBooking && (
+          {loadingBookingDetails ? (
+            <div className="flex items-center justify-center py-8">
+              <Loader2 className="w-6 h-6 animate-spin text-gray-400" />
+              <span className="ml-2 text-gray-600">Loading booking details...</span>
+            </div>
+          ) : selectedBooking ? (
             <div className="space-y-6">
               {/* Status and Actions */}
               <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
@@ -1220,18 +1644,18 @@ export default function BookingsPage() {
                       Deposit Verified
                     </Badge>
                   )}
-                  {selectedBooking.proposed_date && selectedBooking.status === "postponed" && (
+                  {false && selectedBooking && (
                     <div className="text-sm text-gray-600">
                       <div>
-                      Proposed Date: {formatDate(selectedBooking.proposed_date)}
-                        {selectedBooking.proposed_end_date && selectedBooking.proposed_end_date !== selectedBooking.proposed_date && (
-                          <span> - {formatDate(selectedBooking.proposed_end_date)}</span>
+                      Proposed Date: {formatDate(selectedBooking?.proposed_date)}
+                        {selectedBooking?.proposed_end_date && selectedBooking?.proposed_end_date !== selectedBooking?.proposed_date && selectedBooking && (
+                          <span> - {formatDate(selectedBooking?.proposed_end_date)}</span>
                         )}
                       </div>
                       {/* Parse and display times from user_response */}
-                      {selectedBooking.user_response && (() => {
-                        const startTimeMatch = selectedBooking.user_response.match(/Start Time: ([^,)]+)/)
-                        const endTimeMatch = selectedBooking.user_response.match(/End Time: ([^,)]+)/)
+                      {selectedBooking?.user_response && (() => {
+                        const startTimeMatch = selectedBooking?.user_response?.match(/Start Time: ([^,)]+)/)
+                        const endTimeMatch = selectedBooking?.user_response?.match(/End Time: ([^,)]+)/)
                         if (startTimeMatch || endTimeMatch) {
                           // Parse 24-hour format times from user_response
                           const parseTime = (timeStr: string): string | null => {
@@ -1245,8 +1669,10 @@ export default function BookingsPage() {
                             }
                             return null
                           }
-                          const startTime = startTimeMatch ? parseTime(startTimeMatch[1].trim()) : null
-                          const endTime = endTimeMatch ? parseTime(endTimeMatch[1].trim()) : null
+                          const startTimeStr = startTimeMatch?.[1]
+                          const endTimeStr = endTimeMatch?.[1]
+                          const startTime = startTimeStr ? parseTime(String(startTimeStr).trim()) : null
+                          const endTime = endTimeStr ? parseTime(String(endTimeStr).trim()) : null
                           return (
                             <div className="text-gray-500 mt-1">
                               {startTime && endTime 
@@ -1269,8 +1695,16 @@ export default function BookingsPage() {
                     onClick={() => {
                       setStatusDialogOpen(true)
                     }}
-                    disabled={selectedBooking.status === "checked-in"}
-                    title={selectedBooking.status === "checked-in" ? "Checked-in bookings cannot have their status changed" : ""}
+                    disabled={
+                      selectedBooking.status === "finished"
+                    }
+                    title={
+                      selectedBooking.status === "finished" 
+                        ? "Finished bookings cannot have their status changed" 
+                        : hasConfirmedOverlap && selectedBooking.status !== "cancelled"
+                        ? "This booking is blocked by a confirmed overlap. You can only cancel it."
+                        : ""
+                    }
                     className="w-full sm:w-auto"
                   >
                     Update Status
@@ -1289,6 +1723,66 @@ export default function BookingsPage() {
 
               {/* Booking State Info - Shows warnings and state information */}
               <BookingStateInfo booking={selectedBooking as any} />
+
+              {/* Overlap Warning - Show if there are overlapping bookings */}
+              {overlappingBookings.length > 0 && (
+                <Alert variant={hasConfirmedOverlap ? "destructive" : "default"} className={hasConfirmedOverlap ? "bg-red-50 border-red-200" : "bg-yellow-50 border-yellow-200"}>
+                  <AlertCircle className="h-4 w-4" />
+                  <AlertTitle className={hasConfirmedOverlap ? "text-red-900" : "text-yellow-900"}>
+                    {hasConfirmedOverlap 
+                      ? "⚠️ Booking Blocked by Confirmed Overlap" 
+                      : "ℹ️ Overlapping Bookings Detected"}
+                  </AlertTitle>
+                  <AlertDescription className={hasConfirmedOverlap ? "text-red-800" : "text-yellow-800"}>
+                    {hasConfirmedOverlap ? (
+                      <div className="space-y-2">
+                        <p className="font-semibold">
+                          Another booking with the same date/time is already CONFIRMED. You can only CANCEL this booking until the confirmed booking is cancelled.
+                        </p>
+                        <div className="mt-2 space-y-1">
+                          <p className="text-sm font-medium">Overlapping bookings:</p>
+                          <ul className="list-disc list-inside space-y-1 text-sm">
+                            {overlappingBookings.map((overlap) => (
+                              <li key={overlap.id}>
+                                {overlap.status === "confirmed" && (
+                                  <span className="font-bold text-red-700">[CONFIRMED - BLOCKING]</span>
+                                )}{" "}
+                                {overlap.reference_number ? `${overlap.reference_number} - ` : ""}
+                                {overlap.name} ({overlap.status})
+                                {" - "}
+                                {formatDate(overlap.start_date)}
+                                {overlap.end_date && overlap.end_date !== overlap.start_date && ` - ${formatDate(overlap.end_date)}`}
+                                {overlap.start_time && `, ${formatTimeForDisplay(overlap.start_time)} - ${formatTimeForDisplay(overlap.end_time)}`}
+                              </li>
+                            ))}
+                          </ul>
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="space-y-2">
+                        <p>
+                          This booking overlaps with {overlappingBookings.length} other booking{overlappingBookings.length > 1 ? "s" : ""}. Please review carefully before confirming.
+                        </p>
+                        <div className="mt-2 space-y-1">
+                          <p className="text-sm font-medium">Overlapping bookings:</p>
+                          <ul className="list-disc list-inside space-y-1 text-sm">
+                            {overlappingBookings.map((overlap) => (
+                              <li key={overlap.id}>
+                                {overlap.reference_number ? `${overlap.reference_number} - ` : ""}
+                                {overlap.name} ({overlap.status})
+                                {" - "}
+                                {formatDate(overlap.start_date)}
+                                {overlap.end_date && overlap.end_date !== overlap.start_date && ` - ${formatDate(overlap.end_date)}`}
+                                {overlap.start_time && `, ${formatTimeForDisplay(overlap.start_time)} - ${formatTimeForDisplay(overlap.end_time)}`}
+                              </li>
+                            ))}
+                          </ul>
+                        </div>
+                      </div>
+                    )}
+                  </AlertDescription>
+                </Alert>
+              )}
 
               {/* Contact Information */}
               <div>
@@ -1378,6 +1872,35 @@ export default function BookingsPage() {
                 </div>
               )}
 
+              {/* Deposit Evidence Section - Show for paid_deposit and pending_deposit with evidence */}
+              {(selectedBooking.status === "paid_deposit" || selectedBooking.status === "pending_deposit") && selectedBooking.deposit_evidence_url && (
+                <div>
+                  <h3 className="text-lg font-semibold mb-3">Deposit Evidence</h3>
+                  <div className="bg-purple-50 border border-purple-200 rounded p-4">
+                    <div className="space-y-3">
+                      <div>
+                        <Label>Deposit Evidence Image</Label>
+                        <a 
+                          href={`/api/v1/admin/deposit/${selectedBooking.id}/image`}
+                          target="_blank" 
+                          rel="noopener noreferrer"
+                          className="text-sm text-blue-600 hover:underline block mt-1 font-medium"
+                        >
+                          View Deposit Evidence →
+                        </a>
+                      </div>
+                      {selectedBooking.deposit_verified_at && (
+                        <div className="bg-green-50 border border-green-200 rounded p-3">
+                          <p className="text-sm text-green-800">
+                            ✓ Verified by {selectedBooking.deposit_verified_by || "Admin"} on {formatTimestamp(selectedBooking.deposit_verified_at)}
+                          </p>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              )}
+
               {/* Admin Notes */}
               {selectedBooking.admin_notes && (
                 <div>
@@ -1435,7 +1958,7 @@ export default function BookingsPage() {
                 })()}
               </div>
             </div>
-          )}
+          ) : null}
         </DialogContent>
       </Dialog>
 
@@ -1445,13 +1968,23 @@ export default function BookingsPage() {
           <DialogHeader>
             <DialogTitle>Admin Action</DialogTitle>
             <DialogDescription>
-              {selectedBooking?.status === "checked-in" 
-                ? "This booking is checked-in. Status changes are not allowed."
+              {selectedBooking?.status === "finished" 
+                ? "This booking is finished. Status changes are not allowed."
                 : "Select an action to take on this booking. An email notification will be sent to the user."}
             </DialogDescription>
           </DialogHeader>
           {selectedBooking && (
             <form onSubmit={handleActionUpdate} className="space-y-4" data-booking-form="true">
+              {/* Show warning if blocked by confirmed overlap */}
+              {hasConfirmedOverlap && selectedBooking.status !== "cancelled" && (
+                <Alert variant="destructive" className="bg-red-50 border-red-200">
+                  <AlertCircle className="h-4 w-4" />
+                  <AlertTitle className="text-red-900">⚠️ Booking Blocked by Confirmed Overlap</AlertTitle>
+                  <AlertDescription className="text-red-800">
+                    Another booking with the same date/time is already CONFIRMED. You can only CANCEL this booking until the confirmed booking is cancelled or auto-cancelled.
+                  </AlertDescription>
+                </Alert>
+              )}
               {(selectedBooking.status as string) === "checked-in" ? (
                 <div className="space-y-4">
                 <div className="bg-yellow-50 border border-yellow-200 text-yellow-800 p-4 rounded">
@@ -1470,7 +2003,7 @@ export default function BookingsPage() {
                     </Button>
                 </div>
                 </div>
-              ) : (selectedBooking.status as string) === "paid_deposit" ? (
+              ) : (selectedBooking.status as string) === "pending_deposit" && selectedBooking.deposit_evidence_url ? (
                 // Warning message is shown in the deposit verification section below, so we don't duplicate it here
                 null
               ) : (
@@ -1479,30 +2012,67 @@ export default function BookingsPage() {
                   {(() => {
                     // Get available actions from state machine
                     // Check if booking date is in the past
-                    const checkDate = selectedBooking.proposed_date && selectedBooking.status === "postponed" 
-                      ? selectedBooking.proposed_date 
-                      : selectedBooking.start_date
-                    const startTimestamp = calculateStartTimestamp(checkDate, selectedBooking.start_time || null)
+                    const startTimestamp = calculateStartTimestamp(selectedBooking.start_date, selectedBooking.start_time || null)
                     const now = getBangkokTime()
                     const isDateInPast = startTimestamp < now
 
                     const availableActions = getAvailableActions(
                       selectedBooking.status as any,
-                      Boolean(selectedBooking.proposed_date),
                       Boolean(selectedBooking.deposit_evidence_url),
                       isDateInPast
                     )
                     const acceptAction = availableActions.find(a => a.id === "accept")
                     const rejectAction = availableActions.find(a => a.id === "reject")
-                    const postponeAction = availableActions.find(a => a.id === "postpone")
+                    const acceptDepositAction = availableActions.find(a => a.id === "accept_deposit")
+                    const acceptDepositOtherChannelAction = availableActions.find(a => a.id === "accept_deposit_other_channel")
+                    const confirmOtherChannelAction = availableActions.find(a => a.id === "confirm_other_channel")
+                    const rejectDepositAction = availableActions.find(a => a.id === "reject_deposit")
+                    const cancelAction = availableActions.find(a => a.id === "cancel")
                     
+                    // If blocked by confirmed overlap, only show cancel button
+                    // Always allow cancel when blocked by confirmed overlap, regardless of status
+                    if (hasConfirmedOverlap && selectedBooking.status !== "cancelled") {
+                      return (
+                        <div className="space-y-4">
+                          <Alert variant="destructive" className="bg-red-50 border-red-200">
+                            <AlertCircle className="h-4 w-4" />
+                            <AlertTitle className="text-red-900">Actions Restricted</AlertTitle>
+                            <AlertDescription className="text-red-800">
+                              This booking is blocked by a confirmed overlap. Only cancellation is allowed.
+                            </AlertDescription>
+                          </Alert>
+                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mt-2">
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setSelectedAction("cancel")
+                                setSelectedStatusInForm("cancelled")
+                              }}
+                              className={`p-4 rounded-lg border-2 transition-all text-center ${
+                                selectedAction === "cancel"
+                                  ? "border-red-500 bg-red-50"
+                                  : "border-gray-200 hover:border-red-300"
+                              }`}
+                              disabled={saving}
+                            >
+                              <Ban className={`w-6 h-6 mx-auto mb-2 ${selectedAction === "cancel" ? "text-red-600" : "text-gray-400"}`} />
+                              <div className="font-semibold text-sm">Cancel</div>
+                              <div className="text-xs text-gray-500 mt-1">Cancel booking</div>
+                            </button>
+                          </div>
+                        </div>
+                      )
+                    }
+                    
+                    // Render action buttons based on current status
+                    if (selectedBooking.status === "pending") {
                     return (
-                      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mt-2">
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mt-2">
                         <button
                           type="button"
                           onClick={() => {
                             setSelectedAction("accept")
-                            setSelectedStatusInForm("accepted")
+                              setSelectedStatusInForm("pending_deposit")
                           }}
                           className={`p-4 rounded-lg border-2 transition-all text-center ${
                             selectedAction === "accept"
@@ -1514,13 +2084,13 @@ export default function BookingsPage() {
                         >
                           <CheckCircle2 className={`w-6 h-6 mx-auto mb-2 ${selectedAction === "accept" ? "text-green-600" : "text-gray-400"}`} />
                           <div className="font-semibold text-sm">Accept</div>
-                          <div className="text-xs text-gray-500 mt-1">Approve booking</div>
+                            <div className="text-xs text-gray-500 mt-1">Approve booking (pending deposit)</div>
                         </button>
                         <button
                           type="button"
                           onClick={() => {
                             setSelectedAction("reject")
-                            setSelectedStatusInForm("rejected")
+                              setSelectedStatusInForm("cancelled")
                           }}
                           className={`p-4 rounded-lg border-2 transition-all text-center ${
                             selectedAction === "reject"
@@ -1534,39 +2104,400 @@ export default function BookingsPage() {
                           <div className="font-semibold text-sm">Reject</div>
                           <div className="text-xs text-gray-500 mt-1">Decline booking</div>
                         </button>
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setSelectedAction("postpone")
-                            setSelectedStatusInForm("postponed")
-                          }}
-                          className={`p-4 rounded-lg border-2 transition-all text-center ${
-                            selectedAction === "postpone"
-                              ? "border-orange-500 bg-orange-50"
-                              : "border-gray-200 hover:border-orange-300"
-                          } ${!postponeAction ? "opacity-50 cursor-not-allowed" : ""}`}
-                          disabled={saving || !postponeAction}
-                          title={!postponeAction ? "Postpone action is not available for this status" : ""}
-                        >
-                          <CalendarX className={`w-6 h-6 mx-auto mb-2 ${selectedAction === "postpone" ? "text-orange-600" : "text-gray-400"}`} />
-                          <div className="font-semibold text-sm">Postpone</div>
-                          <div className="text-xs text-gray-500 mt-1">Request new date</div>
-                        </button>
+                        </div>
+                      )
+                    } else if (selectedBooking.status === "pending_deposit") {
+                      return (
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mt-2">
+                          {confirmOtherChannelAction && (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setSelectedAction("confirm_other_channel")
+                                setSelectedStatusInForm("confirmed")
+                                setOtherChannelDialogOpen(true)
+                              }}
+                              className={`p-4 rounded-lg border-2 transition-all text-center ${
+                                selectedAction === "confirm_other_channel"
+                                  ? "border-amber-500 bg-amber-50"
+                                  : "border-amber-300 hover:border-amber-400 bg-amber-50/50"
+                              }`}
+                              disabled={saving}
+                            >
+                              <Phone className={`w-6 h-6 mx-auto mb-2 ${selectedAction === "confirm_other_channel" ? "text-amber-700" : "text-amber-600"}`} />
+                              <div className="font-semibold text-sm text-amber-900">Confirm (Other Channel)</div>
+                              <div className="text-xs text-amber-700 mt-1">Verified via phone/in-person</div>
+                            </button>
+                          )}
+                          {availableActions.find(a => a.id === "cancel") && (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setSelectedAction("cancel")
+                                setSelectedStatusInForm("cancelled")
+                              }}
+                              className={`p-4 rounded-lg border-2 transition-all text-center ${
+                                selectedAction === "cancel"
+                                  ? "border-red-500 bg-red-50"
+                                  : "border-gray-200 hover:border-red-300"
+                              }`}
+                              disabled={saving}
+                            >
+                              <Ban className={`w-6 h-6 mx-auto mb-2 ${selectedAction === "cancel" ? "text-red-600" : "text-gray-400"}`} />
+                              <div className="font-semibold text-sm">Cancel</div>
+                              <div className="text-xs text-gray-500 mt-1">Cancel booking</div>
+                            </button>
+                          )}
                       </div>
                     )
+                    } else if (selectedBooking.status === "paid_deposit") {
+                      return (
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mt-2">
+                          {acceptDepositAction && (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setSelectedAction("accept_deposit")
+                                setSelectedStatusInForm("confirmed")
+                              }}
+                              className={`p-4 rounded-lg border-2 transition-all text-center ${
+                                selectedAction === "accept_deposit"
+                                  ? "border-green-500 bg-green-50"
+                                  : "border-gray-200 hover:border-green-300"
+                              }`}
+                              disabled={saving}
+                            >
+                              <CheckCircle2 className={`w-6 h-6 mx-auto mb-2 ${selectedAction === "accept_deposit" ? "text-green-600" : "text-gray-400"}`} />
+                              <div className="font-semibold text-sm">Accept Deposit</div>
+                              <div className="text-xs text-gray-500 mt-1">Confirm booking</div>
+                            </button>
+                          )}
+                          {acceptDepositOtherChannelAction && (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setSelectedAction("accept_deposit_other_channel")
+                                setSelectedStatusInForm("confirmed")
+                                setOtherChannelDialogOpen(true)
+                              }}
+                              className={`p-4 rounded-lg border-2 transition-all text-center ${
+                                selectedAction === "accept_deposit_other_channel"
+                                  ? "border-amber-500 bg-amber-50"
+                                  : "border-amber-300 hover:border-amber-400 bg-amber-50/50"
+                              }`}
+                              disabled={saving}
+                            >
+                              <Phone className={`w-6 h-6 mx-auto mb-2 ${selectedAction === "accept_deposit_other_channel" ? "text-amber-700" : "text-amber-600"}`} />
+                              <div className="font-semibold text-sm text-amber-900">Confirm (Verified via Other Channel)</div>
+                              <div className="text-xs text-amber-700 mt-1">Verified via phone/in-person</div>
+                            </button>
+                          )}
+                          {rejectDepositAction && (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setSelectedAction("reject_deposit")
+                                setSelectedStatusInForm("pending_deposit")
+                              }}
+                              className={`p-4 rounded-lg border-2 transition-all text-center ${
+                                selectedAction === "reject_deposit"
+                                  ? "border-orange-500 bg-orange-50"
+                                  : "border-gray-200 hover:border-orange-300"
+                              }`}
+                              disabled={saving}
+                            >
+                              <XCircle className={`w-6 h-6 mx-auto mb-2 ${selectedAction === "reject_deposit" ? "text-orange-600" : "text-gray-400"}`} />
+                              <div className="font-semibold text-sm">Reject Deposit</div>
+                              <div className="text-xs text-gray-500 mt-1">Request re-upload</div>
+                            </button>
+                          )}
+                          {availableActions.find(a => a.id === "cancel") && (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setSelectedAction("cancel")
+                                setSelectedStatusInForm("cancelled")
+                              }}
+                              className={`p-4 rounded-lg border-2 transition-all text-center ${
+                                selectedAction === "cancel"
+                                  ? "border-red-500 bg-red-50"
+                                  : "border-gray-200 hover:border-red-300"
+                              }`}
+                              disabled={saving}
+                            >
+                              <Ban className={`w-6 h-6 mx-auto mb-2 ${selectedAction === "cancel" ? "text-red-600" : "text-gray-400"}`} />
+                              <div className="font-semibold text-sm">Cancel</div>
+                              <div className="text-xs text-gray-500 mt-1">Cancel booking</div>
+                            </button>
+                          )}
+                        </div>
+                      )
+                    } else if (selectedBooking.status === "confirmed") {
+                      return (
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mt-2">
+                          {availableActions.find(a => a.id === "change_date") && (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setSelectedAction("change_date")
+                                setSelectedStatusInForm("confirmed")
+                                // Initialize date change state with current booking dates
+                                if (selectedBooking.start_date) {
+                                  setNewStartDate(new Date(selectedBooking.start_date * 1000))
+                                }
+                                if (selectedBooking.end_date) {
+                                  setNewEndDate(new Date(selectedBooking.end_date * 1000))
+                                }
+                                setNewStartTime(selectedBooking.start_time || "")
+                                setNewEndTime(selectedBooking.end_time || "")
+                                setShowPastDateWarning(false)
+                              }}
+                              className={`p-4 rounded-lg border-2 transition-all text-center ${
+                                selectedAction === "change_date"
+                                  ? "border-blue-500 bg-blue-50"
+                                  : "border-gray-200 hover:border-blue-300"
+                              }`}
+                              disabled={saving}
+                            >
+                              <Calendar className={`w-6 h-6 mx-auto mb-2 ${selectedAction === "change_date" ? "text-blue-600" : "text-gray-400"}`} />
+                              <div className="font-semibold text-sm">Change Date</div>
+                              <div className="text-xs text-gray-500 mt-1">Update booking date</div>
+                            </button>
+                          )}
+                          {availableActions.find(a => a.id === "cancel") && (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setSelectedAction("cancel")
+                                setSelectedStatusInForm("cancelled")
+                              }}
+                              className={`p-4 rounded-lg border-2 transition-all text-center ${
+                                selectedAction === "cancel"
+                                  ? "border-red-500 bg-red-50"
+                                  : "border-gray-200 hover:border-red-300"
+                              }`}
+                              disabled={saving}
+                            >
+                              <Ban className={`w-6 h-6 mx-auto mb-2 ${selectedAction === "cancel" ? "text-red-600" : "text-gray-400"}`} />
+                              <div className="font-semibold text-sm">Cancel</div>
+                              <div className="text-xs text-gray-500 mt-1">Cancel booking</div>
+                            </button>
+                          )}
+                        </div>
+                      )
+                    }
+                    return null
                   })()}
                   <input type="hidden" name="action" value={selectedAction || ""} />
-                  {selectedAction === "postpone" && selectedBooking.status === "postponed" && (
-                    <div className="mt-3 bg-orange-50 border border-orange-200 rounded p-3">
-                      <p className="text-sm text-orange-800">
-                        ℹ️ This will clear the user's current proposal and request a new date proposal.
-                      </p>
-                    </div>
-                  )}
                 </div>
               )}
-              {/* Change Reason and Admin Notes - Hide for checked-in bookings */}
-              {selectedBooking.status !== "checked-in" && (
+              {/* Date Change Section for Confirmed Bookings */}
+              {selectedAction === "change_date" && selectedBooking.status === "confirmed" && (
+                <div className="space-y-4 border-t pt-4">
+                  <div className="bg-blue-50 border border-blue-200 rounded p-3 mb-4">
+                    <p className="text-sm text-blue-800">
+                      <strong>Change Booking Date:</strong> Update the booking date and time. The original date will be released and the new date will become the locked date.
+                    </p>
+                  </div>
+                  
+                  <div className="space-y-4">
+                    {/* Date Range Selection */}
+                    <div>
+                      <Label>Date Range</Label>
+                      <Select
+                        value={dateRangeToggle}
+                        onValueChange={(value: "single" | "multiple") => {
+                          setDateRangeToggle(value)
+                          if (value === "single") {
+                            setNewEndDate(null)
+                          } else if (!newEndDate && selectedBooking.end_date) {
+                            // Pre-fill end date from current booking
+                            const endDateTimestamp = selectedBooking.end_date
+                            setNewEndDate(new Date(endDateTimestamp * 1000))
+                          }
+                        }}
+                        disabled={saving}
+                      >
+                        <SelectTrigger>
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="single">Single Day</SelectItem>
+                          <SelectItem value="multiple">Multiple Days</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+
+                    {/* Start Date */}
+                    <div>
+                      <Label htmlFor="new_start_date">New Start Date *</Label>
+                      <Popover>
+                        <PopoverTrigger asChild>
+                          <Button
+                            type="button"
+                            variant="outline"
+                            className="w-full justify-start text-left font-normal"
+                            disabled={saving}
+                          >
+                            <Calendar className="mr-2 h-4 w-4" />
+                            {newStartDate ? format(newStartDate, "PPP") : "Select start date"}
+                          </Button>
+                        </PopoverTrigger>
+                        <PopoverContent className="w-auto p-0" align="start">
+                          <SimpleCalendar
+                            selected={newStartDate || undefined}
+                            month={calendarMonth}
+                            onMonthChange={(date) => {
+                              setCalendarMonth(date)
+                              // Refresh unavailable dates when month changes
+                              if (selectedBooking?.id) {
+                                fetchUnavailableDatesForDateChange(selectedBooking.id)
+                              }
+                            }}
+                            onSelect={(date) => {
+                              setNewStartDate(date || null)
+                              // If end date is before or equal to new start date, clear it
+                              // Use Bangkok timezone date strings for proper date-only comparison
+                              if (newEndDate && date && dateRangeToggle === "multiple") {
+                                const startDateStr = dateToBangkokDateString(date)
+                                const endDateStr = dateToBangkokDateString(newEndDate)
+                                // Clear end date if it's before or equal to start date
+                                if (endDateStr <= startDateStr) {
+                                  setNewEndDate(null)
+                                }
+                              }
+                            }}
+                            disabled={(date) => {
+                              // Check if date is unavailable (has confirmed booking)
+                              // Convert date to Bangkok timezone for proper comparison
+                              const dateStr = dateToBangkokDateString(date)
+                              const isUnavailable = unavailableDatesForDateChange.has(dateStr)
+                              if (isUnavailable) {
+                                console.log(`[Admin] Start date ${dateStr} is unavailable (blocked by confirmed booking)`)
+                              }
+                              // CRITICAL: In multiple day mode, prevent selecting start date that equals end date
+                              if (dateRangeToggle === "multiple" && newEndDate) {
+                                const endDateStr = dateToBangkokDateString(newEndDate)
+                                if (dateStr === endDateStr) {
+                                  return true // Disable start date if it equals end date
+                                }
+                              }
+                              return isUnavailable
+                            }}
+                          />
+                        </PopoverContent>
+                      </Popover>
+                    </div>
+
+                    {/* End Date (for multiple days) */}
+                    {dateRangeToggle === "multiple" && (
+                      <div>
+                        <Label htmlFor="new_end_date">New End Date</Label>
+                        <Popover>
+                          <PopoverTrigger asChild>
+                            <Button
+                              type="button"
+                              variant="outline"
+                              className="w-full justify-start text-left font-normal"
+                              disabled={saving || !newStartDate}
+                              title={!newStartDate ? "Please select a start date first" : ""}
+                            >
+                              <Calendar className="mr-2 h-4 w-4" />
+                              {newEndDate ? format(newEndDate, "PPP") : "Select end date"}
+                            </Button>
+                          </PopoverTrigger>
+                          <PopoverContent className="w-auto p-0" align="start">
+                            <SimpleCalendar
+                              selected={newEndDate || undefined}
+                              month={calendarMonth}
+                              onMonthChange={(date) => {
+                                setCalendarMonth(date)
+                                // Refresh unavailable dates when month changes
+                                if (selectedBooking?.id) {
+                                  fetchUnavailableDatesForDateChange(selectedBooking.id)
+                                }
+                              }}
+                              onSelect={(date) => {
+                                setNewEndDate(date || null)
+                              }}
+                              disabled={(date) => {
+                                if (!newStartDate) return true
+                                // CRITICAL: Use Bangkok timezone date strings for proper date-only comparison
+                                // This prevents selecting the same date for start and end in multiple day mode
+                                const startDateStr = dateToBangkokDateString(newStartDate)
+                                const dateStr = dateToBangkokDateString(date)
+                                // End date must be after start date (not equal, not before)
+                                if (dateStr <= startDateStr) return true
+                                // Check if date is unavailable (has confirmed booking)
+                                const isUnavailable = unavailableDatesForDateChange.has(dateStr)
+                                if (isUnavailable) {
+                                  console.log(`[Admin] End date ${dateStr} is unavailable (blocked by confirmed booking)`)
+                                }
+                                return isUnavailable
+                              }}
+                            />
+                          </PopoverContent>
+                        </Popover>
+                    </div>
+                  )}
+
+                    {/* Start Time */}
+                    <div>
+                      <Label htmlFor="new_start_time">New Start Time</Label>
+                      <TimePicker
+                        id="new_start_time"
+                        value={newStartTime || selectedBooking.start_time || "09:00"}
+                        onChange={(value) => setNewStartTime(value)}
+                        disabled={saving}
+                        className="w-full"
+                      />
+                    </div>
+
+                    {/* End Time */}
+                    <div>
+                      <Label htmlFor="new_end_time">New End Time</Label>
+                      <TimePicker
+                        id="new_end_time"
+                        value={newEndTime || selectedBooking.end_time || "17:00"}
+                        onChange={(value) => setNewEndTime(value)}
+                        disabled={saving}
+                        className="w-full"
+                      />
+                    </div>
+
+                    {/* Past Date Warning */}
+                    {newStartDate && (() => {
+                      const bangkokNow = getBangkokTime()
+                      const startTimestamp = calculateStartTimestamp(
+                        Math.floor(newStartDate.getTime() / 1000),
+                        newStartTime || selectedBooking.start_time || null
+                      )
+                      const isPast = startTimestamp < bangkokNow
+                      
+                      if (isPast && !showPastDateWarning) {
+                        return (
+                          <div className="bg-yellow-50 border border-yellow-200 rounded p-3">
+                            <p className="text-sm text-yellow-800">
+                              ⚠️ <strong>Warning:</strong> The selected start date is in the past. This is allowed for historical corrections only.
+                            </p>
+                            <Button
+                              type="button"
+                              variant="outline"
+                              size="sm"
+                              className="mt-2"
+                              onClick={() => setShowPastDateWarning(true)}
+                            >
+                              I understand, proceed
+                            </Button>
+                          </div>
+                        )
+                      }
+                      return null
+                    })()}
+                  </div>
+                </div>
+              )}
+              {/* Change Reason and Admin Notes */}
               <div>
                 <Label htmlFor="change_reason">Change Reason</Label>
                 <Textarea
@@ -1577,20 +2508,27 @@ export default function BookingsPage() {
                   disabled={saving}
                 />
               </div>
-              )}
               {selectedBooking && (() => {
                 const currentStatus = selectedStatusInForm || selectedBooking.status
                 
-                // Show deposit verification section for paid_deposit status
-                // Always show when booking status is paid_deposit, regardless of action selection
-                if (selectedBooking.status === "paid_deposit") {
+                // Show deposit verification section for pending_deposit or paid_deposit status with deposit evidence
+                // Always show when booking status is pending_deposit or paid_deposit and has deposit evidence
+                if ((selectedBooking.status === "pending_deposit" || selectedBooking.status === "paid_deposit") && selectedBooking.deposit_evidence_url) {
                   return (
                     <div className="space-y-4 border-t pt-4">
-                      <div className="bg-yellow-50 border border-yellow-200 rounded p-3 mb-4">
-                        <p className="text-sm text-yellow-800">
-                          ⚠️ <strong>Deposit Verification Required:</strong> Please verify or reject the deposit evidence below. Accept and Postpone actions are disabled to prevent flow disruption. You can still reject the entire booking if needed.
-                        </p>
-                      </div>
+                      {selectedBooking.status === "paid_deposit" ? (
+                        <div className="bg-purple-50 border border-purple-200 rounded p-3 mb-4">
+                          <p className="text-sm text-purple-800">
+                            ℹ️ <strong>Deposit Evidence Available:</strong> User has uploaded deposit evidence. Please review the evidence using the link below, then use the action buttons above to accept or reject the deposit.
+                          </p>
+                        </div>
+                      ) : (
+                        <div className="bg-yellow-50 border border-yellow-200 rounded p-3 mb-4">
+                          <p className="text-sm text-yellow-800">
+                            ⚠️ <strong>Deposit Verification Required:</strong> Please review the deposit evidence using the link below, then use the action buttons above to accept or reject the deposit.
+                          </p>
+                        </div>
+                      )}
                       <div className="bg-purple-50 border border-purple-200 rounded p-4">
                         <h4 className="font-semibold text-purple-900 mb-2">Deposit Verification</h4>
                         {selectedBooking.deposit_evidence_url ? (
@@ -1598,206 +2536,21 @@ export default function BookingsPage() {
                             <div>
                               <Label>Deposit Evidence</Label>
                               <a 
-                                href={selectedBooking.deposit_evidence_url} 
+                                href={`/api/admin/deposit/${selectedBooking.id}/image`}
                                 target="_blank" 
                                 rel="noopener noreferrer"
-                                className="text-sm text-blue-600 hover:underline block mt-1"
+                                className="text-sm text-blue-600 hover:underline block mt-1 font-medium"
                               >
-                                View Deposit Evidence
+                                View Deposit Evidence →
                               </a>
                           </div>
-                            {selectedBooking.deposit_verified_at ? (
+                            {selectedBooking.deposit_verified_at && (
                               <div className="bg-green-50 border border-green-200 rounded p-3">
                                 <p className="text-sm text-green-800">
                                   ✓ Verified by {selectedBooking.deposit_verified_by || "Admin"} on {formatTimestamp(selectedBooking.deposit_verified_at)}
-                        </p>
-                      </div>
-                            ) : (
-                              <div className="space-y-3">
-                          <div>
-                                  <Label htmlFor={`deposit_verified_by_${selectedBooking.id}`}>Verified By *</Label>
-                            <Input
-                                    id={`deposit_verified_by_${selectedBooking.id}`}
-                                    name="deposit_verified_by"
-                                    placeholder="Admin name/email"
-                              disabled={saving}
-                                    required={currentStatus === "checked-in"}
-                                    data-booking-id={selectedBooking.id}
-                            />
-                          </div>
-                                <input type="hidden" name="verify_deposit" value="true" />
-                                <div className="flex gap-2">
-                                  <Button
-                                    type="button"
-                                    onClick={async () => {
-                                      if (!selectedBooking || saving) return
-                                      setSaving(true)
-                                      
-                                      // Get form values - use more reliable selectors
-                                      // Use booking-specific ID to avoid conflicts with multiple open dialogs
-                                      const depositVerifiedByInput = document.querySelector(
-                                        `#deposit_verified_by_${selectedBooking.id}, input[data-booking-id="${selectedBooking.id}"][name="deposit_verified_by"]`
-                                      ) as HTMLInputElement || 
-                                      document.getElementById("deposit_verified_by") as HTMLInputElement
-                                      
-                                      // Fallback: scope to the current dialog
-                                      const currentDialog = !depositVerifiedByInput 
-                                        ? (document.querySelector('[role="dialog"]:not([aria-hidden="true"])') as HTMLElement)
-                                        : null
-                                      
-                                      const finalDepositVerifiedByInput = depositVerifiedByInput || 
-                                        (currentDialog 
-                                          ? (currentDialog.querySelector('#deposit_verified_by') as HTMLInputElement)
-                                          : null)
-                                      
-                                      if (!finalDepositVerifiedByInput) {
-                                        toast.error("Could not find 'Verified By' input field. Please refresh the page.")
-                                        console.error("Deposit verification: deposit_verified_by input not found", {
-                                          bookingId: selectedBooking.id,
-                                          hasCurrentDialog: !!currentDialog,
-                                          allInputs: Array.from(document.querySelectorAll('[name="deposit_verified_by"]')).length
-                                        })
-                                        setSaving(false)
-                                        return
-                                      }
-                                      
-                                      const depositVerifiedBy = finalDepositVerifiedByInput.value?.trim() || ""
-                                      
-                                      if (!depositVerifiedBy) {
-                                        toast.error("Please enter 'Verified By' field before verifying deposit")
-                                        setSaving(false)
-                                        return
-                                      }
-                                      
-                                      // Get change reason and admin notes from the form
-                                      // Use the form with data attribute or closest form, scoped to current dialog
-                                      const form = currentDialog
-                                        ? (currentDialog.querySelector('form[data-booking-form="true"]') as HTMLFormElement ||
-                                           finalDepositVerifiedByInput.closest('form') as HTMLFormElement ||
-                                           currentDialog.querySelector('form') as HTMLFormElement)
-                                        : (document.querySelector('form[data-booking-form="true"]') as HTMLFormElement ||
-                                           finalDepositVerifiedByInput.closest('form') as HTMLFormElement ||
-                                           document.querySelector('form') as HTMLFormElement)
-                                      
-                                      const changeReasonInput = form?.querySelector('[name="change_reason"]') as HTMLTextAreaElement
-                                      const changeReason = changeReasonInput?.value?.trim() || "Deposit verified and booking checked in"
-                                      const adminNotesInput = form?.querySelector('[name="admin_notes"]') as HTMLTextAreaElement
-                                      const adminNotes = adminNotesInput?.value?.trim() || ""
-                                      
-                                      try {
-                                        const response = await fetch(`/api/admin/bookings/${selectedBooking.id}`, {
-                                          method: "PATCH",
-                                          headers: { "Content-Type": "application/json" },
-                                          body: JSON.stringify({
-                                            status: "checked-in",
-                                            changeReason: changeReason || "Deposit verified and booking checked in",
-                                            adminNotes: adminNotes || null,
-                                            proposedDate: null,
-                                            depositVerifiedBy: depositVerifiedBy,
-                                          }),
-                                        })
-                                        
-                                        const json = await response.json()
-                                        
-                                        if (json.success) {
-                                          toast.success("Deposit verified and booking checked in successfully. Email notification sent.")
-                                          setStatusDialogOpen(false)
-                                          setSelectedStatusInForm("")
-                                          fetchBookings()
-                                          if (viewDialogOpen) {
-                                            fetchBookingDetails(selectedBooking.id)
-                                          }
-                                        } else {
-                                          // Extract detailed error message
-                                          const errorMessage = json.error?.message || json.error || "Failed to verify deposit and check in"
-                                          const errorDetails = json.error?.errors ? ` Errors: ${Array.isArray(json.error.errors) ? json.error.errors.join(', ') : JSON.stringify(json.error.errors)}` : ""
-                                          toast.error(`${errorMessage}${errorDetails}`)
-                                          console.error("Deposit verification failed:", json)
-                                        }
-                                      } catch (error) {
-                                        const errorMessage = error instanceof Error ? error.message : "Failed to verify deposit and check in"
-                                        toast.error(errorMessage)
-                                        console.error("Deposit verification error:", error)
-                                      } finally {
-                                        setSaving(false)
-                                      }
-                                    }}
-                                    className="flex-1"
-                                disabled={saving}
-                                  >
-                                    <CheckCircle2 className="w-4 h-4 mr-2" />
-                                    Verify Deposit & Check In
-                                  </Button>
-                                  <Button
-                                    type="button"
-                                    onClick={async () => {
-                                      if (!selectedBooking || saving) return
-                                      
-                                      // Confirm rejection
-                                      if (!confirm("Are you sure you want to reject this deposit evidence? The user will need to upload a new deposit.")) {
-                                        return
-                                      }
-                                      
-                                      setSaving(true)
-                                      
-                                      // Get form values - use more reliable selectors
-                                      // Scope to the current dialog to avoid conflicts with multiple open dialogs
-                                      const currentDialog = document.querySelector('[role="dialog"]:not([aria-hidden="true"])') as HTMLElement
-                                      const form = currentDialog
-                                        ? (currentDialog.querySelector('form[data-booking-form="true"]') as HTMLFormElement ||
-                                           currentDialog.querySelector('form') as HTMLFormElement)
-                                        : (document.querySelector('form[data-booking-form="true"]') as HTMLFormElement ||
-                                           document.querySelector('form') as HTMLFormElement)
-                                      
-                                      const changeReasonInput = form?.querySelector('[name="change_reason"]') as HTMLTextAreaElement
-                                      const changeReason = changeReasonInput?.value?.trim() || "Deposit evidence rejected by admin"
-                                      const adminNotesInput = form?.querySelector('[name="admin_notes"]') as HTMLTextAreaElement
-                                      const adminNotes = adminNotesInput?.value?.trim() || ""
-                                      
-                                      try {
-                                        const response = await fetch(`/api/admin/bookings/${selectedBooking.id}`, {
-                                          method: "PATCH",
-                                          headers: { "Content-Type": "application/json" },
-                                          body: JSON.stringify({
-                                            status: "pending_deposit",
-                                            changeReason: changeReason,
-                                            adminNotes: adminNotes || null,
-                                            proposedDate: null,
-                                            depositVerifiedBy: null,
-                                          }),
-                                        })
-                                        
-                                        const json = await response.json()
-                                        
-                                        if (json.success) {
-                                          toast.success("Deposit rejected. User will receive a new deposit upload link.")
-                                          setStatusDialogOpen(false)
-                                          setSelectedStatusInForm("")
-                                          fetchBookings()
-                                          if (viewDialogOpen) {
-                                            fetchBookingDetails(selectedBooking.id)
-                                          }
-                                        } else {
-                                          const errorMessage = json.error?.message || "Failed to reject deposit"
-                                          toast.error(errorMessage)
-                                        }
-                                      } catch (error) {
-                                        toast.error("Failed to reject deposit")
-                                        console.error(error)
-                                      } finally {
-                                        setSaving(false)
-                                      }
-                                    }}
-                                    variant="destructive"
-                                    className="flex-1"
-                                    disabled={saving}
-                                  >
-                                    <XCircle className="w-4 h-4 mr-2" />
-                                    Reject Deposit
-                                  </Button>
-                                </div>
-                            </div>
-                          )}
+                                </p>
+                              </div>
+                            )}
                           </div>
                         ) : (
                           <p className="text-sm text-purple-800">No deposit evidence uploaded yet.</p>
@@ -1810,13 +2563,13 @@ export default function BookingsPage() {
                   )
                 }
                 
-                // Show info for postpone action
-                if (selectedAction === "postpone") {
+                // No postpone action in new flow
+                if (false) {
                   return (
                     <div className="bg-orange-50 border border-orange-200 rounded p-4">
                       <p className="text-sm text-orange-800">
-                        When you select "Postpone", the user will be asked to propose a new date. Admin no longer proposes dates.
-                        {selectedBooking.status === "postponed" && (
+                        {/* Postpone removed from new flow */}
+                        {false && (
                           <span className="block mt-2 font-semibold">
                             ⚠️ This will clear the user's current proposal and request a new one.
                           </span>
@@ -1828,8 +2581,8 @@ export default function BookingsPage() {
                 
                 return null
               })()}
-              {/* Admin Notes - Hide for checked-in bookings */}
-              {selectedBooking.status !== "checked-in" && (
+              {/* Admin Notes */}
+              {selectedBooking.status !== "finished" && (
               <div>
                 <Label htmlFor="admin_notes">Admin Notes (internal only)</Label>
                 <Textarea
@@ -1856,13 +2609,13 @@ export default function BookingsPage() {
                 >
                   Cancel
                 </Button>
-              {(selectedBooking.status as string) !== "checked-in" && (
+              {(selectedBooking.status as string) !== "finished" && (
                 <Button 
                   type="submit" 
                   disabled={
                     saving || 
                     !selectedAction || 
-                    (selectedBooking.status === "paid_deposit" && selectedAction !== "reject")
+                    (selectedBooking.status === "pending_deposit" && selectedAction !== "reject_deposit" && selectedAction !== "cancel")
                   }
                   className="w-full sm:w-auto"
                 >
@@ -1872,7 +2625,7 @@ export default function BookingsPage() {
                       Processing...
                     </>
                   ) : selectedAction ? (
-                    `Confirm ${selectedAction === "accept" ? "Accept" : selectedAction === "reject" ? "Reject" : "Postpone"}`
+                    `Confirm ${selectedAction === "accept" ? "Accept" : selectedAction === "reject" ? "Reject" : selectedAction === "accept_deposit" ? "Accept Deposit" : selectedAction === "reject_deposit" ? "Reject Deposit" : selectedAction === "cancel" ? "Cancel" : selectedAction === "change_date" ? "Change Date" : "Action"}`
                   ) : (
                     "Select Action First"
                   )}
@@ -1897,8 +2650,128 @@ export default function BookingsPage() {
           setPendingAction(null)
           setPendingValidation(null)
         }}
+        isLoading={actionLoading}
+      />
+
+      {/* Delete Confirmation Dialog */}
+      <DeleteConfirmationDialog
+        open={deleteDialogOpen}
+        onOpenChange={setDeleteDialogOpen}
+        booking={bookingToDelete ? {
+          id: bookingToDelete.id,
+          name: bookingToDelete.name,
+          email: bookingToDelete.email,
+          status: bookingToDelete.status,
+          eventType: bookingToDelete.event_type,
+          start_date: typeof bookingToDelete.start_date === 'number' ? bookingToDelete.start_date : 0,
+          end_date: bookingToDelete.end_date ? (typeof bookingToDelete.end_date === 'number' ? bookingToDelete.end_date : null) : null,
+          start_time: bookingToDelete.start_time,
+          end_time: bookingToDelete.end_time,
+          reference_number: bookingToDelete.reference_number,
+          depositEvidenceUrl: bookingToDelete.deposit_evidence_url || null,
+        } : null}
+        onConfirm={confirmDeleteBooking}
+        onCancel={() => {
+          setDeleteDialogOpen(false)
+          setBookingToDelete(null)
+        }}
         isLoading={saving || actionLoading}
       />
+
+      {/* Other Channel Confirmation Dialog */}
+      <Dialog open={otherChannelDialogOpen} onOpenChange={setOtherChannelDialogOpen}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-amber-700">
+              <AlertTriangle className="w-5 h-5" />
+              Confirm Other Channel Verification
+            </DialogTitle>
+            <DialogDescription>
+              This action confirms the booking was verified through other channels (phone, in-person, etc.), not through the system deposit upload.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-4">
+            <Alert variant="default" className="bg-amber-50 border-amber-200">
+              <AlertTriangle className="h-4 w-4 text-amber-600" />
+              <AlertTitle className="text-amber-900">Warning</AlertTitle>
+              <AlertDescription className="text-amber-800">
+                You are confirming this booking without reviewing the deposit evidence in the system. 
+                This should only be used when verification was completed through other channels (phone call, in-person meeting, etc.).
+              </AlertDescription>
+            </Alert>
+
+            <div className="space-y-2">
+              <Label htmlFor="confirm-text" className="text-sm font-medium">
+                Type <strong>CONFIRM</strong> to proceed:
+              </Label>
+              <Input
+                id="confirm-text"
+                value={otherChannelConfirmText}
+                onChange={(e) => setOtherChannelConfirmText(e.target.value.toUpperCase())}
+                placeholder="Type CONFIRM here"
+                className="font-mono"
+                disabled={saving}
+              />
+            </div>
+          </div>
+
+          <DialogFooter>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => {
+                setOtherChannelDialogOpen(false)
+                setOtherChannelConfirmText("")
+                setSelectedAction(null)
+                setSelectedStatusInForm("")
+              }}
+              disabled={saving}
+            >
+              Cancel
+            </Button>
+            <Button
+              type="button"
+              variant="default"
+              className="bg-amber-600 hover:bg-amber-700 text-white"
+              onClick={async () => {
+                if (otherChannelConfirmText !== "CONFIRM") {
+                  toast.error("Please type CONFIRM exactly to proceed")
+                  return
+                }
+
+                // Proceed with the action
+                if (!selectedBooking || !selectedAction) return
+
+                const actionDef = getAvailableActions(
+                  selectedBooking.status as any,
+                  Boolean(selectedBooking.deposit_evidence_url),
+                  false
+                ).find(a => a.id === selectedAction)
+
+                if (!actionDef) {
+                  toast.error("Action not found")
+                  return
+                }
+
+                setOtherChannelDialogOpen(false)
+                setOtherChannelConfirmText("")
+                await executeActionDirectly(actionDef)
+              }}
+              disabled={saving || otherChannelConfirmText !== "CONFIRM"}
+            >
+              {saving ? (
+                <>
+                  <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                  Processing...
+                </>
+              ) : (
+                "Confirm Action"
+              )}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }

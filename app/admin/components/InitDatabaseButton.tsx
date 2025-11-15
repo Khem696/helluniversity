@@ -1,6 +1,7 @@
 "use client"
 
 import { useState } from "react"
+import { API_PATHS } from "@/lib/api-config"
 import { Button } from "@/components/ui/button"
 import { Loader2, Database, CheckCircle2, XCircle, AlertCircle } from "lucide-react"
 
@@ -11,12 +12,14 @@ export function InitDatabaseButton() {
     message?: string
     tables?: Record<string, boolean>
     missingTables?: string[]
+    checkConstraintValid?: boolean
+    checkConstraintMessage?: string
   }>({ type: "idle" })
 
   const checkStatus = async () => {
     setStatus({ type: "checking" })
     try {
-      const response = await fetch("/api/admin/init-db")
+      const response = await fetch("/api/v1/admin/init-db")
       
       // Check if response is ok
       if (!response.ok) {
@@ -39,13 +42,24 @@ export function InitDatabaseButton() {
       
       if (responseData.success && responseData.data) {
         const dbData = responseData.data
+        const allValid = dbData.allTablesExist && dbData.checkConstraintValid !== false
+        
+        let statusMessage = ""
+        if (!dbData.allTablesExist) {
+          statusMessage = `${dbData.missingTables?.length || 0} tables missing`
+        } else if (dbData.checkConstraintValid === false) {
+          statusMessage = dbData.checkConstraintMessage || "CHECK constraint needs migration"
+        } else {
+          statusMessage = "All tables exist and CHECK constraint is valid"
+        }
+        
         setStatus({
-          type: dbData.allTablesExist ? "success" : "idle",
-          message: dbData.allTablesExist 
-            ? "All tables exist" 
-            : `${dbData.missingTables?.length || 0} tables missing`,
+          type: allValid ? "success" : "idle",
+          message: statusMessage,
           tables: dbData.tables || {},
           missingTables: dbData.missingTables || [],
+          checkConstraintValid: dbData.checkConstraintValid,
+          checkConstraintMessage: dbData.checkConstraintMessage,
         })
       } else {
         const errorMessage = responseData.error?.message || responseData.error || "Failed to check status"
@@ -78,7 +92,7 @@ export function InitDatabaseButton() {
     setStatus({ type: "idle" })
     
     try {
-      const response = await fetch("/api/admin/init-db", {
+      const response = await fetch(API_PATHS.adminInitDb, {
         method: "POST",
       })
       
@@ -174,6 +188,25 @@ export function InitDatabaseButton() {
               </div>
             ))}
           </div>
+          
+          {/* CHECK Constraint Status */}
+          {status.checkConstraintValid !== undefined && (
+            <div className="mt-3 pt-3 border-t border-gray-200">
+              <div className="flex items-center gap-2">
+                {status.checkConstraintValid ? (
+                  <CheckCircle2 className="w-4 h-4 text-green-600" />
+                ) : (
+                  <XCircle className="w-4 h-4 text-red-600" />
+                )}
+                <span className="text-xs font-semibold text-gray-700">CHECK Constraint:</span>
+                <span className={`text-xs ${
+                  status.checkConstraintValid ? "text-green-700" : "text-red-700"
+                }`}>
+                  {status.checkConstraintMessage || (status.checkConstraintValid ? "Valid" : "Needs Migration")}
+                </span>
+              </div>
+            </div>
+          )}
         </div>
       )}
 

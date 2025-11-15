@@ -4,8 +4,11 @@ import { AlertCircle, Clock, Calendar, CheckCircle2, XCircle } from "lucide-reac
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Badge } from "@/components/ui/badge"
 import { willAutoUpdate } from "@/lib/booking-action-validation"
+import { calculateStartTimestamp } from "@/lib/booking-validations"
+import { getBangkokTime } from "@/lib/timezone-client"
 import { format } from "date-fns"
 import type { BookingStatus } from "@/lib/booking-state-machine"
+import { API_PATHS } from "@/lib/api-config"
 
 interface Booking {
   id: string
@@ -28,13 +31,17 @@ interface BookingStateInfoProps {
 
 export function BookingStateInfo({ booking }: BookingStateInfoProps) {
   const autoUpdateInfo = willAutoUpdate(booking)
-  const now = Math.floor(Date.now() / 1000)
+  // CRITICAL: Use Bangkok time for all date comparisons to match server-side logic
+  const now = getBangkokTime()
   
-  // Calculate start timestamp
-  const startTimestamp = booking.start_date
+  // Calculate start timestamp including time component (CRITICAL: Use calculateStartTimestamp to include start_time)
+  const startTimestamp = calculateStartTimestamp(
+    booking.start_date,
+    booking.start_time || null
+  )
   const startDate = new Date(startTimestamp * 1000)
   
-  // Check if start date has passed
+  // Check if start date has passed (using Bangkok timezone for consistency)
   const startDatePassed = startTimestamp < now
   
   // Format dates
@@ -57,17 +64,15 @@ export function BookingStateInfo({ booking }: BookingStateInfoProps) {
           <AlertTitle>Start Date Has Passed</AlertTitle>
           <AlertDescription>
             Booking start date ({formatDate(booking.start_date)}) has passed.
-            {booking.status === "pending" || booking.status === "postponed"
-              ? " This booking will be auto-cancelled if not responded to."
-              : booking.status === "accepted"
-              ? " User must check in within the grace period."
+            {booking.status === "pending" || booking.status === "pending_deposit" || booking.status === "paid_deposit"
+              ? " This booking will be auto-cancelled if not confirmed."
               : ""}
           </AlertDescription>
         </Alert>
       )}
 
-      {/* Proposed Date Info */}
-      {booking.proposed_date && booking.status === "postponed" && (
+      {/* Proposed Date Info - Only show if proposed_date exists (for historical data or edge cases) */}
+      {booking.proposed_date && (
         <Alert variant="default">
           <Calendar className="h-4 w-4" />
           <AlertTitle>Proposed Date</AlertTitle>
@@ -108,17 +113,35 @@ export function BookingStateInfo({ booking }: BookingStateInfoProps) {
           <CheckCircle2 className="h-4 w-4" />
           <AlertTitle>Deposit Evidence Uploaded</AlertTitle>
           <AlertDescription>
-            Deposit evidence is available. Please verify before checking in.
+            Deposit evidence is available. Please verify before confirming the booking.{" "}
+            <a 
+              href={API_PATHS.adminDepositImage(booking.id)}
+              target="_blank" 
+              rel="noopener noreferrer"
+              className="text-blue-600 hover:underline font-medium"
+            >
+              View Deposit Evidence
+            </a>
           </AlertDescription>
         </Alert>
       )}
 
-      {booking.status === "pending_deposit" && (
+      {booking.status === "pending_deposit" && booking.deposit_evidence_url && (
         <Alert variant="default" className="bg-orange-50 border-orange-200 text-orange-800">
           <XCircle className="h-4 w-4" />
           <AlertTitle>Deposit Rejected</AlertTitle>
           <AlertDescription>
             Previous deposit evidence was rejected. User must upload a new deposit.
+          </AlertDescription>
+        </Alert>
+      )}
+      
+      {booking.status === "pending_deposit" && !booking.deposit_evidence_url && (
+        <Alert variant="default" className="bg-blue-50 border-blue-200 text-blue-800">
+          <Clock className="h-4 w-4" />
+          <AlertTitle>Deposit Required</AlertTitle>
+          <AlertDescription>
+            Booking has been accepted. Waiting for user to upload deposit evidence.
           </AlertDescription>
         </Alert>
       )}

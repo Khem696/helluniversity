@@ -37,7 +37,7 @@ export function Hero() {
                 Gallery
               </h3>
               <p className="text-white/90 font-comfortaa text-[clamp(14px,1.5vw,18px)] font-light leading-[1.6] break-words">
-                Hell University, an archive and gallery<br />
+                An archive and gallery<br />
                 dedicated to research and education.
               </p>
             </div>

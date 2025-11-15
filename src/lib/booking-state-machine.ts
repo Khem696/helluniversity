@@ -9,23 +9,21 @@ import { isValidStatusTransition } from "./booking-validations"
 
 export type BookingStatus = 
   | "pending" 
-  | "accepted" 
-  | "rejected" 
-  | "postponed" 
-  | "cancelled" 
-  | "finished" 
-  | "checked-in" 
-  | "paid_deposit" 
   | "pending_deposit"
+  | "paid_deposit"
+  | "confirmed" 
+  | "cancelled" 
+  | "finished"
 
 export type AdminAction = 
   | "accept" 
   | "reject" 
-  | "postpone" 
-  | "verify_deposit" 
+  | "accept_deposit"
+  | "accept_deposit_other_channel"
   | "reject_deposit" 
-  | "check_in" 
   | "cancel"
+  | "change_date"
+  | "confirm_other_channel"
 
 export interface ActionDefinition {
   id: AdminAction
@@ -45,13 +43,14 @@ export function mapActionToStatus(
   currentStatus: BookingStatus
 ): BookingStatus {
   const mapping: Record<AdminAction, BookingStatus> = {
-    accept: "accepted",
-    reject: "rejected",
-    postpone: "postponed",
-    verify_deposit: "checked-in",
-    reject_deposit: "pending_deposit",
-    check_in: "checked-in",
+    accept: "pending_deposit", // Accept from pending -> pending_deposit (immediate)
+    reject: "cancelled", // Reject -> cancelled (rejected merged into cancelled)
+    accept_deposit: "confirmed", // Accept deposit -> confirmed (from paid_deposit, normal flow)
+    accept_deposit_other_channel: "confirmed", // Accept deposit -> confirmed (from paid_deposit, other channel)
+    reject_deposit: "pending_deposit", // Reject deposit -> pending_deposit (user can re-upload)
     cancel: "cancelled",
+    change_date: currentStatus, // Date change doesn't change status
+    confirm_other_channel: "confirmed", // Confirm from pending_deposit -> confirmed (other channel)
   }
   
   return mapping[action]
@@ -60,13 +59,11 @@ export function mapActionToStatus(
 /**
  * Get available actions for a given booking status
  * @param currentStatus - Current booking status
- * @param hasProposedDate - Whether booking has a proposed date
  * @param hasDepositEvidence - Whether booking has deposit evidence
  * @param isDateInPast - Whether booking date is in the past (optional, for filtering accept action)
  */
 export function getAvailableActions(
   currentStatus: BookingStatus,
-  hasProposedDate: boolean = false,
   hasDepositEvidence: boolean = false,
   isDateInPast: boolean = false
 ): ActionDefinition[] {
@@ -74,15 +71,15 @@ export function getAvailableActions(
   
   switch (currentStatus) {
     case "pending":
-      // Only allow reject for past date bookings
+      // Only allow accept for future date bookings
       if (!isDateInPast) {
         actions.push(
           {
             id: "accept",
             label: "Accept",
-            targetStatus: "accepted",
+            targetStatus: "pending_deposit",
             type: "primary",
-            description: "Approve this booking request",
+            description: "Approve this booking request (user can upload deposit)",
             requiresConfirmation: true,
             requiresValidation: true,
           }
@@ -92,41 +89,9 @@ export function getAvailableActions(
         {
           id: "reject",
           label: "Reject",
-          targetStatus: "rejected",
+          targetStatus: "cancelled",
           type: "destructive",
           description: "Decline this booking",
-          requiresConfirmation: true,
-          requiresValidation: false,
-        },
-        {
-          id: "postpone",
-          label: "Postpone",
-          targetStatus: "postponed",
-          type: "secondary",
-          description: "Request user to propose a new date",
-          requiresConfirmation: true,
-          requiresValidation: false,
-        }
-      )
-      break
-      
-    case "accepted":
-      actions.push(
-        {
-          id: "check_in",
-          label: "Check In (Direct)",
-          targetStatus: "checked-in",
-          type: "primary",
-          description: "Directly check in without deposit verification",
-          requiresConfirmation: true,
-          requiresValidation: true,
-        },
-        {
-          id: "postpone",
-          label: "Postpone",
-          targetStatus: "postponed",
-          type: "secondary",
-          description: "Request user to propose a new date",
           requiresConfirmation: true,
           requiresValidation: false,
         },
@@ -142,14 +107,48 @@ export function getAvailableActions(
       )
       break
       
-    case "paid_deposit":
+    case "pending_deposit":
+      // Special case: Admin can confirm via other channel even without deposit upload
       actions.push(
         {
-          id: "verify_deposit",
-          label: "Verify Deposit & Check In",
-          targetStatus: "checked-in",
+          id: "confirm_other_channel",
+          label: "Confirm (Other Channel)",
+          targetStatus: "confirmed",
+          type: "secondary",
+          description: "Confirm booking - deposit verified through other channels (phone, in-person, etc.)",
+          requiresConfirmation: true,
+          requiresValidation: true,
+        },
+        {
+          id: "cancel",
+          label: "Cancel",
+          targetStatus: "cancelled",
+          type: "destructive",
+          description: "Cancel this booking",
+          requiresConfirmation: true,
+          requiresValidation: false,
+        }
+      )
+      break
+      
+    case "paid_deposit":
+      // Deposit uploaded, admin can accept or reject
+      actions.push(
+        {
+          id: "accept_deposit",
+          label: "Accept Deposit",
+          targetStatus: "confirmed",
           type: "primary",
-          description: "Verify deposit evidence and check in user",
+          description: "Accept deposit evidence and confirm booking",
+          requiresConfirmation: true,
+          requiresValidation: true,
+        },
+        {
+          id: "accept_deposit_other_channel",
+          label: "Confirm (Verified via Other Channel)",
+          targetStatus: "confirmed",
+          type: "secondary",
+          description: "Confirm booking - deposit verified through other channels (phone, in-person, etc.)",
           requiresConfirmation: true,
           requiresValidation: true,
         },
@@ -174,144 +173,17 @@ export function getAvailableActions(
       )
       break
       
-    case "pending_deposit":
+    case "confirmed":
       actions.push(
         {
-          id: "accept",
-          label: "Accept",
-          targetStatus: "accepted",
-          type: "primary",
-          description: "Accept booking (user can upload deposit)",
+          id: "change_date",
+          label: "Change Date",
+          targetStatus: "confirmed",
+          type: "secondary",
+          description: "Change booking dates (only for confirmed bookings)",
           requiresConfirmation: true,
           requiresValidation: true,
         },
-        {
-          id: "postpone",
-          label: "Postpone",
-          targetStatus: "postponed",
-          type: "secondary",
-          description: "Request user to propose a new date",
-          requiresConfirmation: true,
-          requiresValidation: false,
-        },
-        {
-          id: "cancel",
-          label: "Cancel",
-          targetStatus: "cancelled",
-          type: "destructive",
-          description: "Cancel this booking",
-          requiresConfirmation: true,
-          requiresValidation: false,
-        }
-      )
-      break
-      
-    case "postponed":
-      if (hasProposedDate) {
-        // User has proposed a date - admin can accept or reject
-        // Only allow accept if date is not in past
-        if (!isDateInPast) {
-          actions.push(
-            {
-              id: "accept",
-              label: "Accept Proposed Date",
-              targetStatus: "accepted",
-              type: "primary",
-              description: "Accept user's proposed date",
-              requiresConfirmation: true,
-              requiresValidation: true,
-            }
-          )
-        }
-        actions.push(
-          {
-            id: "reject",
-            label: "Reject Proposed Date",
-            targetStatus: "rejected",
-            type: "destructive",
-            description: "Reject user's proposed date",
-            requiresConfirmation: true,
-            requiresValidation: false,
-          },
-          {
-            id: "postpone",
-            label: "Request New Proposal",
-            targetStatus: "postponed",
-            type: "secondary",
-            description: "Clear current proposal and request a new one",
-            requiresConfirmation: true,
-            requiresValidation: false,
-          }
-        )
-      } else {
-        // No proposed date yet - admin is requesting postpone
-        // Only allow accept if date is not in past
-        if (!isDateInPast) {
-          actions.push(
-            {
-              id: "accept",
-              label: "Accept Original Date",
-              targetStatus: "accepted",
-              type: "primary",
-              description: "Accept the original booking date",
-              requiresConfirmation: true,
-              requiresValidation: true,
-            }
-          )
-        }
-        actions.push(
-          {
-            id: "reject",
-            label: "Reject",
-            targetStatus: "rejected",
-            type: "destructive",
-            description: "Reject this booking",
-            requiresConfirmation: true,
-            requiresValidation: false,
-          }
-        )
-      }
-      break
-      
-    case "checked-in":
-      actions.push(
-        {
-          id: "postpone",
-          label: "Postpone",
-          targetStatus: "postponed",
-          type: "secondary",
-          description: "Request user to propose a new date",
-          requiresConfirmation: true,
-          requiresValidation: false,
-        },
-        {
-          id: "cancel",
-          label: "Cancel",
-          targetStatus: "cancelled",
-          type: "destructive",
-          description: "Cancel this booking",
-          requiresConfirmation: true,
-          requiresValidation: false,
-        }
-      )
-      break
-      
-    case "rejected":
-      // Only allow accept if date is not in past
-      if (!isDateInPast) {
-        actions.push(
-          {
-            id: "accept",
-            label: "Re-open & Accept",
-            targetStatus: "accepted",
-            type: "primary",
-            description: "Re-open and accept this booking",
-            requiresConfirmation: true,
-            requiresValidation: true,
-          }
-        )
-      }
-      actions.push(
         {
           id: "cancel",
           label: "Cancel",
@@ -325,20 +197,8 @@ export function getAvailableActions(
       break
       
     case "cancelled":
-      // Only allow accept if date is not in past
-      if (!isDateInPast) {
-        actions.push(
-          {
-            id: "accept",
-            label: "Re-open & Accept",
-            targetStatus: "accepted",
-            type: "primary",
-            description: "Re-open and accept this booking",
-            requiresConfirmation: true,
-            requiresValidation: true,
-          }
-        )
-      }
+      // Allow restore from archive (will be handled separately in archive page)
+      // No actions here - restoration is handled in archive page
       break
       
     case "finished":
@@ -375,13 +235,12 @@ export function isActionAllowed(
 export function getActionDefinition(
   action: AdminAction,
   currentStatus: BookingStatus,
-  hasProposedDate: boolean = false,
+  hasDepositEvidence: boolean = false,
   isDateInPast: boolean = false
 ): ActionDefinition | null {
   const availableActions = getAvailableActions(
     currentStatus,
-    hasProposedDate,
-    false,
+    hasDepositEvidence,
     isDateInPast
   )
   

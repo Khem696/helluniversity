@@ -2,7 +2,7 @@
 
 import Link from "next/link"
 import { useRef, useState, useEffect, useCallback } from "react"
-import { Calendar as CalendarIcon, Menu, X, AlertCircle, RefreshCw, Clock } from "lucide-react"
+import { Calendar as CalendarIcon, Menu, X, AlertCircle, RefreshCw, Clock, Loader2 } from "lucide-react"
 import { toast } from "sonner"
 import { Dialog, DialogTrigger, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog"
 import { Button } from "@/components/ui/button"
@@ -19,6 +19,7 @@ import { Recaptcha } from "./Recaptcha"
 import PhoneInput from "react-phone-number-input"
 import { TimePicker } from "@/components/ui/time-picker"
 import { dateToBangkokDateString } from "@/lib/timezone-client"
+import { API_PATHS, buildApiUrl } from "@/lib/api-config"
 
 const STORAGE_KEY = "helluniversity_booking_form"
 const DEBOUNCE_DELAY = 500 // milliseconds
@@ -106,17 +107,56 @@ export function Header() {
     startDate: number
     endDate: number
   }>>([])
+  const [bookingsEnabled, setBookingsEnabled] = useState<boolean>(true)
+  const [calendarMonth, setCalendarMonth] = useState<Date>(new Date())
 
   // Ensure component is mounted (client-side only)
   useEffect(() => {
     setMounted(true)
   }, [])
 
+  // Fetch booking enabled status and poll for changes
+  useEffect(() => {
+    async function fetchBookingStatus() {
+      try {
+        const response = await fetch(API_PATHS.settingsBookingEnabled)
+        const json = await response.json()
+        
+        if (json.success && json.data) {
+          const newStatus = json.data.enabled
+          setBookingsEnabled(newStatus)
+          
+          // If bookings are disabled while dialog is open, close the dialog
+          if (!newStatus && bookingOpen) {
+            setBookingOpen(false)
+            toast.error("Bookings are currently disabled. Please try again later.")
+          }
+        }
+      } catch (error) {
+        console.error("Failed to fetch booking status:", error)
+        // Default to enabled on error
+        setBookingsEnabled(true)
+      }
+    }
+
+    if (mounted) {
+      // Fetch immediately
+      fetchBookingStatus()
+      
+      // Poll every 30 seconds to check for status changes
+      const pollInterval = setInterval(fetchBookingStatus, 30000)
+      
+      return () => {
+        clearInterval(pollInterval)
+      }
+    }
+  }, [mounted, bookingOpen])
+
   // Fetch unavailable dates when booking dialog opens and refresh periodically
   useEffect(() => {
     if (bookingOpen && mounted) {
       const fetchUnavailableDates = () => {
-        fetch("/api/booking/availability")
+        fetch(API_PATHS.bookingAvailability)
           .then((res) => res.json())
           .then((json) => {
               // Check both possible response structures
@@ -152,6 +192,25 @@ export function Header() {
       return () => clearInterval(refreshInterval)
     }
   }, [bookingOpen, mounted])
+
+  // Function to refresh unavailable dates (called on month navigation)
+  const refreshUnavailableDates = () => {
+    if (bookingOpen && mounted) {
+      fetch("/api/v1/booking/availability")
+        .then((res) => res.json())
+        .then((json) => {
+          const unavailableDatesArray = json.data?.unavailableDates || json.unavailableDates || []
+          if (json.success) {
+            const dates = new Set<string>(unavailableDatesArray)
+            setUnavailableDates(dates)
+            console.log(`[Header] Unavailable dates refreshed on month change: ${unavailableDatesArray.length} dates`)
+          }
+        })
+        .catch((err) => {
+          console.error("Failed to refresh unavailable dates:", err)
+        })
+    }
+  }
 
   // Load form data from localStorage on component mount
   useEffect(() => {
@@ -300,6 +359,10 @@ export function Header() {
   }
 
   function handleRecaptchaError() {
+    // Don't show error if form is submitting or modal is closing
+    if (isSubmitting || !bookingOpen) {
+      return
+    }
     setRecaptchaToken(null)
     setIsRecaptchaVerified(false)
     setError({
@@ -310,6 +373,11 @@ export function Header() {
   }
 
   function handleRecaptchaExpire() {
+    // Don't show error if form is submitting or modal is closing
+    // This prevents error messages after successful submission
+    if (isSubmitting || !bookingOpen) {
+      return
+    }
     setRecaptchaToken(null)
     setIsRecaptchaVerified(false)
     setError({
@@ -343,6 +411,17 @@ export function Header() {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     setError(null)
+    
+    // Check if bookings are enabled before allowing submission
+    if (!bookingsEnabled) {
+      setError({
+        type: "validation",
+        message: "Bookings are currently disabled. Please try again later.",
+        retryable: false
+      })
+      setBookingOpen(false)
+      return
+    }
     
     // Check if we're in static export mode (GitHub Pages)
     const isStaticMode = process.env.NEXT_PUBLIC_USE_STATIC_IMAGES === '1'
@@ -470,6 +549,27 @@ export function Header() {
       return
     }
     
+    // Double-check bookings are still enabled right before API call
+    // This prevents race conditions where status changes between form submission and API call
+    try {
+      const statusCheck = await fetch(API_PATHS.settingsBookingEnabled)
+      const statusJson = await statusCheck.json()
+      
+      if (statusJson.success && statusJson.data && !statusJson.data.enabled) {
+        setBookingsEnabled(false)
+        setError({
+          type: "validation",
+          message: "Bookings are currently disabled. Please try again later.",
+          retryable: false
+        })
+        setBookingOpen(false)
+        return
+      }
+    } catch (statusError) {
+      // If status check fails, proceed with submission (API will handle it)
+      console.warn("Failed to verify booking status before submission:", statusError)
+    }
+    
     setIsSubmitting(true)
     
     try {
@@ -496,7 +596,7 @@ export function Header() {
         specialRequests: formData.specialRequests.trim(),
       }
       
-      const response = await fetch("/api/booking", {
+      const response = await fetch(API_PATHS.booking, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -757,8 +857,8 @@ export function Header() {
           <span className="text-[#2a1f1a] font-urbanist font-extrabold leading-[1.2]">University</span>
         </h1>
 
-        {/* Booking Button */}
-        {mounted && (
+        {/* Booking Button - Only show if bookings are enabled */}
+        {mounted && bookingsEnabled && (
           <Dialog open={bookingOpen} onOpenChange={handleBookingOpenChange}>
             <DialogTrigger className="hidden lg:flex items-center gap-3 text-white/80 hover:text-white transition-colors mr-1 sm:mr-2 md:mr-3 lg:mr-0" aria-label="Open Booking">
             <div className="flex items-center justify-center w-10 h-10 lg:w-12 lg:h-12 3xl:w-14 3xl:h-14 4xl:w-16 4xl:h-16 5xl:w-20 5xl:h-20 rounded-full bg-white border-2 border-[var(--hell-dusty-blue)]">
@@ -1044,20 +1144,28 @@ export function Header() {
                               <PopoverContent className="w-auto p-0" align="start">
                                 <SimpleCalendar
                                   selected={startDate}
+                                  month={calendarMonth}
+                                  onMonthChange={(date) => {
+                                    setCalendarMonth(date)
+                                    // Refresh unavailable dates when month changes
+                                    refreshUnavailableDates()
+                                  }}
                                   onSelect={handleStartDateChange}
                                   disabled={(date) => {
                                     // Disable past dates and today (users cannot book current date)
-                                    if (date < new Date()) return true
-                                    // Check if date is today in Bangkok timezone
+                                    // Use Bangkok timezone for date comparison to ensure consistent behavior
+                                    // regardless of user's browser timezone
                                     const todayStr = dateToBangkokDateString(new Date())
                                     const dateStr = dateToBangkokDateString(date)
-                                    if (todayStr === dateStr) return true
+                                    if (dateStr < todayStr) return true  // Disable past dates (Bangkok timezone)
+                                    if (todayStr === dateStr) return true  // Disable today
                                     if (!isRecaptchaVerified) return true
                                     if (process.env.NEXT_PUBLIC_USE_STATIC_IMAGES === '1') return true
-                                    // Check if date is unavailable (has checked-in booking or postponed booking with deposit_verified_at)
+                                    // Check if date is unavailable (has confirmed booking)
+                                    // Convert date to Bangkok timezone for proper comparison
                                     const isUnavailable = unavailableDates.has(dateStr)
                                     if (isUnavailable) {
-                                      console.log(`[Header] Date ${dateStr} is unavailable (blocked by booking)`)
+                                      console.log(`[Header] Date ${dateStr} is unavailable (blocked by confirmed booking)`)
                                     }
                                     return isUnavailable
                                   }}
@@ -1114,23 +1222,31 @@ export function Header() {
                                 <PopoverContent className="w-auto p-0" align="start">
                                   <SimpleCalendar
                                     selected={endDate}
+                                    month={calendarMonth}
+                                    onMonthChange={(date) => {
+                                      setCalendarMonth(date)
+                                      // Refresh unavailable dates when month changes
+                                      refreshUnavailableDates()
+                                    }}
                                     onSelect={handleEndDateChange}
                                     disabled={(date) => {
                                       if (!isRecaptchaVerified) return true
                                       if (process.env.NEXT_PUBLIC_USE_STATIC_IMAGES === '1') return true
-                                      if (date < new Date()) return true
+                                      // Use Bangkok timezone for date comparison to ensure consistent behavior
+                                      // regardless of user's browser timezone
+                                      const todayStr = dateToBangkokDateString(new Date())
+                                      const dateStr = dateToBangkokDateString(date)
+                                      if (dateStr < todayStr) return true  // Disable past dates (Bangkok timezone)
                                       if (startDate) {
                                         const startDateStr = dateToBangkokDateString(startDate)
-                                        const dateStr = dateToBangkokDateString(date)
                                         // Disable if date is before start date OR same as start date
-                                        if (date < startDate || startDateStr === dateStr) return true
+                                        if (dateStr < startDateStr || startDateStr === dateStr) return true
                                       }
-                                      // Check if date is unavailable (has checked-in booking or postponed booking with deposit_verified_at)
+                                      // Check if date is unavailable (has confirmed booking)
                                       // Convert date to Bangkok timezone for proper comparison
-                                      const dateStr = dateToBangkokDateString(date)
                                       const isUnavailable = unavailableDates.has(dateStr)
                                       if (isUnavailable) {
-                                        console.log(`[Header] End date ${dateStr} is unavailable (blocked by booking)`)
+                                        console.log(`[Header] End date ${dateStr} is unavailable (blocked by confirmed booking)`)
                                       }
                                       return isUnavailable
                                     }}
@@ -1353,7 +1469,7 @@ export function Header() {
                         <Button
                           type="submit"
                           disabled={!isRecaptchaVerified || isSubmitting || process.env.NEXT_PUBLIC_USE_STATIC_IMAGES === '1'}
-                          className="font-comfortaa bg-[#5B9AB8] hover:bg-[#4d8ea7] text-white disabled:opacity-50 disabled:cursor-not-allowed"
+                          className="font-comfortaa bg-[#5B9AB8] hover:bg-[#4d8ea7] text-white disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
                           style={{ 
                             padding: 'clamp(0.5rem, 0.6vw, 0.75rem) clamp(1rem, 1.2vw, 1.5rem)',
                             fontSize: 'clamp(0.75rem, 0.85vw, 0.875rem)'
@@ -1362,7 +1478,12 @@ export function Header() {
                           {process.env.NEXT_PUBLIC_USE_STATIC_IMAGES === '1' 
                             ? "Form Unavailable" 
                             : isSubmitting 
-                            ? "Submitting..." 
+                            ? (
+                              <>
+                                <Loader2 className="w-4 h-4 animate-spin" />
+                                <span>Submitting...</span>
+                              </>
+                            )
                             : "Submit Inquiry"}
                         </Button>
                         <p className="text-[#5a3a2a]/70 text-center max-w-lg font-comfortaa leading-tight px-2" style={{ fontSize: 'clamp(0.5625rem, 0.6vw, 0.625rem)' }}>

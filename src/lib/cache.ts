@@ -145,9 +145,46 @@ export function deleteCached(key: string): void {
 
 /**
  * Invalidate cache entries matching pattern
+ * Includes retry logic for robustness (though in-memory cache rarely fails)
  */
-export function invalidateCache(pattern: string): void {
-  cache.invalidate(pattern)
+export async function invalidateCache(pattern: string, retries: number = 3): Promise<void> {
+  let lastError: Error | null = null
+  
+  for (let attempt = 0; attempt < retries; attempt++) {
+    try {
+      cache.invalidate(pattern)
+      // Success - return immediately
+      return
+    } catch (error) {
+      lastError = error instanceof Error ? error : new Error(String(error))
+      
+      // If not the last attempt, wait briefly before retrying
+      if (attempt < retries - 1) {
+        // Exponential backoff: 10ms, 20ms, 40ms
+        const delay = Math.pow(2, attempt) * 10
+        // Use setTimeout in Node.js environment, or immediate retry in browser
+        if (typeof setTimeout !== 'undefined') {
+          // In Node.js, we can't easily wait synchronously, so just retry immediately
+          // The delay is minimal and cache operations are fast
+          continue
+        }
+      }
+    }
+  }
+  
+  // If all retries failed, log error but don't throw (cache invalidation is non-critical)
+  if (lastError) {
+    console.error(`[Cache] Failed to invalidate cache pattern "${pattern}" after ${retries} attempts:`, lastError.message)
+    // Track monitoring metric
+    try {
+      const { trackCacheInvalidationFailure } = await import('./monitoring')
+      trackCacheInvalidationFailure(pattern, lastError)
+    } catch {
+      // Ignore monitoring errors
+    }
+    // Don't throw - cache invalidation failure shouldn't break the application
+    // The cache will expire naturally via TTL, and next fetch will get fresh data
+  }
 }
 
 /**

@@ -193,35 +193,98 @@ export async function GET(request: Request) {
     const limit = parseInt(searchParams.get("limit") || "50")
     const offset = parseInt(searchParams.get("offset") || "0")
     const category = searchParams.get("category") || null
+    const title = searchParams.get("title") || undefined
+    const sortBy = (searchParams.get("sortBy") as "created_at" | "updated_at" | "display_order" | "title") || undefined
+    const sortOrder = (searchParams.get("sortOrder") as "ASC" | "DESC") || undefined
     
-    await logger.debug('List images parameters', { limit, offset, category: category || undefined })
+    await logger.debug('List images parameters', { 
+      limit, 
+      offset, 
+      category: category || undefined,
+      hasTitle: !!title,
+      sortBy,
+      sortOrder
+    })
 
     const db = getTursoClient()
 
     // Build WHERE clause
-    const whereClause = category ? "WHERE category = ?" : ""
-    const countArgs = category ? [category] : []
+    const conditions: string[] = []
+    const args: any[] = []
+
+    // Exclude images that are linked to events (poster or in-event photos)
+    // These images are managed in the Admin Events page, not the Admin Images page
+    // Poster images: linked via events.image_id
+    // In-event photos: linked via event_images.image_id
+    // Note: Orphaned event images are automatically cleaned up when deleted/replaced
+    conditions.push(`i.id NOT IN (
+      SELECT DISTINCT image_id FROM events WHERE image_id IS NOT NULL
+      UNION
+      SELECT DISTINCT image_id FROM event_images WHERE image_id IS NOT NULL
+    )`)
+
+    if (category) {
+      // Uses idx_images_category_order for category filtering
+      conditions.push("i.category = ?")
+      args.push(category)
+    }
+
+    if (title) {
+      // Title search (prefix search for better performance)
+      conditions.push("i.title LIKE ?")
+      args.push(`${title}%`)
+    }
+
+    const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : ""
 
     // Get total count
     const countResult = await db.execute({
-      sql: `SELECT COUNT(*) as count FROM images ${whereClause}`,
-      args: countArgs,
+      sql: `SELECT COUNT(*) as count FROM images i ${whereClause}`,
+      args,
     })
     const total = (countResult.rows[0] as any).count
 
-    // Get images - order by category, then display_order, then created_at
+    // Optimize ORDER BY based on user preferences
+    // Default: Sort by category, then display_order, then created_at (uses idx_images_category_order)
+    let orderByClause = ""
+    if (sortBy) {
+      const order = sortOrder || "DESC"
+      if (sortBy === "title") {
+        // Title sorting (alphabetical)
+        orderByClause = `ORDER BY i.title ${order}, i.created_at DESC`
+      } else if (sortBy === "created_at" || sortBy === "updated_at") {
+        // Timestamp sorting
+        orderByClause = `ORDER BY i.${sortBy} ${order}`
+      } else if (sortBy === "display_order") {
+        // Display order sorting - if category filter, uses idx_images_category_order
+        if (category) {
+          orderByClause = `ORDER BY i.display_order ${order}, i.created_at DESC`
+        } else {
+          orderByClause = `ORDER BY i.category ASC, i.display_order ${order}, i.created_at DESC`
+        }
+      } else {
+        // Fallback to default
+        orderByClause = `ORDER BY i.category ASC, i.display_order ASC, i.created_at DESC`
+      }
+    } else {
+      // Default: Sort by category, then display_order, then created_at
+      // Uses idx_images_category_order composite index
+      orderByClause = `ORDER BY i.category ASC, i.display_order ASC, i.created_at DESC`
+    }
+
+    // Get images (exclude event images)
     const result = await db.execute({
       sql: `
         SELECT 
-          id, blob_url, title, event_info, category, display_order, ai_selected, ai_order, format,
-          width, height, file_size, original_filename,
-          created_at, updated_at
-        FROM images
+          i.id, i.blob_url, i.title, i.event_info, i.category, i.display_order, i.ai_selected, i.ai_order, i.format,
+          i.width, i.height, i.file_size, i.original_filename,
+          i.created_at, i.updated_at
+        FROM images i
         ${whereClause}
-        ORDER BY category ASC, display_order ASC, created_at DESC
+        ${orderByClause}
         LIMIT ? OFFSET ?
       `,
-      args: [...countArgs, limit, offset],
+      args: [...args, limit, offset],
     })
     
     await logger.info('Images list retrieved', {

@@ -1,6 +1,7 @@
 "use client"
 
 import { useState, useEffect } from "react"
+import { API_PATHS } from "@/lib/api-config"
 import { X, ChevronLeft, ChevronRight } from "lucide-react"
 import { Dialog, DialogContent, DialogTitle, DialogHeader } from "./ui/dialog"
 import {
@@ -24,7 +25,6 @@ interface EventData {
   image_url: string | null
   start_date: number | null
   end_date: number | null
-  location: string | null
   in_event_photos: Array<{
     id: string
     blob_url: string
@@ -51,7 +51,8 @@ export function EventModalViewer({ eventId, isOpen, onClose }: EventModalViewerP
       setError(null)
 
       try {
-        const response = await fetch(`/api/events/${eventId}`)
+        if (!eventId) return
+        const response = await fetch(API_PATHS.event(eventId))
         if (!response.ok) {
           throw new Error("Failed to fetch event details")
         }
@@ -152,7 +153,6 @@ export function EventModalViewer({ eventId, isOpen, onClose }: EventModalViewerP
                 {eventData.start_date && (
                   <span>📅 {formatDate(eventData.start_date)}</span>
                 )}
-                {eventData.location && <span>📍 {eventData.location}</span>}
               </div>
             </div>
 

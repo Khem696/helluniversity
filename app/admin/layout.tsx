@@ -2,6 +2,7 @@ import { auth } from "@/lib/auth-config"
 import Link from "next/link"
 import { SignOutButton } from "@/components/SignOutButton"
 import { LoginPageCleanup } from "@/components/LoginPageCleanup"
+import { AdminHeaderClient } from "./components/AdminHeaderClient"
 
 // Mark as dynamic to prevent static export issues
 export const dynamic = 'force-dynamic'
@@ -44,44 +45,8 @@ export default async function AdminLayout({
               </Link>
             </div>
 
-            {/* Navigation */}
-            <nav className="hidden md:flex items-center gap-6">
-              <Link
-                href="/admin"
-                prefetch={false}
-                className="text-sm font-medium text-gray-700 hover:text-gray-900 transition-colors"
-              >
-                Dashboard
-              </Link>
-              <Link
-                href="/admin/bookings"
-                prefetch={false}
-                className="text-sm font-medium text-gray-700 hover:text-gray-900 transition-colors"
-              >
-                Reservation
-              </Link>
-              <Link
-                href="/admin/events"
-                prefetch={false}
-                className="text-sm font-medium text-gray-700 hover:text-gray-900 transition-colors"
-              >
-                Event
-              </Link>
-              <Link
-                href="/admin/images"
-                prefetch={false}
-                className="text-sm font-medium text-gray-700 hover:text-gray-900 transition-colors"
-              >
-                Image
-              </Link>
-              <Link
-                href="/admin/email-queue"
-                prefetch={false}
-                className="text-sm font-medium text-gray-700 hover:text-gray-900 transition-colors"
-              >
-                Email Queue
-              </Link>
-            </nav>
+            {/* Navigation - Client component for dynamic updates */}
+            <AdminHeaderClient />
 
             {/* User Info & Sign Out */}
             {session?.user && (

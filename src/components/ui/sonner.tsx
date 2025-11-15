@@ -10,22 +10,30 @@ const Toaster = ({ ...props }: ToasterProps) => {
     <Sonner
       theme={theme as ToasterProps["theme"]}
       className="toaster group"
-      position="top-center"
+      position="bottom-right"
       closeButton
-      // Responsive settings for smaller screens
+      // Prevent overlapping: limit visible toasts and add gap between them
+      visibleToasts={4}
+      gap={12}
+      expand={false}
+      richColors
+      // Prevent duplicate toasts from stacking
       toastOptions={{
         style: {
           maxWidth: "calc(100vw - 2rem)",
           width: "auto",
           minWidth: "280px",
-          color: "#000000",
         },
         className: "sm:max-w-md",
         classNames: {
-          title: "text-black",
-          description: "text-black",
+          // Use theme-aware text colors that adapt to light/dark mode
+          title: "font-medium text-foreground",
+          description: "text-sm text-foreground/90",
           closeButton: "bg-red-600 hover:bg-red-700 text-white rounded-full opacity-100 border-0",
         },
+        // Default duration for toasts (can be overridden per toast)
+        // Shorter duration for info toasts, longer for success/error
+        duration: 4000,
       }}
       style={
         {

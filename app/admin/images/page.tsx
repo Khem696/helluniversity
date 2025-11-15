@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useEffect, useRef } from "react"
+import { useState, useEffect, useRef, useMemo } from "react"
 import { redirect } from "next/navigation"
 import { useSession } from "next-auth/react"
 import { Button } from "@/components/ui/button"
@@ -22,10 +22,28 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select"
-import { Upload, Edit, Loader2, Image as ImageIcon, ChevronDown, ChevronUp, Globe, Image as ImageIcon2, Trash2 } from "lucide-react"
+import { Upload, Edit, Loader2, Image as ImageIcon, ChevronDown, ChevronUp, Globe, Image as ImageIcon2, Trash2, GripVertical, Check } from "lucide-react"
 import { toast } from "sonner"
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible"
 import { useAdminData } from "@/hooks/useAdminData"
+import { API_PATHS, buildApiUrl } from "@/lib/api-config"
+import {
+  DndContext,
+  closestCenter,
+  KeyboardSensor,
+  PointerSensor,
+  useSensor,
+  useSensors,
+  DragEndEvent,
+} from "@dnd-kit/core"
+import {
+  arrayMove,
+  SortableContext,
+  sortableKeyboardCoordinates,
+  useSortable,
+  rectSortingStrategy,
+} from "@dnd-kit/sortable"
+import { CSS } from "@dnd-kit/utilities"
 
 interface Image {
   id: string
@@ -56,16 +74,9 @@ interface SectionInfo {
 }
 
 // Section mapping: webpage sections and their categories
-// Ordered: Events (top), AI Space Generator (second), Studio Gallery Page (last)
+// Note: Event images are now managed in the Admin Events page, so they are excluded here
+// Ordered: AI Space Generator (first), Studio Gallery Page (last)
 const SECTIONS: SectionInfo[] = [
-  {
-    name: "Events",
-    description: "Event photos and documentation",
-    pageUrl: "/events",
-    pageName: "Events",
-    icon: "📅",
-    categories: ["event"],
-  },
   {
     name: "AI Space Generator",
     description: "AI-powered space generation tool with studio images",
@@ -89,9 +100,177 @@ const SECTIONS: SectionInfo[] = [
   },
 ]
 
+// Sortable image item component
+function SortableImageItem({
+  image,
+  onEdit,
+  onDelete,
+  onToggleAI,
+  isAISpaceSection,
+  uploading,
+}: {
+  image: Image
+  onEdit: (image: Image) => void
+  onDelete: (image: Image) => void
+  onToggleAI: (imageId: string, currentValue: number | boolean | undefined) => void
+  isAISpaceSection: boolean
+  uploading: boolean
+}) {
+  const {
+    attributes,
+    listeners,
+    setNodeRef,
+    transform,
+    transition,
+    isDragging,
+  } = useSortable({ id: image.id })
+
+  const style = {
+    transform: CSS.Transform.toString(transform),
+    transition,
+    opacity: isDragging ? 0.5 : 1,
+  }
+
+  const isSelectedForAI = isAISpaceSection && (image.ai_selected === 1 || image.ai_selected === true)
+  const aiOrderNumber = isSelectedForAI && image.ai_order ? image.ai_order : null
+
+  return (
+    <div
+      ref={setNodeRef}
+      style={style}
+      className={`group bg-gray-50 rounded-lg overflow-hidden hover:shadow-md transition-shadow border ${
+        isSelectedForAI
+          ? "border-[#5B9AB8] border-2 ring-2 ring-[#5B9AB8]/20"
+          : "border-gray-200"
+      }`}
+    >
+      <div className="aspect-video bg-gray-100 relative">
+        <img
+          src={image.blob_url || ''}
+          alt={image.title || "Image"}
+          className="w-full h-full object-cover"
+          style={{ imageOrientation: 'none' }}
+          onError={(e) => {
+            console.error("Image failed to load:", {
+              id: image.id,
+              blob_url: image.blob_url,
+              title: image.title
+            })
+            const target = e.target as HTMLImageElement
+            target.style.display = 'none'
+            const parent = target.parentElement
+            if (parent && !parent.querySelector('.image-error')) {
+              const errorDiv = document.createElement('div')
+              errorDiv.className = 'image-error absolute inset-0 flex items-center justify-center bg-red-50 border-2 border-red-200'
+              errorDiv.innerHTML = `
+                <div class="text-center p-2">
+                  <p class="text-xs text-red-600 font-semibold">Failed to load</p>
+                  <p class="text-xs text-red-500 mt-1 break-all">${image.blob_url ? image.blob_url.substring(0, 30) + '...' : 'No URL'}</p>
+                </div>
+              `
+              parent.appendChild(errorDiv)
+            }
+          }}
+          onLoad={(e) => {
+            const target = e.target as HTMLImageElement
+            const parent = target.parentElement
+            const errorDiv = parent?.querySelector('.image-error')
+            if (errorDiv) {
+              errorDiv.remove()
+            }
+          }}
+        />
+        {/* Drag handle */}
+        <div
+          {...attributes}
+          {...listeners}
+          className="absolute top-2 left-2 bg-black/50 hover:bg-black/70 text-white p-1 rounded cursor-grab active:cursor-grabbing opacity-0 group-hover:opacity-100 transition-opacity"
+        >
+          <GripVertical className="w-4 h-4" />
+        </div>
+        {/* Order banner - only show for selected AI images, hide for unselected */}
+        {isSelectedForAI && aiOrderNumber && (
+          <div className="absolute top-2 right-2 bg-[#5B9AB8] text-white px-2 py-1 rounded text-xs font-semibold">
+            <span>AI Order: {aiOrderNumber}</span>
+          </div>
+        )}
+        {isSelectedForAI && aiOrderNumber && (
+          <div className="absolute bottom-2 left-2 bg-[#5B9AB8] text-white px-2 py-1 rounded text-xs font-semibold">
+            <span>AI #{aiOrderNumber}</span>
+          </div>
+        )}
+        {/* Display order badge */}
+        <div className="absolute bottom-2 right-2 bg-gray-800/70 text-white px-2 py-1 rounded text-xs">
+          Display: {image.display_order}
+        </div>
+      </div>
+      <div className="p-3">
+        <div className="flex items-start justify-between gap-2 mb-2">
+          <div className="flex-1 min-w-0">
+            <h3 className="text-sm font-medium text-gray-900 truncate">
+              {image.title || "Untitled"}
+            </h3>
+            {image.category && (
+              <p className="text-xs text-gray-500 mt-1">{image.category}</p>
+            )}
+          </div>
+        </div>
+        <div className="flex items-center gap-2">
+          {isAISpaceSection && (
+            <button
+              onClick={() => onToggleAI(image.id, image.ai_selected)}
+              className="flex items-center gap-2 text-sm"
+            >
+              <div className={`w-6 h-6 rounded border-2 flex items-center justify-center transition-colors ${
+                isSelectedForAI
+                  ? "bg-[#5B9AB8] border-[#5B9AB8]"
+                  : "bg-white border-gray-300"
+              }`}>
+                {isSelectedForAI && (
+                  <Check className="w-4 h-4 text-white" />
+                )}
+              </div>
+              <span className="text-xs text-gray-600">
+                {isSelectedForAI ? "Selected" : "Select for AI"}
+              </span>
+            </button>
+          )}
+          <div className="flex gap-1 ml-auto">
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => onEdit(image)}
+              disabled={uploading}
+            >
+              <Edit className="w-3 h-3" />
+            </Button>
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => onDelete(image)}
+              disabled={uploading}
+              className="text-red-600 hover:text-red-700 hover:bg-red-50 border-red-200"
+            >
+              <Trash2 className="w-3 h-3" />
+            </Button>
+          </div>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 export default function ImagesPage() {
   const { data: session, status } = useSession()
   const [uploading, setUploading] = useState(false)
+  
+  // Initialize drag and drop sensors
+  const sensors = useSensors(
+    useSensor(PointerSensor),
+    useSensor(KeyboardSensor, {
+      coordinateGetter: sortableKeyboardCoordinates,
+    })
+  )
   const [editingImage, setEditingImage] = useState<Image | null>(null)
   const [uploadDialogOpen, setUploadDialogOpen] = useState(false)
   const [editDialogOpen, setEditDialogOpen] = useState(false)
@@ -102,6 +281,24 @@ export default function ImagesPage() {
   const [expandedSections, setExpandedSections] = useState<Set<string>>(new Set(SECTIONS.map(s => s.name)))
   const [viewMode, setViewMode] = useState<"sections" | "grid">("sections")
   const uploadFormRef = useRef<HTMLFormElement>(null)
+  const [titleFilter, setTitleFilter] = useState("")
+  const [sortBy, setSortBy] = useState<"created_at" | "updated_at" | "display_order" | "title">("display_order")
+  const [sortOrder, setSortOrder] = useState<"ASC" | "DESC">("ASC")
+  
+  // Build endpoint with filters (memoized to trigger refetch when filters change)
+  const endpoint = useMemo(() => {
+    const params = new URLSearchParams()
+    params.append("limit", "1000")
+    if (categoryFilter !== "all") {
+      params.append("category", categoryFilter)
+    }
+    if (titleFilter) {
+      params.append("title", titleFilter)
+    }
+    params.append("sortBy", sortBy)
+    params.append("sortOrder", sortOrder)
+    return buildApiUrl(API_PATHS.adminImages, Object.fromEntries(params))
+  }, [categoryFilter, titleFilter, sortBy, sortOrder])
   
   // Use useAdminData hook for images with optimistic updates
   const {
@@ -113,7 +310,7 @@ export default function ImagesPage() {
     removeItem,
     replaceItem
   } = useAdminData<Image>({
-    endpoint: "/api/admin/images?limit=1000",
+    endpoint,
     transformResponse: (json) => {
       return Array.isArray(json.data?.images) 
         ? json.data.images 
@@ -155,7 +352,7 @@ export default function ImagesPage() {
         uploadFormData.append("category", category)
       }
 
-      const response = await fetch("/api/admin/images", {
+      const response = await fetch(API_PATHS.adminImages, {
         method: "POST",
         body: uploadFormData,
       })
@@ -187,11 +384,108 @@ export default function ImagesPage() {
     }
   }
 
+  // Handle drag end for image reordering within category
+  const handleDragEnd = async (event: DragEndEvent, category: string) => {
+    const { active, over } = event
+
+    if (!over || active.id === over.id) {
+      return
+    }
+
+    // Get all images in this category
+    const categoryImages = images.filter((img) => img.category === category)
+    const sortedImages = [...categoryImages].sort((a, b) => a.display_order - b.display_order)
+
+    const oldIndex = sortedImages.findIndex((img) => img.id === active.id)
+    const newIndex = sortedImages.findIndex((img) => img.id === over.id)
+
+    if (oldIndex === -1 || newIndex === -1) {
+      return
+    }
+
+    // Optimistically update UI
+    const reorderedImages = arrayMove(sortedImages, oldIndex, newIndex)
+
+    // Calculate new display_order for all images
+    const updatedImages = reorderedImages.map((img, index) => ({
+      ...img,
+      display_order: index,
+    }))
+
+    // If this is aispace_studio category, also calculate ai_order for selected images
+    // This ensures we update both values in a single batch
+    if (category === "aispace_studio") {
+      const selectedImages = updatedImages
+        .filter((img) => img.ai_selected === 1 || img.ai_selected === true)
+        .sort((a, b) => a.display_order - b.display_order)
+
+      // Update ai_order in the same batch
+      selectedImages.forEach((img, index) => {
+        const imgIndex = updatedImages.findIndex((i) => i.id === img.id)
+        if (imgIndex !== -1) {
+          updatedImages[imgIndex] = {
+            ...updatedImages[imgIndex],
+            ai_order: index + 1,
+          }
+        }
+      })
+    }
+
+    // Update local state immediately with all changes (display_order + ai_order)
+    // Single batch update for better performance
+    updatedImages.forEach((img) => {
+      replaceItem(img.id, img)
+    })
+
+    // Update all images in the database
+    // For selected aispace_studio images, update both display_order and ai_order in one call
+    try {
+      const updatePromises = updatedImages.map((img) => {
+        const updateBody: { display_order: number; ai_order?: number } = {
+          display_order: img.display_order,
+        }
+
+        // Include ai_order if this is a selected aispace_studio image
+        if (
+          category === "aispace_studio" &&
+          (img.ai_selected === 1 || img.ai_selected === true) &&
+          img.ai_order !== undefined &&
+          img.ai_order !== null
+        ) {
+          updateBody.ai_order = img.ai_order
+        }
+
+        return fetch(API_PATHS.adminImage(img.id), {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(updateBody),
+        })
+      })
+
+      const results = await Promise.all(updatePromises)
+      const allSuccessful = results.every((res) => res.ok)
+
+      if (allSuccessful) {
+        toast.success("Image order updated successfully")
+        // No need to refetch - optimistic update already applied
+      } else {
+        toast.error("Failed to update image order")
+        // Revert on error - refetch to get correct state from server
+        fetchImages()
+      }
+    } catch (error) {
+      console.error("Failed to update image order:", error)
+      toast.error("Failed to update image order")
+      // Revert on error - refetch to get correct state from server
+      fetchImages()
+    }
+  }
+
   // Toggle AI selection for an image with automatic ordering
   const toggleAISelection = async (imageId: string, currentValue: number | boolean | undefined) => {
     try {
       const newValue = !currentValue || currentValue === 0
-      const response = await fetch(`/api/admin/images/toggle-ai-selection`, {
+      const response = await fetch(API_PATHS.adminImageToggleAISelection, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ 
@@ -255,7 +549,7 @@ export default function ImagesPage() {
       // Optimistically update UI first
       updateItem(editingImage.id, updates as Partial<Image>)
       
-      const response = await fetch(`/api/admin/images/${editingImage.id}`, {
+      const response = await fetch(API_PATHS.adminImage(editingImage.id), {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(updates),
@@ -299,7 +593,7 @@ export default function ImagesPage() {
       // Optimistically remove from list
       removeItem(imageToDelete.id)
       
-      const response = await fetch(`/api/admin/images/${imageToDelete.id}`, {
+      const response = await fetch(API_PATHS.adminImage(imageToDelete.id), {
         method: "DELETE",
       })
       const json = await response.json()
@@ -401,11 +695,6 @@ export default function ImagesPage() {
     }
   })
 
-  // Get uncategorized images
-  const uncategorizedImages = filteredImages.filter(
-    img => !img.category || !SECTIONS.some(s => img.category && s.categories.includes(img.category))
-  )
-
   // Debug logging for sections
   console.log("[ImagesPage] Section grouping:", {
     sectionsCount: imagesBySection.length,
@@ -413,8 +702,7 @@ export default function ImagesPage() {
       name: s.name,
       imageCount: s.images.length,
       categories: s.categories
-    })),
-    uncategorizedCount: uncategorizedImages.length
+    }))
   })
 
   const toggleSection = (sectionName: string) => {
@@ -429,7 +717,7 @@ export default function ImagesPage() {
 
   if (status === "loading" || loading) {
     return (
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-12">
+      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 sm:py-8 lg:py-12">
         <div className="flex items-center justify-center h-64">
           <Loader2 className="w-8 h-8 animate-spin text-gray-400" />
         </div>
@@ -438,11 +726,11 @@ export default function ImagesPage() {
   }
 
   return (
-    <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-12">
-      <div className="mb-8 flex items-center justify-between">
+    <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 sm:py-8 lg:py-12">
+      <div className="mb-6 sm:mb-8 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
         <div>
-          <h1 className="text-4xl font-bold text-gray-900 mb-2">Image Management</h1>
-          <p className="text-gray-600">Manage uploaded images and their metadata</p>
+          <h1 className="text-2xl sm:text-3xl lg:text-4xl font-bold text-gray-900 mb-2">Image Management</h1>
+          <p className="text-sm sm:text-base text-gray-600">Manage uploaded images and their metadata</p>
         </div>
         <Dialog open={uploadDialogOpen} onOpenChange={setUploadDialogOpen}>
           <DialogTrigger asChild>
@@ -451,7 +739,7 @@ export default function ImagesPage() {
               Upload Image
             </Button>
           </DialogTrigger>
-          <DialogContent className="max-w-2xl">
+          <DialogContent className="max-w-[95vw] sm:max-w-2xl">
             <DialogHeader>
               <DialogTitle>Upload New Image</DialogTitle>
               <DialogDescription>
@@ -491,10 +779,6 @@ export default function ImagesPage() {
                     <SelectItem value="building_studio">Building Studio</SelectItem>
                     <SelectItem value="gallery">Gallery</SelectItem>
                     <SelectItem value="aispace_studio">AI Space Studio</SelectItem>
-                    <SelectItem value="event">Event</SelectItem>
-                    <SelectItem value="portrait">Portrait</SelectItem>
-                    <SelectItem value="poem">Poem</SelectItem>
-                    <SelectItem value="other">Other</SelectItem>
                   </SelectContent>
                 </Select>
               </div>
@@ -533,38 +817,70 @@ export default function ImagesPage() {
         </Dialog>
       </div>
 
-      {/* View Mode Toggle and Category Filter */}
-      <div className="mb-6 flex items-center justify-between gap-4">
-        <div className="flex items-center gap-4">
-          <div className="flex items-center gap-2 border rounded-lg p-1">
-            <Button
-              variant={viewMode === "sections" ? "default" : "ghost"}
-              size="sm"
-              onClick={() => setViewMode("sections")}
-              className="h-8"
-            >
-              <ImageIcon2 className="w-4 h-4 mr-2" />
-              By Sections
-            </Button>
-            <Button
-              variant={viewMode === "grid" ? "default" : "ghost"}
-              size="sm"
-              onClick={() => setViewMode("grid")}
-              className="h-8"
-            >
-              <ImageIcon className="w-4 h-4 mr-2" />
-              All Images
-            </Button>
+      {/* View Mode Toggle, Filters, and Sorting */}
+      <div className="mb-6 space-y-4">
+        {/* First Row: View Mode and Category Filter */}
+        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+          <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-4">
+            <div className="flex items-center gap-2 border rounded-lg p-1">
+              <Button
+                variant={viewMode === "sections" ? "default" : "ghost"}
+                size="sm"
+                onClick={() => setViewMode("sections")}
+                className="h-8"
+              >
+                <ImageIcon2 className="w-4 h-4 mr-2" />
+                By Sections
+              </Button>
+              <Button
+                variant={viewMode === "grid" ? "default" : "ghost"}
+                size="sm"
+                onClick={() => setViewMode("grid")}
+                className="h-8"
+              >
+                <ImageIcon className="w-4 h-4 mr-2" />
+                All Images
+              </Button>
+            </div>
+            <Select value={categoryFilter} onValueChange={setCategoryFilter}>
+              <SelectTrigger className="w-full sm:w-48 lg:w-64">
+                <SelectValue placeholder="Filter by category" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All Categories</SelectItem>
+                {categories.map(cat => (
+                  <SelectItem key={cat} value={cat}>{cat}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
           </div>
-          <Select value={categoryFilter} onValueChange={setCategoryFilter}>
-            <SelectTrigger className="w-64">
-              <SelectValue placeholder="Filter by category" />
+        </div>
+        {/* Second Row: Search, Sort By, Sort Order */}
+        <div className="flex flex-col sm:flex-row gap-4">
+          <Input
+            placeholder="Search by title..."
+            value={titleFilter}
+            onChange={(e) => setTitleFilter(e.target.value)}
+            className="w-full sm:w-64"
+          />
+          <Select value={sortBy} onValueChange={(value) => setSortBy(value as typeof sortBy)}>
+            <SelectTrigger className="w-full sm:w-48">
+              <SelectValue placeholder="Sort by" />
             </SelectTrigger>
             <SelectContent>
-              <SelectItem value="all">All Categories</SelectItem>
-              {categories.map(cat => (
-                <SelectItem key={cat} value={cat}>{cat}</SelectItem>
-              ))}
+              <SelectItem value="display_order">Display Order</SelectItem>
+              <SelectItem value="created_at">Created Date</SelectItem>
+              <SelectItem value="updated_at">Updated Date</SelectItem>
+              <SelectItem value="title">Title</SelectItem>
+            </SelectContent>
+          </Select>
+          <Select value={sortOrder} onValueChange={(value) => setSortOrder(value as typeof sortOrder)}>
+            <SelectTrigger className="w-full sm:w-32">
+              <SelectValue placeholder="Order" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="ASC">Ascending</SelectItem>
+              <SelectItem value="DESC">Descending</SelectItem>
             </SelectContent>
           </Select>
         </div>
@@ -611,8 +927,8 @@ export default function ImagesPage() {
                             </div>
                           </div>
                         </div>
-                        <div className="flex items-center gap-4">
-                          <div className="text-right">
+                        <div className="flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-4">
+                          <div className="text-left sm:text-right">
                             <div className="text-sm font-semibold text-gray-900">
                               {section.images.length} {section.images.length === 1 ? "image" : "images"}
                             </div>
@@ -626,9 +942,9 @@ export default function ImagesPage() {
                             )}
                           </div>
                           {isExpanded ? (
-                            <ChevronUp className="w-5 h-5 text-gray-400" />
+                            <ChevronUp className="w-5 h-5 text-gray-400 self-end sm:self-auto" />
                           ) : (
-                            <ChevronDown className="w-5 h-5 text-gray-400" />
+                            <ChevronDown className="w-5 h-5 text-gray-400 self-end sm:self-auto" />
                           )}
                         </div>
                       </div>
@@ -652,243 +968,75 @@ export default function ImagesPage() {
                                     ({subCat.images.length} {subCat.images.length === 1 ? "image" : "images"})
                                   </span>
                                 </div>
-                                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                                  {subCat.images.map((image: Image) => (
-                                    <div
-                                      key={image.id}
-                                      className="bg-gray-50 rounded-lg overflow-hidden hover:shadow-md transition-shadow border border-gray-200"
-                                    >
-                                      <div className="aspect-video bg-gray-100 relative">
-                                        <img
-                                          src={image.blob_url || ''}
-                                          alt={image.title || "Image"}
-                                          className="w-full h-full object-cover"
-                                          style={{ imageOrientation: 'none' }}
-                                          onError={(e) => {
-                                            console.error("Image failed to load:", {
-                                              id: image.id,
-                                              blob_url: image.blob_url,
-                                              title: image.title
-                                            })
-                                            const target = e.target as HTMLImageElement
-                                            target.style.display = 'none'
-                                            // Show error placeholder
-                                            const parent = target.parentElement
-                                            if (parent && !parent.querySelector('.image-error')) {
-                                              const errorDiv = document.createElement('div')
-                                              errorDiv.className = 'image-error absolute inset-0 flex items-center justify-center bg-red-50 border-2 border-red-200'
-                                              errorDiv.innerHTML = `
-                                                <div class="text-center p-2">
-                                                  <p class="text-xs text-red-600 font-semibold">Failed to load</p>
-                                                  <p class="text-xs text-red-500 mt-1 break-all">${image.blob_url ? image.blob_url.substring(0, 30) + '...' : 'No URL'}</p>
-                                                </div>
-                                              `
-                                              parent.appendChild(errorDiv)
-                                            }
+                                <DndContext
+                                  sensors={sensors}
+                                  collisionDetection={closestCenter}
+                                  onDragEnd={(e) => handleDragEnd(e, subCat.category)}
+                                >
+                                  <SortableContext
+                                    items={subCat.images.map((img: Image) => img.id)}
+                                    strategy={rectSortingStrategy}
+                                  >
+                                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                                      {subCat.images.map((image: Image) => (
+                                        <SortableImageItem
+                                          key={image.id}
+                                          image={image}
+                                          onEdit={(img: Image) => {
+                                            setEditingImage(img)
+                                            setEditDialogOpen(true)
                                           }}
-                                          onLoad={(e) => {
-                                            // Remove any error placeholders when image loads successfully
-                                            const parent = (e.target as HTMLImageElement).parentElement
-                                            const errorDiv = parent?.querySelector('.image-error')
-                                            if (errorDiv) {
-                                              errorDiv.remove()
-                                            }
-                                          }}
+                                          onDelete={handleDelete}
+                                          onToggleAI={toggleAISelection}
+                                          isAISpaceSection={section.name === "AI Space Generator"}
+                                          uploading={uploading}
                                         />
-                                        {/* Order banner for sub-category images */}
-                                        <div className="absolute top-2 right-2 bg-black/70 text-white text-xs px-2 py-1 rounded">
-                                          Display: {image.display_order}
-                                        </div>
-                                      </div>
-                                      <div className="p-3">
-                                        <h3 className="font-semibold text-gray-900 mb-1 truncate text-sm">
-                                          {image.title || "Untitled"}
-                                        </h3>
-                                        <p className="text-xs text-gray-600 mb-2">
-                                          {image.category && (
-                                            <span className="inline-block bg-blue-100 text-blue-800 text-xs px-2 py-0.5 rounded mr-2">
-                                              {image.category}
-                                            </span>
-                                          )}
-                                          <span className="text-gray-500">
-                                            {image.width} × {image.height}
-                                          </span>
-                                        </p>
-                                        <div className="flex gap-2">
-                                          <Button
-                                            size="sm"
-                                            variant="outline"
-                                            className="flex-1"
-                                            onClick={() => {
-                                              setEditingImage(image)
-                                              setEditDialogOpen(true)
-                                            }}
-                                          >
-                                            <Edit className="w-3 h-3 mr-1" />
-                                            Edit
-                                          </Button>
-                                          <Button
-                                            size="sm"
-                                            variant="outline"
-                                            className="text-red-600 hover:text-red-700 hover:bg-red-50 border-red-200"
-                                            onClick={() => handleDelete(image)}
-                                          >
-                                            <Trash2 className="w-3 h-3" />
-                                          </Button>
-                                        </div>
-                                      </div>
+                                      ))}
                                     </div>
-                                  ))}
-                                </div>
+                                  </SortableContext>
+                                </DndContext>
                               </div>
                             )
                           })}
                         </div>
                       ) : (
                         /* Default: show all images in grid */
-                        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                          {section.images.map((image, index) => {
-                            // For AI Space Generator section, show selection indicator
-                            const isAISpaceSection = section.name === "AI Space Generator"
-                            const isSelectedForAI = isAISpaceSection && (image.ai_selected === 1 || image.ai_selected === true)
-                            // Use ai_order for display (automatically managed by backend)
-                            const aiOrderNumber = isSelectedForAI && image.ai_order ? image.ai_order : null
-                            
-                            return (
-                              <div
-                                key={image.id}
-                                className={`bg-gray-50 rounded-lg overflow-hidden hover:shadow-md transition-shadow border ${
-                                  isSelectedForAI 
-                                    ? "border-[#5B9AB8] border-2 ring-2 ring-[#5B9AB8]/20" 
-                                    : "border-gray-200"
-                                }`}
-                              >
-                                <div className="aspect-video bg-gray-100 relative">
-                                  <img
-                                    src={image.blob_url || ''}
-                                    alt={image.title || "Image"}
-                                    className="w-full h-full object-cover"
-                                    style={{ imageOrientation: 'none' }}
-                                    onError={(e) => {
-                                      console.error("Image failed to load:", {
-                                        id: image.id,
-                                        blob_url: image.blob_url,
-                                        title: image.title
-                                      })
-                                      const target = e.target as HTMLImageElement
-                                      target.style.display = 'none'
-                                      // Show error placeholder
-                                      const parent = target.parentElement
-                                      if (parent && !parent.querySelector('.image-error')) {
-                                        const errorDiv = document.createElement('div')
-                                        errorDiv.className = 'image-error absolute inset-0 flex items-center justify-center bg-red-50 border-2 border-red-200'
-                                        errorDiv.innerHTML = `
-                                          <div class="text-center p-2">
-                                            <p class="text-xs text-red-600 font-semibold">Failed to load</p>
-                                            <p class="text-xs text-red-500 mt-1 break-all">${image.blob_url ? image.blob_url.substring(0, 30) + '...' : 'No URL'}</p>
-                                          </div>
-                                        `
-                                        parent.appendChild(errorDiv)
-                                      }
+                        <DndContext
+                          sensors={sensors}
+                          collisionDetection={closestCenter}
+                          onDragEnd={(e) => {
+                            // Get the category from the first image (all images in section should have same category)
+                            const category = section.images[0]?.category
+                            if (category) {
+                              handleDragEnd(e, category)
+                            }
+                          }}
+                        >
+                          <SortableContext
+                            items={section.images.map((img) => img.id)}
+                            strategy={rectSortingStrategy}
+                          >
+                            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                              {section.images.map((image) => {
+                                const isAISpaceSection = section.name === "AI Space Generator"
+                                return (
+                                  <SortableImageItem
+                                    key={image.id}
+                                    image={image}
+                                    onEdit={(img: Image) => {
+                                      setEditingImage(img)
+                                      setEditDialogOpen(true)
                                     }}
-                                    onLoad={(e) => {
-                                      // Remove any error placeholders when image loads successfully
-                                      const parent = (e.target as HTMLImageElement).parentElement
-                                      const errorDiv = parent?.querySelector('.image-error')
-                                      if (errorDiv) {
-                                        errorDiv.remove()
-                                      }
-                                    }}
+                                    onDelete={handleDelete}
+                                    onToggleAI={toggleAISelection}
+                                    isAISpaceSection={isAISpaceSection}
+                                    uploading={uploading}
                                   />
-                                  {/* Order banner - only show for selected AI images, hide for unselected */}
-                                  {isSelectedForAI && aiOrderNumber && (
-                                    <div className="absolute top-2 right-2 bg-[#5B9AB8] text-white text-xs font-bold px-2 py-1 rounded flex items-center gap-1 shadow-lg">
-                                      <span>AI Order: {aiOrderNumber}</span>
-                                    </div>
-                                  )}
-                                  {isSelectedForAI && aiOrderNumber && (
-                                    <div className="absolute top-2 left-2 bg-[#5B9AB8] text-white text-xs font-bold px-2 py-1 rounded flex items-center gap-1 shadow-lg">
-                                      <span>AI #{aiOrderNumber}</span>
-                                    </div>
-                                  )}
-                                  {isAISpaceSection && (
-                                    <div 
-                                      className="absolute bottom-2 left-2 cursor-pointer"
-                                      onClick={(e) => {
-                                        e.stopPropagation()
-                                        toggleAISelection(image.id, image.ai_selected)
-                                      }}
-                                    >
-                                      <div className={`w-6 h-6 rounded border-2 flex items-center justify-center transition-colors ${
-                                        isSelectedForAI 
-                                          ? "bg-[#5B9AB8] border-[#5B9AB8]" 
-                                          : "bg-white border-gray-300"
-                                      }`}>
-                                        {isSelectedForAI && (
-                                          <svg className="w-4 h-4 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" />
-                                          </svg>
-                                        )}
-                                      </div>
-                                    </div>
-                                  )}
-                                </div>
-                                <div className="p-3">
-                                  <h3 className="font-semibold text-gray-900 mb-1 truncate text-sm">
-                                    {image.title || "Untitled"}
-                                  </h3>
-                                  <p className="text-xs text-gray-600 mb-2">
-                                    {image.category && (
-                                      <span className="inline-block bg-blue-100 text-blue-800 text-xs px-2 py-0.5 rounded mr-2">
-                                        {image.category}
-                                      </span>
-                                    )}
-                                    {isSelectedForAI && (
-                                      <span className="inline-block bg-[#5B9AB8] text-white text-xs px-2 py-0.5 rounded mr-2 font-semibold">
-                                        Selected for AI
-                                      </span>
-                                    )}
-                                    <span className="text-gray-500">
-                                      {image.width} × {image.height}
-                                    </span>
-                                  </p>
-                                  <div className="flex gap-2">
-                                    {isAISpaceSection && (
-                                      <Button
-                                        size="sm"
-                                        variant={isSelectedForAI ? "default" : "outline"}
-                                        className={`flex-1 ${isSelectedForAI ? "bg-[#5B9AB8] hover:bg-[#4d8ea7]" : ""}`}
-                                        onClick={() => toggleAISelection(image.id, image.ai_selected)}
-                                      >
-                                        {isSelectedForAI ? "✓ Selected" : "Select for AI"}
-                                      </Button>
-                                    )}
-                                    <Button
-                                      size="sm"
-                                      variant="outline"
-                                      className={isAISpaceSection ? "flex-1" : "flex-1"}
-                                      onClick={() => {
-                                        setEditingImage(image)
-                                        setEditDialogOpen(true)
-                                      }}
-                                    >
-                                      <Edit className="w-3 h-3 mr-1" />
-                                      Edit
-                                    </Button>
-                                    <Button
-                                      size="sm"
-                                      variant="outline"
-                                      className="text-red-600 hover:text-red-700 hover:bg-red-50 border-red-200"
-                                      onClick={() => handleDelete(image)}
-                                    >
-                                      <Trash2 className="w-3 h-3" />
-                                    </Button>
-                                  </div>
-                                </div>
-                              </div>
-                            )
-                          })}
-                        </div>
+                                )
+                              })}
+                            </div>
+                          </SortableContext>
+                        </DndContext>
                       )}
                     </div>
                   </CollapsibleContent>
@@ -897,120 +1045,9 @@ export default function ImagesPage() {
             )
           })}
 
-          {/* Uncategorized Images */}
-          {uncategorizedImages.length > 0 && (
-            <Collapsible
-              open={expandedSections.has("Uncategorized")}
-              onOpenChange={() => toggleSection("Uncategorized")}
-            >
-              <div className="bg-white rounded-lg shadow-md border border-gray-200">
-                <CollapsibleTrigger className="w-full">
-                  <div className="p-4 hover:bg-gray-50 transition-colors cursor-pointer">
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-3">
-                        <span className="text-2xl">📁</span>
-                        <div className="text-left">
-                          <h2 className="text-xl font-semibold text-gray-900">
-                            Uncategorized Images
-                          </h2>
-                          <p className="text-sm text-gray-600 mt-1">
-                            Images without a category or not assigned to any section
-                          </p>
-                        </div>
-                      </div>
-                      <div className="flex items-center gap-4">
-                        <div className="text-right">
-                          <div className="text-sm font-semibold text-gray-900">
-                            {uncategorizedImages.length} {uncategorizedImages.length === 1 ? "image" : "images"}
-                          </div>
-                        </div>
-                        {expandedSections.has("Uncategorized") ? (
-                          <ChevronUp className="w-5 h-5 text-gray-400" />
-                        ) : (
-                          <ChevronDown className="w-5 h-5 text-gray-400" />
-                        )}
-                      </div>
-                    </div>
-                  </div>
-                </CollapsibleTrigger>
-                <CollapsibleContent>
-                  <div className="px-4 pb-4">
-                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                      {uncategorizedImages.map((image) => (
-                        <div
-                          key={image.id}
-                          className="bg-gray-50 rounded-lg overflow-hidden hover:shadow-md transition-shadow border border-gray-200"
-                        >
-                          <div className="aspect-video bg-gray-100 relative">
-                            <img
-                              src={image.blob_url || ''}
-                              alt={image.title || "Image"}
-                              className="w-full h-full object-cover"
-                              onError={(e) => {
-                                console.error("Image failed to load:", {
-                                  id: image.id,
-                                  blob_url: image.blob_url,
-                                  title: image.title
-                                })
-                                const target = e.target as HTMLImageElement
-                                target.style.display = 'none'
-                                // Show error placeholder
-                                const parent = target.parentElement
-                                if (parent && !parent.querySelector('.image-error')) {
-                                  const errorDiv = document.createElement('div')
-                                  errorDiv.className = 'image-error absolute inset-0 flex items-center justify-center bg-red-50 border-2 border-red-200'
-                                  errorDiv.innerHTML = `
-                                    <div class="text-center p-2">
-                                      <p class="text-xs text-red-600 font-semibold">Failed to load</p>
-                                      <p class="text-xs text-red-500 mt-1 break-all">${image.blob_url ? image.blob_url.substring(0, 30) + '...' : 'No URL'}</p>
-                                    </div>
-                                  `
-                                  parent.appendChild(errorDiv)
-                                }
-                              }}
-                              onLoad={(e) => {
-                                // Remove any error placeholders when image loads successfully
-                                const parent = (e.target as HTMLImageElement).parentElement
-                                const errorDiv = parent?.querySelector('.image-error')
-                                if (errorDiv) {
-                                  errorDiv.remove()
-                                }
-                              }}
-                            />
-                          </div>
-                          <div className="p-3">
-                            <h3 className="font-semibold text-gray-900 mb-1 truncate text-sm">
-                              {image.title || "Untitled"}
-                            </h3>
-                            <p className="text-xs text-gray-600 mb-2">
-                              <span className="text-gray-500">
-                                {image.width} × {image.height}
-                              </span>
-                            </p>
-                            <Button
-                              size="sm"
-                              variant="outline"
-                              className="w-full"
-                              onClick={() => {
-                                setEditingImage(image)
-                                setEditDialogOpen(true)
-                              }}
-                            >
-                              <Edit className="w-3 h-3 mr-1" />
-                              Edit
-                            </Button>
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                </CollapsibleContent>
-              </div>
-            </Collapsible>
-          )}
         </div>
       ) : (
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 sm:gap-6">
           {filteredImages.map((image) => {
             // Check if image is selected for AI (aispace_studio category)
             const isSelectedForAI = image.category === "aispace_studio" && (image.ai_selected === 1 || image.ai_selected === true)
@@ -1110,7 +1147,7 @@ export default function ImagesPage() {
 
       {/* Edit Dialog */}
       <Dialog open={editDialogOpen} onOpenChange={setEditDialogOpen}>
-        <DialogContent className="max-w-2xl">
+        <DialogContent className="max-w-[95vw] sm:max-w-2xl">
           <DialogHeader>
             <DialogTitle>Edit Image</DialogTitle>
             <DialogDescription>
@@ -1139,10 +1176,6 @@ export default function ImagesPage() {
                     <SelectItem value="building_studio">Building Studio</SelectItem>
                     <SelectItem value="gallery">Gallery</SelectItem>
                     <SelectItem value="aispace_studio">AI Space Studio</SelectItem>
-                    <SelectItem value="event">Event</SelectItem>
-                    <SelectItem value="portrait">Portrait</SelectItem>
-                    <SelectItem value="poem">Poem</SelectItem>
-                    <SelectItem value="other">Other</SelectItem>
                   </SelectContent>
                 </Select>
               </div>
@@ -1184,7 +1217,7 @@ export default function ImagesPage() {
 
       {/* Delete Confirmation Dialog */}
       <Dialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>
-        <DialogContent className="max-w-md">
+        <DialogContent className="max-w-[95vw] sm:max-w-md max-h-[90vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>Delete Image</DialogTitle>
             <DialogDescription>

@@ -11,6 +11,7 @@ import {
   type ActionDefinition,
 } from "@/lib/booking-state-machine"
 import type { ValidationResult } from "@/lib/booking-action-validation"
+import { API_PATHS } from "@/lib/api-config"
 
 interface Booking {
   id: string
@@ -28,7 +29,7 @@ interface Booking {
 }
 
 interface UseBookingActionsOptions {
-  onSuccess?: () => void
+  onSuccess?: (updatedBooking?: Booking) => void
   onError?: (error: string) => void
 }
 
@@ -56,16 +57,39 @@ export function useBookingActions(options?: UseBookingActionsOptions) {
       const targetStatus = mapActionToStatus(action, booking.status)
       
       try {
+        const validateUrl = API_PATHS.adminBookingValidate(booking.id)
+        console.log('[validateActionBeforeExecution] Calling validation API:', validateUrl, { action, targetStatus, bookingId: booking.id })
+        
         // Call server-side validation API
-        const response = await fetch(`/api/admin/bookings/${booking.id}/validate`, {
+        const response = await fetch(validateUrl, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ action, targetStatus }),
         })
 
+        if (!response.ok) {
+          // If response is not ok, try to get error message
+          let errorMessage = `HTTP ${response.status}: ${response.statusText}`
+          try {
+            const errorData = await response.json()
+            errorMessage = errorData.error?.message || errorData.error || errorMessage
+          } catch {
+            // If JSON parsing fails, use status text
+          }
+          
+          console.error("Validation API error:", errorMessage)
+          const validation: ValidationResult = {
+            valid: true, // Allow proceeding even if validation fails
+            warnings: [`Could not verify booking validation: ${errorMessage}. Please check manually.`],
+            errors: [],
+          }
+          setValidationResult(validation)
+          return validation
+        }
+
         const data = await response.json()
 
-        if (!response.ok || !data.success) {
+        if (!data.success) {
           // If validation API fails, return a warning but allow proceeding
           console.error("Validation API error:", data.error)
           const validation: ValidationResult = {
@@ -81,11 +105,22 @@ export function useBookingActions(options?: UseBookingActionsOptions) {
         setValidationResult(validation)
         return validation
       } catch (error) {
-        console.error("Error calling validation API:", error)
+        // Enhanced error logging
+        const errorMessage = error instanceof Error ? error.message : String(error)
+        const errorDetails = error instanceof Error ? error.stack : String(error)
+        console.error("Error calling validation API:", {
+          error: errorMessage,
+          details: errorDetails,
+          bookingId: booking.id,
+          action,
+          targetStatus,
+          url: API_PATHS.adminBookingValidate(booking.id),
+        })
+        
         // If API call fails, return a warning but allow proceeding
         const validation: ValidationResult = {
           valid: true, // Allow proceeding even if validation fails
-          warnings: ["Could not verify booking validation. Please check manually."],
+          warnings: [`Could not verify booking validation: ${errorMessage}. Please check manually.`],
           errors: [],
         }
         setValidationResult(validation)
@@ -161,19 +196,14 @@ export function useBookingActions(options?: UseBookingActionsOptions) {
           adminNotes: additionalData?.adminNotes || null,
         }
 
-        // Handle special cases
-        if (action === "verify_deposit" || action === "check_in") {
+        // Handle special cases for deposit verification
+        if (action === "accept_deposit" || action === "accept_deposit_other_channel") {
           requestBody.depositVerifiedBy =
             additionalData?.depositVerifiedBy || "Admin"
         }
 
-        if (action === "postpone") {
-          // For postpone, don't send proposedDate (admin doesn't propose dates)
-          requestBody.proposedDate = null
-        }
-
         // Make API call
-        const response = await fetch(`/api/admin/bookings/${booking.id}`, {
+        const response = await fetch(API_PATHS.adminBooking(booking.id), {
           method: "PATCH",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify(requestBody),
@@ -207,9 +237,12 @@ export function useBookingActions(options?: UseBookingActionsOptions) {
 
         toast.success(`Booking ${actionDef.label.toLowerCase()} successfully. Email notification sent.`)
         
-        // Call success callback
+        // Extract updated booking from response
+        const updatedBooking = data.data?.booking || data.booking || undefined
+        
+        // Call success callback with updated booking
         if (options?.onSuccess) {
-          options.onSuccess()
+          options.onSuccess(updatedBooking)
         }
 
         return true
@@ -247,7 +280,7 @@ export function useBookingActions(options?: UseBookingActionsOptions) {
         return false
       }
 
-      return executeAction("verify_deposit", booking, {
+      return executeAction("accept_deposit", booking, {
         depositVerifiedBy: verifiedBy,
         changeReason,
         adminNotes,

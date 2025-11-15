@@ -39,7 +39,13 @@ export async function GET(
       
       if (tokenCheck.rows.length > 0) {
         const bookingRow = tokenCheck.rows[0] as any
-        if (bookingRow.token_expires_at && bookingRow.token_expires_at < now) {
+        // Check token expiration with 5-minute grace period (matches getBookingByToken logic)
+        const TOKEN_GRACE_PERIOD = 5 * 60 // 5 minutes in seconds
+        const effectiveExpirationTime = bookingRow.token_expires_at 
+          ? bookingRow.token_expires_at + TOKEN_GRACE_PERIOD 
+          : null
+        
+        if (effectiveExpirationTime && now > effectiveExpirationTime) {
           // CRITICAL: Format timestamp in Bangkok timezone for logging
           const { TZDate } = await import('@date-fns/tz')
           const { format } = await import('date-fns')
@@ -47,11 +53,12 @@ export async function GET(
           const expiredDate = new TZDate(bookingRow.token_expires_at * 1000, BANGKOK_TIMEZONE)
           const expiredAtStr = format(expiredDate, 'yyyy-MM-dd HH:mm:ss') + ' GMT+7'
           
-          await logger.warn('Get booking by token failed: token expired', { 
+          await logger.warn('Get booking by token failed: token expired (after grace period)', { 
             tokenPrefix: token.substring(0, 8) + '...',
             bookingId: bookingRow.id,
             status: bookingRow.status,
-            expiredAt: expiredAtStr
+            expiredAt: expiredAtStr,
+            gracePeriod: TOKEN_GRACE_PERIOD
           })
           return errorResponse(
             ErrorCodes.TOKEN_EXPIRED,
@@ -159,11 +166,21 @@ export async function POST(
       
       if (tokenCheck.rows.length > 0) {
         const bookingRow = tokenCheck.rows[0] as any
-        if (bookingRow.token_expires_at && bookingRow.token_expires_at < now) {
-          await logger.warn('User response rejected: token expired', { 
+        // Check token expiration with 5-minute grace period (matches getBookingByToken logic)
+        // This allows users who are mid-submission to complete their action
+        const TOKEN_GRACE_PERIOD = 5 * 60 // 5 minutes in seconds
+        const effectiveExpirationTime = bookingRow.token_expires_at 
+          ? bookingRow.token_expires_at + TOKEN_GRACE_PERIOD 
+          : null
+        
+        if (effectiveExpirationTime && now > effectiveExpirationTime) {
+          await logger.warn('User response rejected: token expired (after grace period)', { 
             tokenPrefix: token.substring(0, 8) + '...',
             bookingId: bookingRow.id,
-            status: bookingRow.status
+            status: bookingRow.status,
+            expiredAt: bookingRow.token_expires_at,
+            now,
+            gracePeriod: TOKEN_GRACE_PERIOD
           })
           return errorResponse(
             ErrorCodes.TOKEN_EXPIRED,
@@ -235,10 +252,19 @@ export async function POST(
         )
       }
       
-      const proposedStartTimestamp = createBangkokTimestamp(proposedDate, proposedStartTime || null)
-      const proposedEndTimestamp = proposedEndDate
-        ? createBangkokTimestamp(proposedEndDate, proposedEndTime || null)
-        : null
+      // CRITICAL: Calculate timestamps correctly (date + time)
+      // Pattern: createBangkokTimestamp(dateString, null) then calculateStartTimestamp(timestamp, timeString)
+      const { calculateStartTimestamp } = await import('@/lib/booking-validations')
+      const proposedStartDateTimestamp = createBangkokTimestamp(proposedDate, null)
+      const proposedStartTimestamp = calculateStartTimestamp(
+        proposedStartDateTimestamp,
+        proposedStartTime || null
+      )
+      
+      let proposedEndDateTimestamp: number | null = null
+      if (proposedEndDate) {
+        proposedEndDateTimestamp = createBangkokTimestamp(proposedEndDate, null)
+      }
       
       // Validate that proposed date is in the future
       if (proposedStartTimestamp <= now) {
@@ -246,6 +272,142 @@ export async function POST(
         return errorResponse(
           ErrorCodes.INVALID_INPUT,
           'Proposed date must be in the future. Please select a future date.',
+          {},
+          400,
+          { requestId }
+        )
+      }
+      
+      // Validate date range consistency: end_date must be >= start_date
+      if (proposedEndDateTimestamp && proposedEndDateTimestamp < proposedStartDateTimestamp) {
+        await logger.warn('Proposed date range rejected: end date is before start date', {
+          bookingId: booking.id,
+          proposedDate,
+          proposedEndDate,
+          proposedStartDateTimestamp,
+          proposedEndDateTimestamp
+        })
+        return errorResponse(
+          ErrorCodes.INVALID_INPUT,
+          'Proposed end date must be after or equal to start date.',
+          {},
+          400,
+          { requestId }
+        )
+      }
+      
+      // CRITICAL: If end_date equals start_date, treat as single-day booking
+      const isEffectivelySingleDay = !proposedEndDateTimestamp || proposedEndDateTimestamp === proposedStartDateTimestamp
+      
+      // Parse time strings helper (HH:MM format)
+      const parseTime = (timeStr: string): { hour24: number; minutes: number } | null => {
+        if (!timeStr) return null
+        const match = timeStr.trim().match(/^(\d{1,2}):(\d{2})$/)
+        if (match) {
+          const hour24 = parseInt(match[1], 10)
+          const minutes = parseInt(match[2] || '00', 10)
+          if (hour24 >= 0 && hour24 <= 23 && minutes >= 0 && minutes <= 59) {
+            return { hour24, minutes }
+          }
+        }
+        return null
+      }
+      
+      // Validate time range for single-day bookings (including when end_date equals start_date)
+      if (isEffectivelySingleDay && proposedStartTime && proposedEndTime) {
+        const startParsed = parseTime(proposedStartTime)
+        const endParsed = parseTime(proposedEndTime)
+        
+        if (startParsed && endParsed) {
+          const startTotal = startParsed.hour24 * 60 + startParsed.minutes
+          const endTotal = endParsed.hour24 * 60 + endParsed.minutes
+          
+          if (endTotal <= startTotal) {
+            await logger.warn('Proposed date rejected: end time is not after start time for single-day booking', {
+              bookingId: booking.id,
+              proposedStartTime,
+              proposedEndTime,
+              proposedDate,
+              proposedEndDate
+            })
+            return errorResponse(
+              ErrorCodes.INVALID_INPUT,
+              'For single-day bookings, end time must be after start time.',
+              {},
+              400,
+              { requestId }
+            )
+          }
+        }
+      }
+      
+      // CRITICAL: Validate that end timestamp is > start timestamp (accounts for dates + times)
+      // This catches edge cases like: same date but invalid times, or dates valid but times make it invalid
+      let proposedEndTimestamp: number
+      if (proposedEndDateTimestamp) {
+        // Multi-day booking: calculate end timestamp from end_date + end_time
+        if (proposedEndTime) {
+          const endParsed = parseTime(proposedEndTime)
+          if (endParsed) {
+            try {
+              const { TZDate } = await import('@date-fns/tz')
+              const BANGKOK_TIMEZONE = 'Asia/Bangkok'
+              const utcDate = new Date(proposedEndDateTimestamp * 1000)
+              const tzDate = new TZDate(utcDate.getTime(), BANGKOK_TIMEZONE)
+              const year = tzDate.getFullYear()
+              const month = tzDate.getMonth()
+              const day = tzDate.getDate()
+              const tzDateWithTime = new TZDate(year, month, day, endParsed.hour24, endParsed.minutes, 0, BANGKOK_TIMEZONE)
+              proposedEndTimestamp = Math.floor(tzDateWithTime.getTime() / 1000)
+            } catch (error) {
+              proposedEndTimestamp = proposedEndDateTimestamp
+            }
+          } else {
+            proposedEndTimestamp = proposedEndDateTimestamp
+          }
+        } else {
+          proposedEndTimestamp = proposedEndDateTimestamp
+        }
+      } else {
+        // Single-day booking: calculate end timestamp from start_date + end_time
+        if (proposedEndTime) {
+          const endParsed = parseTime(proposedEndTime)
+          if (endParsed) {
+            try {
+              const { TZDate } = await import('@date-fns/tz')
+              const BANGKOK_TIMEZONE = 'Asia/Bangkok'
+              const utcDate = new Date(proposedStartDateTimestamp * 1000)
+              const tzDate = new TZDate(utcDate.getTime(), BANGKOK_TIMEZONE)
+              const year = tzDate.getFullYear()
+              const month = tzDate.getMonth()
+              const day = tzDate.getDate()
+              const tzDateWithTime = new TZDate(year, month, day, endParsed.hour24, endParsed.minutes, 0, BANGKOK_TIMEZONE)
+              proposedEndTimestamp = Math.floor(tzDateWithTime.getTime() / 1000)
+            } catch (error) {
+              proposedEndTimestamp = proposedStartTimestamp
+            }
+          } else {
+            proposedEndTimestamp = proposedStartTimestamp
+          }
+        } else {
+          proposedEndTimestamp = proposedStartTimestamp
+        }
+      }
+      
+      // Final validation: end timestamp must be > start timestamp
+      if (proposedEndTimestamp <= proposedStartTimestamp) {
+        await logger.warn('Proposed date rejected: end timestamp is not after start timestamp', {
+          bookingId: booking.id,
+          proposedStartTimestamp,
+          proposedEndTimestamp,
+          proposedDate,
+          proposedEndDate,
+          proposedStartTime,
+          proposedEndTime
+        })
+        return errorResponse(
+          ErrorCodes.INVALID_INPUT,
+          'The proposed end date and time must be after the start date and time.',
           {},
           400,
           { requestId }
@@ -260,8 +422,8 @@ export async function POST(
       
       const overlapCheck = await checkBookingOverlap(
         booking.id, // Exclude current booking from overlap check
-        proposedStartTimestamp,
-        proposedEndTimestamp,
+        proposedStartDateTimestamp, // Pass date timestamp (without time) - checkBookingOverlap will add time
+        proposedEndDateTimestamp,
         proposedStartTime || null,
         proposedEndTime || null
       )
@@ -287,8 +449,8 @@ export async function POST(
       await logger.info('Performing final overlap check before submitting proposed date')
       const finalOverlapCheck = await checkBookingOverlap(
         booking.id,
-        proposedStartTimestamp,
-        proposedEndTimestamp,
+        proposedStartDateTimestamp, // Pass date timestamp (without time) - checkBookingOverlap will add time
+        proposedEndDateTimestamp,
         proposedStartTime || null,
         proposedEndTime || null
       )
@@ -378,12 +540,12 @@ export async function POST(
       }
     }
 
-    // Send user confirmation email when they cancel (especially important for checked-in bookings)
+    // Send user confirmation email when they cancel
     if (response === "cancel") {
       try {
-        const changeReason = booking.status === "checked-in" 
-          ? "Your checked-in booking cancellation has been confirmed. We're sorry to see you go, but we understand that plans can change. Your booking has been successfully cancelled."
-          : "Your booking cancellation has been confirmed. We're sorry to see you go, but we understand that plans can change."
+        // Note: "checked-in" is not a valid status in the current booking status type
+        // All bookings that can be cancelled are in: pending, pending_deposit, paid_deposit, confirmed
+        const changeReason = "Your booking cancellation has been confirmed. We're sorry to see you go, but we understand that plans can change."
         
         await sendBookingStatusNotification(updatedBooking, "cancelled", {
           changeReason: changeReason,

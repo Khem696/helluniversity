@@ -29,7 +29,7 @@ export async function GET(
       sql: `
         SELECT 
           e.id, e.title, e.description, e.image_id, e.event_date,
-          e.start_date, e.end_date, e.location, e.created_at, e.updated_at,
+          e.start_date, e.end_date, e.created_at, e.updated_at,
           i.blob_url as image_url, i.title as image_title
         FROM events e
         LEFT JOIN images i ON e.image_id = i.id

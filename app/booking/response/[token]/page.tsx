@@ -12,6 +12,7 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 import { format } from "date-fns"
 import { TimePicker } from "@/components/ui/time-picker"
 import { dateToBangkokDateString } from "@/lib/timezone-client"
+import { API_PATHS, buildApiUrl } from "@/lib/api-config"
 
 // Parse 24-hour time string from user_response (HH:MM format)
 // Returns 24-hour format string or null
@@ -78,26 +79,21 @@ export default function BookingResponsePage() {
   const [isLoading, setIsLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [isSubmitting, setIsSubmitting] = useState(false)
-  const [response, setResponse] = useState<"accept" | "propose" | "cancel" | null>(null)
-  const [proposedDate, setProposedDate] = useState<Date | null>(null)
-  const [proposedEndDate, setProposedEndDate] = useState<Date | null>(null)
-  const [proposedDateRange, setProposedDateRange] = useState<"single" | "multiple">("single")
-  const [proposedStartTime, setProposedStartTime] = useState("09:00") // 24-hour format for TimePicker
-  const [proposedEndTime, setProposedEndTime] = useState("17:00") // 24-hour format for TimePicker
+  // User can only cancel bookings now - no propose date functionality
+  const [response, setResponse] = useState<"cancel" | null>(null)
   const [message, setMessage] = useState("")
   const [submitSuccess, setSubmitSuccess] = useState(false)
   const [unavailableDates, setUnavailableDates] = useState<Set<string>>(new Set())
 
   // Fetch unavailable dates on mount
-  // This includes checked-in bookings and postponed bookings with deposit_verified_at
-  // (original dates of postponed bookings remain blocked until admin accepts new date)
+  // This includes confirmed bookings
   // EXCEPTION: Excludes current booking's dates so user can select their own original dates
   useEffect(() => {
     if (!booking?.id) return // Wait for booking to load
     
     const url = booking.id 
-      ? `/api/booking/availability?bookingId=${encodeURIComponent(booking.id)}`
-      : "/api/booking/availability"
+      ? buildApiUrl(API_PATHS.bookingAvailability, { bookingId: booking.id })
+      : API_PATHS.bookingAvailability
     
     fetch(url)
       .then((res) => res.json())
@@ -129,7 +125,7 @@ export default function BookingResponsePage() {
 
     async function fetchBooking() {
       try {
-        const response = await fetch(`/api/booking/response/${token}`)
+        const response = await fetch(API_PATHS.bookingResponse(token))
         const json = await response.json()
         
         if (!response.ok || !json.success) {
@@ -145,28 +141,7 @@ export default function BookingResponsePage() {
         const booking = json.data?.booking || json.booking
         if (booking) {
           setBooking(booking)
-          // Pre-fill proposed date if available
-          if (booking.proposedDate) {
-            setProposedDate(new Date(booking.proposedDate))
-          }
-          // Pre-fill proposed end date if available (multiple days)
-          if (booking.proposedEndDate) {
-            setProposedEndDate(new Date(booking.proposedEndDate))
-            setProposedDateRange("multiple")
-          }
-                // Parse times from user_response if available (24-hour format)
-                if (booking.userResponse) {
-                  const timeMatch = booking.userResponse.match(/Start Time: ([^,)]+)/)
-                  if (timeMatch) {
-                    const time24 = parseTimeFromResponse(timeMatch[1].trim())
-                    if (time24) setProposedStartTime(time24)
-                  }
-                  const endTimeMatch = booking.userResponse.match(/End Time: ([^,)]+)/)
-                  if (endTimeMatch) {
-                    const time24 = parseTimeFromResponse(endTimeMatch[1].trim())
-                    if (time24) setProposedEndTime(time24)
-                  }
-                }
+          // No propose date functionality in new flow
         } else {
           throw new Error("Booking not found")
         }
@@ -193,95 +168,20 @@ export default function BookingResponsePage() {
       return
     }
 
-    if (response === "propose" && !proposedDate) {
-      setError("Please select a proposed start date")
-      return
-    }
-    
-    if (response === "propose" && proposedDateRange === "multiple" && !proposedEndDate) {
-      setError("Please select a proposed end date for multiple day reservation")
-      return
-    }
-    
-    // Validate that start date is selected first for multiple day proposals
-    if (response === "propose" && proposedDateRange === "multiple" && !proposedDate) {
-      setError("Please select a proposed start date first before selecting an end date")
-      return
-    }
-    
-    // Validate that end date is after start date
-    if (response === "propose" && proposedDateRange === "multiple" && proposedEndDate && proposedDate) {
-      const startDateStr = dateToBangkokDateString(proposedDate)
-      const endDateStr = dateToBangkokDateString(proposedEndDate)
-      
-      if (endDateStr === startDateStr) {
-        setError("End date cannot be the same as start date. Please select a different end date.")
-        return
-      }
-      
-      if (proposedEndDate < proposedDate) {
-        setError("End date must be after start date. Please select a date after the start date.")
-        return
-      }
-    }
-    
-    // Validate single day proposed date: end time must be after start time
-    if (response === "propose" && proposedDateRange === "single" && proposedStartTime && proposedEndTime) {
-      const parseTime = (time: string): number => {
-        if (!time || !time.includes(':')) return 0
-        const [hours, minutes] = time.split(':').map(Number)
-        return (hours || 0) * 60 + (minutes || 0) // Convert to minutes for comparison
-      }
-      
-      const startMinutes = parseTime(proposedStartTime)
-      const endMinutes = parseTime(proposedEndTime)
-      
-      if (endMinutes <= startMinutes) {
-        setError("For single day bookings, the end time must be after the start time.")
-        return
-      }
-    }
-    
-    // Frontend validation using GMT+7 timezone (matches backend validation)
-    if (response === "propose" && proposedDate && booking) {
-      const { validateProposedDateFrontend } = await import("@/lib/timezone-client")
-      const originalStartDate = booking.start_date ? Math.floor(new Date(booking.start_date).getTime() / 1000) : undefined
-      
-      // Use dateToBangkokDateString to ensure consistent timezone handling
-      // toISOString() converts to UTC which can cause timezone issues
-      const proposedDateStr = dateToBangkokDateString(proposedDate)
-      const proposedEndDateStr = proposedDateRange === "multiple" && proposedEndDate 
-        ? dateToBangkokDateString(proposedEndDate) 
-        : null
-      
-      const validation = validateProposedDateFrontend(
-        proposedDateStr,
-        proposedEndDateStr,
-        originalStartDate
-      )
-      
-      if (!validation.valid) {
-        setError(validation.reason || "Invalid proposed date. All dates use GMT+7 (Bangkok time).")
-        return
-      }
-    }
+    // Only cancel is available in new flow - no propose date functionality
 
     setIsSubmitting(true)
     setError(null)
 
     try {
-      const responseData = await fetch(`/api/booking/response/${token}`, {
+      const responseData = await fetch(`/api/v1/booking/response/${token}`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
           response,
-          // Extract date in Bangkok timezone to avoid timezone conversion issues
-          proposedDate: proposedDate ? dateToBangkokDateString(proposedDate) : undefined,
-          proposedEndDate: proposedDateRange === "multiple" && proposedEndDate ? dateToBangkokDateString(proposedEndDate) : undefined,
-              proposedStartTime: proposedStartTime || undefined,
-              proposedEndTime: proposedEndTime || undefined,
+          // No propose date functionality in new flow
           message: message.trim() || undefined,
         }),
       })
@@ -446,89 +346,11 @@ export default function BookingResponsePage() {
               </p>
             </div>
 
-            {booking.status === "postponed" && booking.proposedDate && (
-              <div className="bg-[#fef3c7] border-l-4 border-[#f59e0b] p-3 sm:p-4 rounded">
-                <Label className="text-[#92400e] font-comfortaa text-[clamp(12px,1.2vw,14px)] font-semibold flex items-center gap-2 mb-2">
-                  <Calendar className="w-4 h-4" />
-                  Date Change Comparison
-                </Label>
-                <div className="space-y-2">
-                  <div>
-                    <p className="text-[#92400e] font-comfortaa text-[clamp(11px,1.1vw,13px)] font-semibold">
-                      Original Date:
-                    </p>
-                    <p className="text-[#78350f] font-comfortaa text-[clamp(13px,1.3vw,15px)]">
-                      {formatDateRange(booking.startDate, booking.endDate || undefined)}
-                      {booking.startTime && (
-                        <span className="ml-2">
-                          {formatTimeForDisplay(booking.startTime)}
-                          {booking.endTime && ` - ${formatTimeForDisplay(booking.endTime)}`}
-                        </span>
-                      )}
-                    </p>
-                  </div>
-                  <div className="border-t border-[#f59e0b]/30 pt-2">
-                    <p className="text-[#92400e] font-comfortaa text-[clamp(11px,1.1vw,13px)] font-semibold">
-                      Proposed New Date{booking.proposedEndDate && booking.proposedEndDate !== booking.proposedDate ? "s" : ""}:
-                    </p>
-                    <p className="text-[#78350f] font-comfortaa text-[clamp(13px,1.3vw,15px)] font-medium">
-                      {booking.proposedEndDate && booking.proposedEndDate !== booking.proposedDate
-                        ? `${format(new Date(booking.proposedDate), "EEEE, MMMM d, yyyy")} - ${format(new Date(booking.proposedEndDate), "EEEE, MMMM d, yyyy")}`
-                        : format(new Date(booking.proposedDate), "EEEE, MMMM d, yyyy")}
-                    </p>
-                    {/* Parse and display times from user_response */}
-                    {booking.userResponse && (() => {
-                      const startTimeMatch = booking.userResponse.match(/Start Time: ([^,)]+)/)
-                      const endTimeMatch = booking.userResponse.match(/End Time: ([^,)]+)/)
-                      if (startTimeMatch || endTimeMatch) {
-                        const startTime = startTimeMatch ? parseTimeFromResponse(startTimeMatch[1].trim()) : null
-                        const endTime = endTimeMatch ? parseTimeFromResponse(endTimeMatch[1].trim()) : null
-                        return (
-                          <p className="text-[#78350f] font-comfortaa text-[clamp(12px,1.2vw,14px)] mt-1">
-                            {startTime && endTime 
-                              ? `Time: ${formatTimeForDisplay(startTime)} - ${formatTimeForDisplay(endTime)}`
-                              : startTime 
-                                ? `Time: ${formatTimeForDisplay(startTime)}`
-                                : endTime 
-                                  ? `Time: ${formatTimeForDisplay(endTime)}`
-                                  : null}
-                          </p>
-                        )
-                      }
-                      return null
-                    })()}
-                  </div>
-                </div>
-              </div>
-            )}
-            {booking.status === "postponed" && !booking.proposedDate && (
-              <div className="bg-[#fee2e2] border-l-4 border-[#ef4444] p-3 sm:p-4 rounded">
-                <Label className="text-[#991b1b] font-comfortaa text-[clamp(12px,1.2vw,14px)] font-semibold flex items-center gap-2 mb-2">
-                  <AlertCircle className="w-4 h-4" />
-                  Action Required
-                </Label>
-                <p className="text-[#991b1b] font-comfortaa text-[clamp(13px,1.3vw,15px)] font-medium mb-2">
-                  Your original reservation date:
-                </p>
-                <p className="text-[#b91c1c] font-comfortaa text-[clamp(14px,1.5vw,16px)] font-semibold mb-3">
-                  {formatDateRange(booking.startDate, booking.endDate || undefined)}
-                  {booking.startTime && (
-                    <span className="ml-2">
-                      {formatTimeForDisplay(booking.startTime)}
-                      {booking.endTime && ` - ${formatTimeForDisplay(booking.endTime)}`}
-                    </span>
-                  )}
-                </p>
-                <p className="text-[#991b1b] font-comfortaa text-[clamp(12px,1.2vw,14px)]">
-                  Please propose an alternative date or cancel your reservation below.
-                </p>
-              </div>
-            )}
           </div>
         </div>
 
-        {/* Deposit Upload Section for Accepted Status */}
-        {booking.status === "accepted" && (
+        {/* Deposit Upload Section for Pending Deposit Status */}
+        {booking.status === "pending_deposit" && !booking.depositEvidenceUrl && (
           <div className="bg-white rounded-lg shadow-lg p-4 sm:p-6 lg:p-8 mb-6 sm:mb-8">
             <h2 className="text-[#5a3a2a] font-urbanist text-[clamp(20px,3vw,24px)] font-extrabold mb-4 sm:mb-6">
               Upload Deposit Evidence
@@ -538,7 +360,7 @@ export default function BookingResponsePage() {
                 Your reservation has been accepted! Please upload your deposit evidence to complete the booking process.
               </p>
               <p className="text-green-700 font-comfortaa text-[clamp(12px,1.2vw,14px)]">
-                The deposit must be uploaded before the reservation start date and time.
+                Please send a deposit evidence before start date. The deposit must be uploaded before the reservation start date and time.
               </p>
             </div>
             <a
@@ -555,8 +377,8 @@ export default function BookingResponsePage() {
           </div>
         )}
 
-        {/* Deposit Verification Pending for Paid Deposit Status */}
-        {booking.status === "paid_deposit" && (
+        {/* Deposit Verification Pending for Pending Deposit Status with Evidence */}
+        {booking.status === "pending_deposit" && booking.depositEvidenceUrl && (
           <div className="bg-white rounded-lg shadow-lg p-4 sm:p-6 lg:p-8 mb-6 sm:mb-8">
             <h2 className="text-[#5a3a2a] font-urbanist text-[clamp(20px,3vw,24px)] font-extrabold mb-4 sm:mb-6">
               Deposit Verification Pending
@@ -566,16 +388,19 @@ export default function BookingResponsePage() {
                 ✓ Your deposit evidence has been successfully uploaded!
               </p>
               <p className="text-purple-700 font-comfortaa text-[clamp(12px,1.2vw,14px)]">
-                Our admin team is currently reviewing your deposit evidence. Once verified and your check-in is confirmed, you will receive an email with access to your reservation management page.
+                Our admin team is currently reviewing your deposit evidence. Once verified, your booking will be confirmed and you will receive an email notification.
               </p>
               <p className="text-purple-600 font-comfortaa text-[clamp(11px,1.1vw,13px)] mt-2">
                 Please wait for our team to complete the verification process.
               </p>
             </div>
-            {booking.depositEvidenceUrl && (
+            {booking.depositEvidenceUrl && (() => {
+              // Generate secure proxy URL instead of direct blob URL
+              const proxyUrl = API_PATHS.depositImage(token)
+              return (
               <div className="mt-4">
                 <a
-                  href={booking.depositEvidenceUrl}
+                    href={proxyUrl}
                   target="_blank"
                   rel="noopener noreferrer"
                   className="inline-block w-full sm:w-auto"
@@ -589,7 +414,8 @@ export default function BookingResponsePage() {
                   </Button>
                 </a>
               </div>
-            )}
+              )
+            })()}
           </div>
         )}
 
@@ -605,241 +431,8 @@ export default function BookingResponsePage() {
             </div>
           )}
 
-          {/* Response Options */}
+          {/* Response Options - Only Cancel Available */}
           <div className="space-y-3 sm:space-y-4 mb-4 sm:mb-6">
-            {/* Show accept option for postponed with proposed date */}
-            {booking.status === "postponed" && booking.proposedDate ? (
-              <button
-                type="button"
-                onClick={() => {
-                  setResponse("accept")
-                  setError(null)
-                }}
-                className={`w-full p-4 sm:p-5 rounded-lg border-2 transition-all text-left ${
-                  response === "accept"
-                    ? "border-[#10b981] bg-[#10b981]/10"
-                    : "border-gray-200 hover:border-[#10b981]/50"
-                }`}
-              >
-                <div className="flex items-center gap-3 sm:gap-4">
-                  <div
-                    className={`w-5 h-5 sm:w-6 sm:h-6 rounded-full border-2 flex items-center justify-center flex-shrink-0 ${
-                      response === "accept"
-                        ? "border-[#10b981] bg-[#10b981]"
-                        : "border-gray-300"
-                    }`}
-                  >
-                    {response === "accept" && (
-                      <Check className="w-3 h-3 sm:w-4 sm:h-4 text-white" />
-                    )}
-                  </div>
-                  <div>
-                    <h3 className="text-[#5a3a2a] font-urbanist text-[clamp(16px,2vw,20px)] font-extrabold mb-1">
-                      Accept Proposed Date
-                    </h3>
-                    <p className="text-[#5a3a2a]/70 font-comfortaa text-[clamp(13px,1.3vw,15px)]">
-                      I accept the proposed new date for my reservation
-                    </p>
-                  </div>
-                </div>
-              </button>
-            ) : null}
-
-            <div
-              role="button"
-              tabIndex={0}
-              onClick={() => {
-                setResponse("propose")
-                setError(null)
-              }}
-              onKeyDown={(e) => {
-                if (e.key === "Enter" || e.key === " ") {
-                  e.preventDefault()
-                  setResponse("propose")
-                  setError(null)
-                }
-              }}
-              className={`w-full p-4 sm:p-5 rounded-lg border-2 transition-all text-left cursor-pointer ${
-                response === "propose"
-                  ? "border-[#f59e0b] bg-[#f59e0b]/10"
-                  : "border-gray-200 hover:border-[#f59e0b]/50"
-              }`}
-            >
-              <div className="flex items-center gap-3 sm:gap-4">
-                <div
-                  className={`w-5 h-5 sm:w-6 sm:h-6 rounded-full border-2 flex items-center justify-center flex-shrink-0 ${
-                    response === "propose"
-                      ? "border-[#f59e0b] bg-[#f59e0b]"
-                      : "border-gray-300"
-                  }`}
-                >
-                  {response === "propose" && (
-                    <Calendar className="w-3 h-3 sm:w-4 sm:h-4 text-white" />
-                  )}
-                </div>
-                <div className="flex-1">
-                  <h3 className="text-[#5a3a2a] font-urbanist text-[clamp(16px,2vw,20px)] font-extrabold mb-1">
-                    Propose Alternative Date
-                  </h3>
-                  <p className="text-[#5a3a2a]/70 font-comfortaa text-[clamp(13px,1.3vw,15px)] mb-3 sm:mb-4">
-                    I would like to suggest a different date
-                  </p>
-                  {response === "propose" && (
-                    <div className="space-y-3 sm:space-y-4" onClick={(e) => e.stopPropagation()}>
-                      <div className="flex items-center gap-2">
-                        <label className="text-sm font-medium text-[#5a3a2a]">Date Range:</label>
-                        <select
-                          value={proposedDateRange}
-                          onChange={(e) => {
-                            setProposedDateRange(e.target.value as "single" | "multiple")
-                            if (e.target.value === "single") {
-                              setProposedEndDate(null)
-                            }
-                            setError(null)
-                          }}
-                          className="px-2 py-1 border rounded text-sm"
-                          onClick={(e) => e.stopPropagation()}
-                        >
-                          <option value="single">Single Day</option>
-                          <option value="multiple">Multiple Days</option>
-                        </select>
-                      </div>
-                      <div className="flex flex-wrap gap-2">
-                        <Popover>
-                          <PopoverTrigger asChild>
-                            <Button
-                              type="button"
-                              variant="outline"
-                              className="font-comfortaa text-[clamp(13px,1.3vw,15px)]"
-                            >
-                              <Calendar className="mr-2 w-4 h-4" />
-                              {proposedDate
-                                ? format(proposedDate, "MMMM d, yyyy")
-                                : "Select Start Date"}
-                            </Button>
-                          </PopoverTrigger>
-                          <PopoverContent className="w-auto p-0" align="start">
-                            <SimpleCalendar
-                              selected={proposedDate || undefined}
-                              onSelect={(date) => {
-                                setProposedDate(date || null)
-                                if (proposedDateRange === "multiple" && proposedEndDate && date && date > proposedEndDate) {
-                                  setProposedEndDate(null)
-                                }
-                                setError(null)
-                              }}
-                              disabled={(date) => {
-                                // Disable past dates and today (users cannot propose current date)
-                                if (date < new Date()) return true
-                                // Check if date is today in Bangkok timezone
-                                const todayStr = dateToBangkokDateString(new Date())
-                                const dateStr = dateToBangkokDateString(date)
-                                if (todayStr === dateStr) return true
-                                // Check if date is unavailable (has checked-in booking or postponed booking with deposit_verified_at)
-                                const isUnavailable = unavailableDates.has(dateStr)
-                                if (isUnavailable) {
-                                  console.log(`[BookingResponse] Proposed start date ${dateStr} is unavailable (blocked by booking)`)
-                                }
-                                return isUnavailable
-                              }}
-                            />
-                          </PopoverContent>
-                        </Popover>
-                        {proposedDateRange === "multiple" && (
-                          <Popover>
-                            <PopoverTrigger asChild>
-                              <Button
-                                type="button"
-                                variant="outline"
-                                className="font-comfortaa text-[clamp(13px,1.3vw,15px)]"
-                                disabled={!proposedDate}
-                                title={!proposedDate ? "Please select a start date first" : ""}
-                              >
-                                <Calendar className="mr-2 w-4 h-4" />
-                                {proposedEndDate
-                                  ? format(proposedEndDate, "MMMM d, yyyy")
-                                  : !proposedDate
-                                  ? "Select start date first"
-                                  : "Select End Date"}
-                              </Button>
-                            </PopoverTrigger>
-                            <PopoverContent className="w-auto p-0" align="start">
-                              <SimpleCalendar
-                                selected={proposedEndDate || undefined}
-                                onSelect={(date) => {
-                                  setProposedEndDate(date || null)
-                                  setError(null)
-                                }}
-                                disabled={(date) => {
-                                  // Disable if start date is not selected
-                                  if (!proposedDate) return true
-                                  // Disable past dates and today
-                                  if (date < new Date()) return true
-                                  const todayStr = dateToBangkokDateString(new Date())
-                                  const dateStr = dateToBangkokDateString(date)
-                                  if (todayStr === dateStr) return true
-                                  // Disable if date is before or equal to start date
-                                  if (proposedDate && (date < proposedDate || dateToBangkokDateString(proposedDate) === dateStr)) return true
-                                  // Check if date is unavailable (has checked-in booking or postponed booking with deposit_verified_at)
-                                  const isUnavailable = unavailableDates.has(dateStr)
-                                  if (isUnavailable) {
-                                    console.log(`[BookingResponse] Proposed end date ${dateStr} is unavailable (blocked by booking)`)
-                                  }
-                                  return isUnavailable
-                                }}
-                              />
-                            </PopoverContent>
-                          </Popover>
-                        )}
-                      </div>
-                      {response === "propose" && (
-                        <div className="space-y-3 sm:space-y-4 mt-4" onClick={(e) => e.stopPropagation()}>
-                          <div>
-                            <Label htmlFor="proposed_start_time" className="text-[#5a3a2a] font-comfortaa text-[clamp(12px,1.2vw,14px)] font-semibold">
-                              Proposed Start Time
-                            </Label>
-                            <div className="mt-1" onClick={(e) => e.stopPropagation()}>
-                              <TimePicker
-                                id="proposed_start_time"
-                                name="proposed_start_time"
-                                value={proposedStartTime}
-                                onChange={(value) => {
-                                  setProposedStartTime(value)
-                                  setError(null)
-                                }}
-                                disabled={isSubmitting}
-                                required
-                                className="w-full"
-                              />
-                            </div>
-                          </div>
-                          <div>
-                            <Label htmlFor="proposed_end_time" className="text-[#5a3a2a] font-comfortaa text-[clamp(12px,1.2vw,14px)] font-semibold">
-                              Proposed End Time
-                            </Label>
-                            <div className="mt-1" onClick={(e) => e.stopPropagation()}>
-                              <TimePicker
-                                id="proposed_end_time"
-                                name="proposed_end_time"
-                                value={proposedEndTime}
-                                onChange={(value) => {
-                                  setProposedEndTime(value)
-                                  setError(null)
-                                }}
-                                disabled={isSubmitting}
-                                required
-                                className="w-full"
-                              />
-                            </div>
-                          </div>
-                        </div>
-                      )}
-                    </div>
-                  )}
-                </div>
-              </div>
-            </div>
-
             <button
               type="button"
               onClick={() => {
@@ -898,7 +491,7 @@ export default function BookingResponsePage() {
           {/* Submit Button */}
           <Button
             type="submit"
-            disabled={isSubmitting || !response || (response === "propose" && (!proposedDate || (proposedDateRange === "multiple" && !proposedEndDate)))}
+            disabled={isSubmitting || !response}
             className="w-full sm:w-auto bg-[#3e82bb] hover:bg-[#2a5f8f] text-white font-comfortaa text-[clamp(14px,1.5vw,16px)] font-semibold px-6 sm:px-8 py-2 sm:py-3"
           >
             {isSubmitting ? "Submitting..." : "Submit Response"}

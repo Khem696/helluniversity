@@ -7,6 +7,7 @@ import { validateBookingData } from "@/lib/input-validation"
 import { createRequestLogger, withLogging } from "@/lib/logger"
 import { withErrorHandling, successResponse, validationErrorResponse, errorResponse, ErrorCodes, type ApiResponse } from "@/lib/api-response"
 import { withRateLimit, getRateLimitOptions } from "@/lib/rate-limit-middleware"
+import { getTursoClient } from "@/lib/turso"
 
 // Helper function to get client IP address
 function getClientIP(request: Request): string | null {
@@ -37,6 +38,47 @@ export async function POST(request: Request): Promise<NextResponse> {
     
     await logger.info('Booking request received')
     
+    // Check if bookings are enabled
+    let bookingsEnabled = true
+    try {
+      const db = getTursoClient()
+      
+      // Check if settings table exists
+      const tableCheck = await db.execute({
+        sql: `SELECT name FROM sqlite_master WHERE type='table' AND name='settings'`,
+        args: [],
+      })
+
+      if (tableCheck.rows.length > 0) {
+        // Table exists, check the setting
+        const settingsResult = await db.execute({
+          sql: `SELECT value FROM settings WHERE key = 'bookings_enabled'`,
+          args: [],
+        })
+
+        if (settingsResult.rows.length > 0) {
+          const setting = settingsResult.rows[0] as any
+          bookingsEnabled = setting.value === '1' || setting.value === 1 || setting.value === true
+        }
+      }
+      // If table doesn't exist, default to enabled (allow bookings)
+    } catch (error) {
+      // If there's any error checking settings, default to enabled
+      await logger.warn('Error checking booking enabled status, defaulting to enabled', error instanceof Error ? error : new Error(String(error)))
+      bookingsEnabled = true
+    }
+
+    if (!bookingsEnabled) {
+      await logger.warn('Booking request rejected: bookings are disabled')
+      return errorResponse(
+        ErrorCodes.SERVICE_UNAVAILABLE,
+        'Booking submissions are currently disabled. Please contact us directly or try again later.',
+        undefined,
+        503,
+        { requestId }
+      )
+    }
+    
     const body = await request.json()
     const { token, ...bookingData } = body
 
@@ -44,7 +86,7 @@ export async function POST(request: Request): Promise<NextResponse> {
     const rateLimit = await withRateLimit(request, getRateLimitOptions('booking'))
     if (!rateLimit.allowed && rateLimit.response) {
       await logger.warn('Rate limit exceeded')
-      return rateLimit.response
+      return rateLimit.response as NextResponse<ApiResponse>
     }
     
     // Validate reCAPTCHA token
@@ -163,10 +205,82 @@ export async function POST(request: Request): Promise<NextResponse> {
     // Check for booking overlaps with checked-in bookings
     // Use timezone library to properly convert Bangkok timezone dates to timestamps
     const { createBangkokTimestamp, getBangkokTime, getBangkokDateString } = await import('@/lib/timezone')
-    const startDateTimestamp = createBangkokTimestamp(sanitizedData.startDate, sanitizedData.startTime || null)
-    const endDateTimestamp = sanitizedData.endDate
-      ? createBangkokTimestamp(sanitizedData.endDate, sanitizedData.endTime || null)
-      : null
+    const { calculateStartTimestamp } = await import('@/lib/booking-validations')
+    
+    // CRITICAL: Calculate timestamps correctly (date + time)
+    // Pattern: createBangkokTimestamp(dateString, null) then calculateStartTimestamp(timestamp, timeString)
+    const startDateTimestamp = createBangkokTimestamp(sanitizedData.startDate, null)
+    const startTimestamp = calculateStartTimestamp(
+      startDateTimestamp,
+      sanitizedData.startTime || null
+    )
+    
+    let endTimestamp: number
+    if (sanitizedData.endDate) {
+      const endDateTimestamp = createBangkokTimestamp(sanitizedData.endDate, null)
+      if (sanitizedData.endTime) {
+        // Multi-day booking: calculate end timestamp from end_date + end_time
+        // Parse time string locally (parseTimeString is not exported from booking-validations)
+        const parseTime = (timeStr: string): { hour24: number; minutes: number } | null => {
+          if (!timeStr) return null
+          const match = timeStr.trim().match(/^(\d{1,2}):(\d{2})$/)
+          if (match) {
+            const hour24 = parseInt(match[1], 10)
+            const minutes = parseInt(match[2] || '00', 10)
+            if (hour24 >= 0 && hour24 <= 23 && minutes >= 0 && minutes <= 59) {
+              return { hour24, minutes }
+            }
+          }
+          return null
+        }
+        const { TZDate } = await import('@date-fns/tz')
+        const BANGKOK_TIMEZONE = 'Asia/Bangkok'
+        const parsed = parseTime(sanitizedData.endTime)
+        if (parsed) {
+          try {
+            const utcDate = new Date(endDateTimestamp * 1000)
+            const tzDate = new TZDate(utcDate.getTime(), BANGKOK_TIMEZONE)
+            const year = tzDate.getFullYear()
+            const month = tzDate.getMonth()
+            const day = tzDate.getDate()
+            const tzDateWithTime = new TZDate(year, month, day, parsed.hour24, parsed.minutes, 0, BANGKOK_TIMEZONE)
+            endTimestamp = Math.floor(tzDateWithTime.getTime() / 1000)
+          } catch (error) {
+            endTimestamp = endDateTimestamp
+          }
+        } else {
+          endTimestamp = endDateTimestamp
+        }
+      } else {
+        endTimestamp = endDateTimestamp
+      }
+    } else {
+      // Single-day booking: calculate end timestamp from start_date + end_time
+      endTimestamp = calculateStartTimestamp(
+        startDateTimestamp,
+        sanitizedData.endTime || null
+      )
+    }
+    
+    // CRITICAL: Validate that end timestamp > start timestamp (accounts for dates + times)
+    // This catches edge cases like: same date but invalid times, or dates valid but times make it invalid
+    if (endTimestamp <= startTimestamp) {
+      await logger.warn('Booking rejected: end timestamp is not after start timestamp', {
+        startTimestamp,
+        endTimestamp,
+        startDate: sanitizedData.startDate,
+        endDate: sanitizedData.endDate,
+        startTime: sanitizedData.startTime,
+        endTime: sanitizedData.endTime
+      })
+      return errorResponse(
+        ErrorCodes.INVALID_INPUT,
+        'The booking end date and time must be after the start date and time.',
+        {},
+        400,
+        { requestId }
+      )
+    }
     
     // Validate that start date is not today (users cannot book current date)
     const now = getBangkokTime()
@@ -183,8 +297,8 @@ export async function POST(request: Request): Promise<NextResponse> {
     }
     
     // Validate that start date is in the future
-    if (startDateTimestamp <= now) {
-      await logger.warn('Booking attempt for past date rejected', { startDate: sanitizedData.startDate, startDateTimestamp, now })
+    if (startTimestamp <= now) {
+      await logger.warn('Booking attempt for past date rejected', { startDate: sanitizedData.startDate, startTimestamp, now })
       return errorResponse(
         ErrorCodes.INVALID_INPUT,
         'Start date must be in the future. Please select a future date.',
@@ -196,8 +310,8 @@ export async function POST(request: Request): Promise<NextResponse> {
     
     const overlapCheck = await checkBookingOverlap(
       null, // New booking
-      startDateTimestamp,
-      endDateTimestamp,
+      startDateTimestamp, // Pass date timestamp (without time) - checkBookingOverlap will add time
+      sanitizedData.endDate ? createBangkokTimestamp(sanitizedData.endDate, null) : null,
       sanitizedData.startTime || null,
       sanitizedData.endTime || null
     )
@@ -221,8 +335,8 @@ export async function POST(request: Request): Promise<NextResponse> {
     await logger.info('Performing final overlap check before saving booking')
     const finalOverlapCheck = await checkBookingOverlap(
       null, // New booking
-      startDateTimestamp,
-      endDateTimestamp,
+      startDateTimestamp, // Pass date timestamp (without time) - checkBookingOverlap will add time
+      sanitizedData.endDate ? createBangkokTimestamp(sanitizedData.endDate, null) : null,
       sanitizedData.startTime || null,
       sanitizedData.endTime || null
     )
@@ -266,12 +380,14 @@ export async function POST(request: Request): Promise<NextResponse> {
     const tempBookingId = randomUUID()
     
     // Generate reference number (same logic as createBooking)
+    // IMPROVED: Increased capacity from 60M to 2.2B combinations
+    // Format: HU-XXXXXX (3 chars timestamp + 3 chars random)
     const generateBookingReference = () => {
       const timestamp = Math.floor(Date.now() / 1000)
-      const randomBytes = require('crypto').randomBytes(3)
+      const randomBytes = require('crypto').randomBytes(4)
       const randomValue = parseInt(randomBytes.toString('hex'), 16)
       const timestampPart = (timestamp % 46656).toString(36).toUpperCase().padStart(3, '0')
-      const randomPart = (randomValue % 1296).toString(36).toUpperCase().padStart(2, '0')
+      const randomPart = (randomValue % 46656).toString(36).toUpperCase().padStart(3, '0')
       return `HU-${timestampPart}${randomPart}`
     }
     const tempReferenceNumber = generateBookingReference()

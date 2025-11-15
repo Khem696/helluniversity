@@ -569,7 +569,7 @@ function generateUserEmailHTML(data: ReservationData): string {
   <div class="footer">
     <p>This is an automated confirmation email. Please do not reply to this message.</p>
     <p style="margin-top: 10px;">
-      <a href="mailto:helluniversity.cm@gmail.com" style="color: #5B9AB8;">helluniversity.cm@gmail.com</a>
+      <a href="mailto:admin@huculturehub.com" style="color: #5B9AB8;">admin@huculturehub.com</a>
     </p>
   </div>
 </body>
@@ -608,7 +608,7 @@ The Hell University Team
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 This is an automated confirmation email. Please do not reply to this message.
-For inquiries: helluniversity.cm@gmail.com
+For inquiries: admin@huculturehub.com
   `.trim()
 }
 
@@ -625,13 +625,14 @@ export async function sendAdminNotification(data: ReservationData, bookingId?: s
 
   const formattedEventType = formatEventType(data.eventType, data.otherEventType)
   const formattedDateRange = formatDateRange(data)
-  const bookingIdText = bookingId ? ` [Booking ID: ${bookingId}]` : ''
+  // CRITICAL: Always start subject with booking reference number for easy identification
+  const referencePrefix = bookingId ? `[${bookingId}] ` : ''
 
   const mailOptions: nodemailer.SendMailOptions = {
     from: `"Hell University Reservation System" <${process.env.SMTP_USER}>`,
     to: recipientEmail,
     replyTo: data.email,
-    subject: `New Reservation Inquiry${bookingIdText} - ${formattedEventType} - ${formattedDateRange.substring(0, 50)}`,
+    subject: `${referencePrefix}New Reservation Inquiry - ${formattedEventType} - ${formattedDateRange.substring(0, 50)}`,
     text: generateAdminEmailText(data),
     html: generateAdminEmailHTML(data),
   }
@@ -673,11 +674,12 @@ export async function sendAdminNotification(data: ReservationData, bookingId?: s
  * Uses nodemailer v7 compatible API
  */
 export async function sendUserConfirmation(data: ReservationData, bookingId?: string): Promise<void> {
-  const bookingIdText = bookingId ? ` [Booking ID: ${bookingId}]` : ''
+  // CRITICAL: Always start subject with booking reference number for easy identification
+  const referencePrefix = bookingId ? `[${bookingId}] ` : ''
   const mailOptions: nodemailer.SendMailOptions = {
     from: `"Hell University" <${process.env.SMTP_USER}>`,
     to: data.email,
-    subject: `Reservation Inquiry Received${bookingIdText} - Hell University`,
+    subject: `${referencePrefix}Reservation Inquiry Received - Hell University`,
     text: generateUserEmailText(data),
     html: generateUserEmailHTML(data),
   }
@@ -907,50 +909,51 @@ function generateStatusChangeEmailHTML(
     ? `${siteUrl}/booking/deposit/${responseToken}`
     : null
 
+  // Determine if this is a successful upload (check changeReason) or a rejection
+  const isSuccessfulUpload = changeReason?.toLowerCase().includes('uploaded successfully') || 
+                             changeReason?.toLowerCase().includes('upload successfully')
+  const isRejection = booking.depositEvidenceUrl && !isSuccessfulUpload
+  
   const statusMessages: Record<string, { title: string; message: string; color: string }> = {
-    accepted: {
-      title: 'Reservation Accepted - Deposit Required',
-      message: 'Great news! Your reservation request has been accepted. Please upload your deposit evidence to complete the booking process.',
-      color: '#10b981',
+    pending_deposit: {
+      title: isRejection
+        ? 'Deposit Evidence Required - Re-upload Needed'
+        : 'Reservation Accepted - Deposit Required',
+      message: isRejection
+        ? 'The previous deposit evidence you uploaded did not meet our requirements. Please upload a new deposit evidence using the link below. Please send a deposit evidence before start date.'
+        : 'Great news! Your reservation request has been accepted. Please upload your deposit evidence to complete the booking process. Please send a deposit evidence before start date.',
+      color: isRejection ? '#f59e0b' : '#10b981',
     },
     paid_deposit: {
-      title: 'Deposit Received',
-      message: 'Thank you! We have received your deposit evidence. Our admin team will verify it and confirm your check-in shortly.',
-      color: '#3b82f6',
+      title: changeReason?.toLowerCase().includes('restored') || changeReason?.toLowerCase().includes('restoration')
+        ? 'Booking Restored - Deposit Evidence Available'
+        : 'Deposit Evidence Uploaded Successfully',
+      message: changeReason?.toLowerCase().includes('restored') || changeReason?.toLowerCase().includes('restoration')
+        ? 'Your booking has been restored. Your deposit evidence is available and will be reviewed by our admin team. You will receive an email notification once the verification is complete.'
+        : 'Your deposit evidence has been uploaded successfully. Our admin team will review it and confirm your booking shortly. You will receive an email notification once the verification is complete.',
+      color: '#10b981',
     },
-    pending_deposit: {
-      title: 'Deposit Evidence Required - Re-upload Needed',
-      message: 'We need you to re-upload your deposit evidence. The previous upload did not meet our requirements. Please upload a new deposit evidence using the link below.',
-      color: '#f59e0b',
-    },
-    rejected: {
-      title: 'Reservation Not Available',
-      message: 'We regret to inform you that your reservation request could not be accommodated at this time.',
-      color: '#ef4444',
+    confirmed: {
+      title: 'Booking Confirmed',
+      message: changeReason?.toLowerCase().includes('other channel')
+        ? 'Your booking has been confirmed! Your deposit was verified through other channels (phone, in-person verification, etc.). Your reservation is now confirmed. We look forward to hosting your event!'
+        : 'Your booking has been confirmed! Your deposit has been verified and your reservation is now confirmed. We look forward to hosting your event!',
+      color: '#10b981',
     },
     cancelled: {
       title: 'Reservation Cancelled',
       message: 'Your reservation has been cancelled. We hope to see you at another opportunity in the future.',
       color: '#6b7280',
     },
-    postponed: {
-      title: 'Reservation Postponed',
-      message: proposedDate 
-        ? 'You have proposed a new date for your reservation. Our admin team will review your proposal and respond shortly.'
-        : 'Your reservation has been postponed. Please propose an alternative date or cancel your reservation.',
-      color: '#f59e0b',
-    },
-    pending: {
-      title: proposedDate ? 'Proposal Received' : 'Reservation Status Update',
-      message: proposedDate 
-        ? 'Thank you for your proposal. We have received your request for a new date and will review it shortly.'
-        : 'Your reservation status has been updated.',
+    finished: {
+      title: 'Booking Completed',
+      message: 'Your booking has been completed. Thank you for choosing Hell University!',
       color: '#3b82f6',
     },
-    'checked-in': {
-      title: 'Check-In Confirmed',
-      message: 'Your check-in has been confirmed by our admin team. We look forward to hosting your event!',
-      color: '#10b981',
+    pending: {
+      title: 'Reservation Status Update',
+      message: 'Your reservation status has been updated.',
+      color: '#3b82f6',
     },
   }
 
@@ -1173,21 +1176,43 @@ function generateStatusChangeEmailHTML(
               </div>
               ` : ''}
               
-              ${status === 'pending_deposit' ? `
+              ${status === 'paid_deposit' ? `
+              <div style="margin: 30px 0; text-align: center; background-color: #f0fdf4; border: 2px solid #10b981; border-radius: 8px; padding: 20px;">
+                <p style="margin: 0 0 20px 0; color: #065f46; font-size: 16px; line-height: 1.6; font-weight: 600;">
+                  ✅ Deposit Evidence Uploaded Successfully
+                </p>
+                <p style="margin: 0 0 20px 0; color: #047857; font-size: 16px; line-height: 1.6;">
+                  Your deposit evidence has been uploaded successfully. Our admin team will review it and confirm your booking shortly. You will receive an email notification once the verification is complete.
+                </p>
+              </div>
+              ` : ''}
+              
+              ${status === 'pending_deposit' ? (() => {
+                const isRejection = booking.depositEvidenceUrl !== null && booking.depositEvidenceUrl !== ''
+                return `
               <div style="margin: 30px 0; text-align: center;">
                 <p style="margin: 0 0 20px 0; color: #333333; font-size: 16px; line-height: 1.6; font-weight: 600;">
-                  ⚠️ IMPORTANT: Deposit Re-upload Required
+                  ⚠️ IMPORTANT: ${isRejection ? 'Deposit Re-upload Required' : 'Deposit Required'}
                 </p>
                 <p style="margin: 0 0 20px 0; color: #333333; font-size: 16px; line-height: 1.6;">
-                  The previous deposit evidence you uploaded did not meet our requirements. Please upload a new deposit evidence to complete the booking process. The deposit must be uploaded before the reservation start date and time.
+                  ${isRejection
+                    ? 'The previous deposit evidence you uploaded did not meet our requirements. Please upload a new deposit evidence using the link below. The deposit must be uploaded before the reservation start date and time.'
+                    : 'Your reservation has been accepted! Please upload your deposit evidence to complete the booking process. The deposit must be uploaded before the reservation start date and time.'}
                 </p>
+              `
+              })() : ''}
+              
+              ${status === 'pending_deposit' ? `
                 ${depositUploadUrl ? `
                 <a href="${depositUploadUrl}" style="display: inline-block; background-color: ${statusInfo.color}; color: #ffffff; text-decoration: none; padding: 14px 28px; border-radius: 6px; font-size: 16px; font-weight: 600; margin-bottom: 15px;">
-                  Upload Deposit Evidence
+                  ${booking.depositEvidenceUrl ? 'Re-upload Deposit Evidence' : 'Upload Deposit Evidence'}
                 </a>
                 <p style="margin: 20px 0 0 0; color: #6b7280; font-size: 12px; line-height: 1.6;">
                   Or copy and paste this link into your browser:<br>
                   <a href="${depositUploadUrl}" style="color: #3b82f6; word-break: break-all;">${depositUploadUrl}</a>
+                </p>
+                <p style="margin: 15px 0 0 0; color: #6b7280; font-size: 12px; line-height: 1.6;">
+                  ⚠️ This link will expire at the start date and time of your booking (Bangkok timezone). Please upload your deposit before then.
                 </p>
                 ` : responseUrl ? `
                 <p style="margin: 0 0 15px 0; color: #ef4444; font-size: 14px; line-height: 1.6;">
@@ -1208,61 +1233,6 @@ function generateStatusChangeEmailHTML(
               </div>
               ` : ''}
               
-              ${responseUrl && status === 'checked-in' ? `
-              <div style="margin: 30px 0; text-align: center;">
-                <p style="margin: 0 0 20px 0; color: #333333; font-size: 16px; line-height: 1.6;">
-                  Your check-in has been confirmed! You can view your reservation details or propose a new date if needed:
-                </p>
-                <a href="${responseUrl}" style="display: inline-block; background-color: ${statusInfo.color}; color: #ffffff; text-decoration: none; padding: 14px 28px; border-radius: 6px; font-size: 16px; font-weight: 600;">
-                  View Reservation
-                </a>
-                <p style="margin: 20px 0 0 0; color: #6b7280; font-size: 12px; line-height: 1.6;">
-                  Or copy and paste this link into your browser:<br>
-                  <a href="${responseUrl}" style="color: #3b82f6; word-break: break-all;">${responseUrl}</a>
-                </p>
-              </div>
-              ` : ''}
-              
-              ${responseUrl && status === 'postponed' ? `
-              <div style="margin: 30px 0; text-align: center;">
-                <p style="margin: 0 0 20px 0; color: #333333; font-size: 16px; line-height: 1.6;">
-                  You can propose a new date, accept the proposed date, or cancel your reservation:
-                </p>
-                <a href="${responseUrl}" style="display: inline-block; background-color: ${statusInfo.color}; color: #ffffff; text-decoration: none; padding: 14px 28px; border-radius: 6px; font-size: 16px; font-weight: 600; margin-bottom: 15px;">
-                  Manage Reservation
-                </a>
-                ${depositUploadUrl && !booking.depositEvidenceUrl ? `
-                <p style="margin: 20px 0; color: #333333; font-size: 16px; line-height: 1.6; font-weight: 600;">
-                  ⚠️ Deposit Still Required
-                </p>
-                <p style="margin: 0 0 20px 0; color: #333333; font-size: 16px; line-height: 1.6;">
-                  Your reservation has been postponed, but you still need to upload your deposit evidence. You can upload it using the link below:
-                </p>
-                <a href="${depositUploadUrl}" style="display: inline-block; background-color: #10b981; color: #ffffff; text-decoration: none; padding: 14px 28px; border-radius: 6px; font-size: 16px; font-weight: 600; margin-bottom: 15px;">
-                  Upload Deposit Evidence
-                </a>
-                <p style="margin: 20px 0 0 0; color: #6b7280; font-size: 12px; line-height: 1.6;">
-                  Or copy and paste this link into your browser:<br>
-                  <a href="${depositUploadUrl}" style="color: #3b82f6; word-break: break-all;">${depositUploadUrl}</a>
-                </p>
-                ` : ''}
-                <p style="margin: ${depositUploadUrl && !booking.depositEvidenceUrl ? '20px' : '20px'} 0 0 0; color: #6b7280; font-size: 12px; line-height: 1.6;">
-                  Or copy and paste this link into your browser:<br>
-                  <a href="${responseUrl}" style="color: #3b82f6; word-break: break-all;">${responseUrl}</a>
-                </p>
-              </div>
-              ` : ''}
-              
-              ${status === 'paid_deposit' ? `
-              <div style="margin: 30px 0; text-align: center;">
-                <p style="margin: 0 0 20px 0; color: #333333; font-size: 16px; line-height: 1.6;">
-                  Our admin team is currently reviewing your deposit evidence. Once verified, you will receive a confirmation email with access to your reservation management page.
-                </p>
-                <p style="margin: 0; color: #6b7280; font-size: 14px; line-height: 1.6;">
-                  Please wait for our team to complete the verification process.
-                </p>
-              </div>
-              ` : ''}
               
               ${status === 'cancelled' ? `
               <p style="margin: 30px 0 0 0; color: #6b7280; font-size: 14px; line-height: 1.6;">
@@ -1304,18 +1274,21 @@ function generateStatusChangeEmailText(
     || 'https://huculturehub.com'
   const depositUploadUrl = responseUrl?.replace('/booking/response/', '/booking/deposit/') || null
 
+  // Determine if this is a successful upload (check changeReason) or a rejection
+  const isSuccessfulUpload = changeReason?.toLowerCase().includes('uploaded successfully') || 
+                             changeReason?.toLowerCase().includes('upload successfully')
+  const isRejection = booking.depositEvidenceUrl && !isSuccessfulUpload
+
   const statusMessages: Record<string, string> = {
-    accepted: 'Great news! Your reservation request has been accepted. Please upload your deposit evidence to complete the booking process.',
-    paid_deposit: 'Thank you! We have received your deposit evidence. Our admin team will verify it and confirm your check-in shortly.',
-    pending_deposit: 'The previous deposit evidence you uploaded did not meet our requirements. Please upload a new deposit evidence to complete the booking process.',
-    'checked-in': 'Your check-in has been confirmed by our admin team. We look forward to hosting your event!',
-    rejected: 'We regret to inform you that your reservation request could not be accommodated at this time.',
-    postponed: proposedDate 
-      ? 'You have proposed a new date for your reservation. Our admin team will review your proposal and respond shortly.'
-      : 'Your reservation has been postponed. Please propose an alternative date or cancel your reservation.',
-    pending: proposedDate 
-      ? 'Thank you for your proposal. We have received your request for a new date and will review it shortly.'
-      : 'Your reservation status has been updated.',
+    pending_deposit: isSuccessfulUpload
+      ? 'Your deposit evidence has been uploaded successfully. Our admin team will review it and confirm your booking shortly. You will receive an email notification once the verification is complete.'
+      : isRejection
+      ? 'The previous deposit evidence you uploaded did not meet our requirements. Please upload a new deposit evidence to complete the booking process. Please send a deposit evidence before start date.'
+      : 'Great news! Your reservation request has been accepted. Please upload your deposit evidence to complete the booking process. Please send a deposit evidence before start date.',
+    confirmed: 'Your booking has been confirmed! Your deposit has been verified and your reservation is now confirmed. We look forward to hosting your event!',
+    cancelled: 'Your reservation has been cancelled. We hope to see you at another opportunity in the future.',
+    finished: 'Your booking has been completed. Thank you for choosing Hell University!',
+    pending: 'Your reservation status has been updated.',
   }
 
   const message = statusMessages[status] || 'Your reservation status has been updated.'
@@ -1353,48 +1326,37 @@ function generateStatusChangeEmailText(
     text += `ADDITIONAL NOTES:\n${changeReason}\n\n`
   }
 
-  if (status === 'pending_deposit') {
-    text += `\n⚠️ IMPORTANT: Deposit Re-upload Required\n\n`
-    text += `The previous deposit evidence you uploaded did not meet our requirements. Please upload a new deposit evidence to complete the booking process. The deposit must be uploaded before the reservation start date and time.\n\n`
-    if (depositUploadUrl) {
-      text += `Upload Deposit Evidence: ${depositUploadUrl}\n\n`
-    } else if (responseUrl) {
-      text += `Please visit the booking page to upload your deposit evidence:\n${responseUrl}\n\n`
-    } else {
-      text += `Please contact us to receive your deposit upload link.\n\n`
-    }
-  }
-
-  if (status === 'accepted') {
-    text += `\n⚠️ IMPORTANT: Deposit Required\n\n`
-    text += `Your reservation has been accepted! Please upload your deposit evidence to complete the booking process. The deposit must be uploaded before the reservation start date and time.\n\n`
-    if (depositUploadUrl) {
-      text += `Upload Deposit Evidence: ${depositUploadUrl}\n\n`
-    } else if (responseUrl) {
-      text += `Please visit the booking page to upload your deposit evidence:\n${responseUrl}\n\n`
-    } else {
-      text += `Please contact us to receive your deposit upload link.\n\n`
-    }
-  }
-
-  if (responseUrl && status === 'checked-in') {
-    text += `Your check-in has been confirmed! You can view your reservation details or propose a new date if needed:\n`
-    text += `${responseUrl}\n\n`
-  }
-
-  if (responseUrl && status === 'postponed') {
-    text += `You can propose a new date, accept the proposed date, or cancel your reservation:\n`
-    text += `${responseUrl}\n\n`
-    if (depositUploadUrl && !booking.depositEvidenceUrl) {
-      text += `⚠️ IMPORTANT: Deposit Still Required\n\n`
-      text += `Your reservation has been postponed, but you still need to upload your deposit evidence. You can upload it using the link below:\n\n`
-      text += `Upload Deposit Evidence: ${depositUploadUrl}\n\n`
-    }
+  if (status === 'paid_deposit') {
+    text += `\n✅ Deposit Evidence Uploaded Successfully\n\n`
+    text += `Your deposit evidence has been uploaded successfully. Our admin team will review it and confirm your booking shortly. You will receive an email notification once the verification is complete.\n\n`
   }
   
-  if (status === 'paid_deposit') {
-    text += `\nOur admin team is currently reviewing your deposit evidence. Once verified, you will receive a confirmation email with access to your reservation management page.\n`
-    text += `Please wait for our team to complete the verification process.\n\n`
+  if (status === 'pending_deposit') {
+    const isRejection = booking.depositEvidenceUrl !== null && booking.depositEvidenceUrl !== ''
+    text += `\n⚠️ IMPORTANT: ${isRejection ? 'Deposit Re-upload Required' : 'Deposit Required'}\n\n`
+    text += isRejection
+      ? `The previous deposit evidence you uploaded did not meet our requirements. Please upload a new deposit evidence to complete the booking process. Please send a deposit evidence before start date.\n\n`
+      : `Your reservation has been accepted! Please upload your deposit evidence to complete the booking process. Please send a deposit evidence before start date.\n\n`
+    if (depositUploadUrl) {
+      text += `Upload Deposit Evidence: ${depositUploadUrl}\n\n`
+      text += `⚠️ This link will expire at the start date and time of your booking (Bangkok timezone). Please upload your deposit before then.\n\n`
+    } else if (responseUrl) {
+      text += `Please visit the booking page to upload your deposit evidence:\n${responseUrl}\n\n`
+    } else {
+      text += `Please contact us to receive your deposit upload link.\n\n`
+    }
+  }
+
+  if (status === 'confirmed') {
+    if (changeReason?.toLowerCase().includes('other channel')) {
+      text += `\nYour booking has been confirmed! Your deposit was verified through other channels (phone, in-person verification, etc.). Your reservation is now confirmed. We look forward to hosting your event!\n\n`
+    } else {
+      text += `\nYour booking has been confirmed! Your deposit has been verified and your reservation is now confirmed. We look forward to hosting your event!\n\n`
+    }
+  }
+
+  if (status === 'finished') {
+    text += `\nYour booking has been completed. Thank you for choosing Hell University!\n\n`
   }
 
   if (status === 'cancelled') {
@@ -1451,10 +1413,12 @@ export async function sendBookingStatusNotification(
     ? `${siteUrl}/booking/response/${options.responseToken}`
     : null
 
+  // CRITICAL: Always start subject with booking reference number for easy identification
+  const referenceNumber = booking.referenceNumber || booking.id
   const mailOptions: nodemailer.SendMailOptions = {
     from: `"Hell University" <${process.env.SMTP_USER}>`,
     to: booking.email,
-    subject: `Reservation Status Update [Booking ID: ${booking.referenceNumber || booking.id}] - ${booking.eventType}`,
+    subject: `[${referenceNumber}] Reservation Status Update - ${booking.eventType}`,
     text: generateStatusChangeEmailText(
       booking,
       status,
@@ -1720,11 +1684,13 @@ Best regards,
 Hell University Reservation System
   `.trim()
 
+  // CRITICAL: Always start subject with booking reference number for easy identification
+  const referenceNumber = booking.referenceNumber || booking.id
   const mailOptions: nodemailer.SendMailOptions = {
     from: `"Hell University Reservation System" <${process.env.SMTP_USER}>`,
     to: recipientEmail,
     replyTo: booking.email,
-    subject: `${responseInfo.title} [Booking ID: ${booking.referenceNumber || booking.id}] - ${formattedEventType}`,
+    subject: `[${referenceNumber}] ${responseInfo.title} - ${formattedEventType}`,
     text: textContent,
     html: htmlContent,
   }
@@ -1938,16 +1904,17 @@ Best regards,
 Hell University Reservation System
   `.trim()
 
-  // Create booking IDs list for subject (limit to first 3 for readability)
-  const bookingIds = bookings.map(b => b.booking.referenceNumber || b.booking.id)
-  const bookingIdsText = bookingIds.length <= 3 
-    ? bookingIds.join(', ')
-    : `${bookingIds.slice(0, 3).join(', ')} and ${bookingIds.length - 3} more`
+  // Create booking reference numbers list for subject (limit to first 3 for readability)
+  // CRITICAL: Always start subject with booking reference numbers for easy identification
+  const bookingReferences = bookings.map(b => b.booking.referenceNumber || b.booking.id)
+  const bookingRefsText = bookingReferences.length <= 3 
+    ? bookingReferences.join(', ')
+    : `${bookingReferences.slice(0, 3).join(', ')} and ${bookings.length - 3} more`
 
   const mailOptions: nodemailer.SendMailOptions = {
     from: `"Hell University Reservation System" <${process.env.SMTP_USER}>`,
     to: recipientEmail,
-    subject: `Automatic Booking Updates [Booking IDs: ${bookingIdsText}] - ${bookings.length} booking${bookings.length > 1 ? 's' : ''} updated`,
+    subject: `[${bookingRefsText}] Automatic Booking Updates - ${bookings.length} booking${bookings.length > 1 ? 's' : ''} updated`,
     text: textContent,
     html: htmlContent,
   }
@@ -2008,22 +1975,14 @@ export async function sendAdminStatusChangeNotification(
     endTime: booking.endTime,
   } as ReservationData)
 
+  // Determine if this is a deposit upload (user action) or rejection (admin action)
+  const isDepositUpload = changeReason?.toLowerCase().includes('uploaded') || 
+                          changeReason?.toLowerCase().includes('user uploaded')
+  const isDepositRejection = changeReason?.toLowerCase().includes('rejected') ||
+                             changeReason?.toLowerCase().includes('reject') ||
+                             (oldStatus === 'pending_deposit' && newStatus === 'pending_deposit' && !isDepositUpload && changedBy && changedBy !== 'system')
+
   const statusMessages: Record<string, { title: string; message: string; color: string }> = {
-    accepted: {
-      title: 'Booking Accepted',
-      message: 'A booking has been accepted.',
-      color: '#10b981',
-    },
-    rejected: {
-      title: 'Booking Rejected',
-      message: 'A booking has been rejected.',
-      color: '#ef4444',
-    },
-    postponed: {
-      title: 'Booking Postponed',
-      message: 'A booking has been postponed.',
-      color: '#f59e0b',
-    },
     cancelled: {
       title: 'Booking Cancelled',
       message: 'A booking has been cancelled.',
@@ -2034,19 +1993,45 @@ export async function sendAdminStatusChangeNotification(
       message: 'A booking has been marked as finished.',
       color: '#3b82f6',
     },
-    paid_deposit: {
-      title: 'Deposit Evidence Uploaded',
-      message: 'The user has uploaded deposit evidence. Please verify the deposit.',
-      color: '#8b5cf6',
-    },
     pending_deposit: {
-      title: 'Deposit Evidence Rejected',
-      message: 'Deposit evidence has been rejected. User will re-upload deposit evidence.',
-      color: '#f59e0b',
+      title: oldStatus === 'cancelled'
+        ? 'Booking Restored - Deposit Required'
+        : oldStatus === 'pending' 
+        ? 'Booking Accepted - Deposit Required'
+        : 'Deposit Evidence Rejected',
+      message: oldStatus === 'cancelled'
+        ? 'A cancelled booking has been restored. User needs to upload deposit evidence. A deposit upload link has been sent to the user.'
+        : oldStatus === 'pending'
+        ? 'A booking has been accepted. User needs to upload deposit evidence. A deposit upload link has been sent to the user.'
+        : 'Deposit evidence has been rejected. User will re-upload deposit evidence with a new token (expires at booking start date/time).',
+      color: oldStatus === 'cancelled' || oldStatus === 'pending' ? '#10b981' : '#f59e0b',
     },
-    'checked-in': {
-      title: 'Booking Checked In',
-      message: 'The booking has been checked in and deposit verified.',
+    paid_deposit: {
+      title: oldStatus === 'cancelled'
+        ? 'Booking Restored to Paid Deposit'
+        : 'Deposit Evidence Uploaded',
+      message: oldStatus === 'cancelled'
+        ? 'A cancelled booking has been restored to paid_deposit status. Deposit evidence is available for review. Please verify the deposit to confirm the booking.'
+        : 'User has uploaded deposit evidence. Please review and verify the deposit to confirm the booking.',
+      color: '#10b981',
+    },
+    confirmed: {
+      title: oldStatus === 'cancelled'
+        ? 'Booking Restored and Confirmed'
+        : oldStatus === 'pending_deposit' && changeReason?.toLowerCase().includes('other channel')
+        ? 'Booking Confirmed (Other Channel)'
+        : oldStatus === 'paid_deposit' && changeReason?.toLowerCase().includes('other channel')
+        ? 'Booking Confirmed (Other Channel)'
+        : 'Booking Confirmed',
+      message: oldStatus === 'cancelled'
+        ? changeReason?.toLowerCase().includes('other channel')
+          ? 'A cancelled booking has been restored and confirmed. Deposit was verified through other channels (phone, in-person, etc.).'
+          : 'A cancelled booking has been restored and confirmed. Deposit has been verified.'
+        : oldStatus === 'pending_deposit' && changeReason?.toLowerCase().includes('other channel')
+        ? 'A booking has been confirmed. Deposit was verified through other channels (phone, in-person, etc.), not through system upload.'
+        : oldStatus === 'paid_deposit' && changeReason?.toLowerCase().includes('other channel')
+        ? 'A booking has been confirmed. Deposit was verified through other channels instead of reviewing the uploaded evidence.'
+        : 'A booking has been confirmed. Deposit has been verified.',
       color: '#10b981',
     },
   }
@@ -2169,7 +2154,7 @@ export async function sendAdminStatusChangeNotification(
               </div>
               ` : ''}
               
-              ${newStatus === 'paid_deposit' ? `
+              ${newStatus === 'pending_deposit' && oldStatus === 'pending_deposit' && booking.depositEvidenceUrl ? `
               <div style="margin: 30px 0; text-align: center; background-color: #f3f4f6; padding: 25px; border-radius: 8px;">
                 <p style="margin: 0 0 20px 0; color: #111827; font-size: 16px; line-height: 1.6; font-weight: 600;">
                   ⚠️ Action Required: Verify Deposit Evidence
@@ -2224,12 +2209,35 @@ New Status: ${newStatus}
 ${proposedDateText ? `Proposed Date: ${proposedDateText}\n` : ''}${changedBy ? `Changed By: ${changedBy}\n` : ''}
 ${changeReason ? `\nCHANGE REASON:\n${changeReason}\n` : ''}`
 
-  if (newStatus === 'paid_deposit') {
-    textContent += `\n⚠️ ACTION REQUIRED: VERIFY DEPOSIT EVIDENCE\n\n`
-    textContent += `The user has uploaded deposit evidence. Please review and verify the deposit in the admin panel.\n\n`
+  if (newStatus === 'pending_deposit' && oldStatus === 'pending') {
+    textContent += `\n✅ BOOKING ACCEPTED - DEPOSIT UPLOAD LINK SENT\n\n`
+    textContent += `The booking has been accepted. A deposit upload link has been sent to the user. The token expires at the booking start date/time (Bangkok timezone).\n\n`
     textContent += `Admin Panel: ${adminBookingsUrl}\n`
     textContent += `Booking ID: ${booking.referenceNumber || booking.id}\n`
     textContent += `Or search by email: ${booking.email}\n\n`
+  } else if (newStatus === 'pending_deposit' && oldStatus === 'pending_deposit') {
+    // Determine if this is a deposit upload or rejection
+    const isDepositUpload = changeReason?.toLowerCase().includes('uploaded') || 
+                           changeReason?.toLowerCase().includes('user uploaded')
+    
+    if (isDepositUpload) {
+      textContent += `\n✅ DEPOSIT EVIDENCE UPLOADED - REVIEW REQUIRED\n\n`
+      textContent += `User has uploaded deposit evidence. Please review and verify the deposit to confirm the booking.\n\n`
+      textContent += `Admin Panel: ${adminBookingsUrl}\n`
+      textContent += `Booking ID: ${booking.referenceNumber || booking.id}\n`
+      textContent += `Or search by email: ${booking.email}\n\n`
+    } else {
+    textContent += `\n⚠️ DEPOSIT EVIDENCE REJECTED - NEW TOKEN GENERATED\n\n`
+    textContent += `The deposit evidence has been rejected. A new token has been generated for the user to re-upload. The new token expires at the booking start date/time (Bangkok timezone).\n\n`
+    textContent += `Admin Panel: ${adminBookingsUrl}\n`
+    textContent += `Booking ID: ${booking.referenceNumber || booking.id}\n`
+    textContent += `Or search by email: ${booking.email}\n\n`
+    }
+  } else if (newStatus === 'confirmed' && oldStatus === 'pending_deposit') {
+    textContent += `\n✅ DEPOSIT VERIFIED - BOOKING CONFIRMED\n\n`
+    textContent += `The deposit has been verified and the booking is now confirmed.\n\n`
+    textContent += `Admin Panel: ${adminBookingsUrl}\n`
+    textContent += `Booking ID: ${booking.referenceNumber || booking.id}\n\n`
   }
 
   textContent += `This is an automated notification of a booking status change.
@@ -2238,11 +2246,13 @@ Best regards,
 Hell University Reservation System
   `.trim()
 
+  // CRITICAL: Always start subject with booking reference number for easy identification
+  const referenceNumber = booking.referenceNumber || booking.id
   const mailOptions: nodemailer.SendMailOptions = {
     from: `"Hell University Reservation System" <${process.env.SMTP_USER}>`,
     to: recipientEmail,
     replyTo: booking.email,
-    subject: `${statusInfo.title} [Booking ID: ${booking.referenceNumber || booking.id}] - ${formattedEventType} - ${booking.name}`,
+    subject: `[${referenceNumber}] ${statusInfo.title} - ${formattedEventType} - ${booking.name}`,
     text: textContent,
     html: htmlContent,
   }
@@ -2392,11 +2402,13 @@ Best regards,
 Hell University Reservation System
   `.trim()
 
+  // CRITICAL: Always start subject with booking reference number for easy identification
+  const referenceNumber = booking.referenceNumber || booking.id
   const mailOptions: nodemailer.SendMailOptions = {
     from: `"Hell University Reservation System" <${process.env.SMTP_USER}>`,
     to: recipientEmail,
     replyTo: booking.email,
-    subject: `User Checked In [Booking ID: ${booking.referenceNumber || booking.id}] - ${formattedEventType} - ${booking.name}`,
+    subject: `[${referenceNumber}] User Checked In - ${formattedEventType} - ${booking.name}`,
     text: textContent,
     html: htmlContent,
   }
@@ -2520,7 +2532,7 @@ export async function sendAdminBookingDeletionNotification(
               </div>
               
               <p style="margin: 30px 0 0 0; color: #6b7280; font-size: 14px; line-height: 1.6;">
-                This booking has been permanently removed from the system. ${booking.status !== "rejected" && booking.status !== "cancelled" && booking.status !== "finished" ? (booking.status === "accepted" || booking.status === "checked-in" ? "A cancellation notification has been sent to the user." : "A rejection notification has been sent to the user.") : booking.status === "finished" ? "No user notification was sent as the booking was already finished (event has passed)." : "No user notification was sent as the booking was already rejected or cancelled."}
+                This booking has been permanently removed from the system. ${booking.status !== "cancelled" && booking.status !== "finished" ? "A cancellation notification has been sent to the user." : booking.status === "finished" ? "No user notification was sent as the booking was already finished (event has passed)." : "No user notification was sent as the booking was already cancelled."}
               </p>
               
               <p style="margin: 20px 0 0 0; color: #6b7280; font-size: 14px; line-height: 1.6;">
@@ -2550,17 +2562,19 @@ Date & Time: ${formattedDateRange}
 Previous Status: ${booking.status}
 ${deletedBy ? `Deleted By: ${deletedBy}\n` : ''}
 
-This booking has been permanently removed from the system. ${booking.status !== "rejected" && booking.status !== "cancelled" && booking.status !== "finished" ? (booking.status === "accepted" || booking.status === "checked-in" ? "A cancellation notification has been sent to the user." : "A rejection notification has been sent to the user.") : booking.status === "finished" ? "No user notification was sent as the booking was already finished (event has passed)." : "No user notification was sent as the booking was already rejected or cancelled."}
+This booking has been permanently removed from the system. ${booking.status !== "cancelled" && booking.status !== "finished" ? "A cancellation notification has been sent to the user." : booking.status === "finished" ? "No user notification was sent as the booking was already finished (event has passed)." : "No user notification was sent as the booking was already cancelled."}
 
 Best regards,
 Hell University Reservation System
   `.trim()
 
+  // CRITICAL: Always start subject with booking reference number for easy identification
+  const referenceNumber = booking.referenceNumber || booking.id
   const mailOptions: nodemailer.SendMailOptions = {
     from: `"Hell University Reservation System" <${process.env.SMTP_USER}>`,
     to: recipientEmail,
     replyTo: booking.email,
-    subject: `Booking Deleted [Booking ID: ${booking.referenceNumber || booking.id}] - ${formattedEventType} - ${booking.name}`,
+    subject: `[${referenceNumber}] Booking Deleted - ${formattedEventType} - ${booking.name}`,
     text: textContent,
     html: htmlContent,
   }
@@ -2593,6 +2607,191 @@ Hell University Reservation System
     
     // Re-throw original error
     throw error
+  }
+}
+
+/**
+ * Send admin notification when an email fails after max retries
+ * This ensures admins are aware of failed email notifications
+ */
+export async function sendAdminEmailFailureNotification(data: {
+  emailId: string
+  emailType: string
+  recipientEmail: string
+  subject: string
+  retryCount: number
+  errorMessage: string
+}): Promise<void> {
+  const recipientEmail = process.env.RESERVATION_EMAIL || process.env.SMTP_USER
+
+  if (!recipientEmail) {
+    console.error('RESERVATION_EMAIL or SMTP_USER not configured - cannot send email failure notification')
+    return // Don't throw - this is a monitoring function
+  }
+
+  // Get email queue item details if available
+  let emailDetails = ''
+  try {
+    const { getTursoClient } = await import('./turso')
+    const db = getTursoClient()
+    const result = await db.execute({
+      sql: `SELECT * FROM email_queue WHERE id = ?`,
+      args: [data.emailId],
+    })
+    
+    if (result.rows.length > 0) {
+      const emailItem = result.rows[0] as any
+      emailDetails = `
+        <tr>
+          <td style="color: #6b7280; font-size: 14px; width: 150px;">Email Type:</td>
+          <td style="color: #111827; font-size: 14px; font-weight: 500;">${sanitizeHTML(emailItem.email_type || data.emailType)}</td>
+        </tr>
+        <tr>
+          <td style="color: #6b7280; font-size: 14px;">Recipient:</td>
+          <td style="color: #111827; font-size: 14px; font-weight: 500;">${sanitizeHTML(emailItem.recipient_email || data.recipientEmail)}</td>
+        </tr>
+        <tr>
+          <td style="color: #6b7280; font-size: 14px;">Subject:</td>
+          <td style="color: #111827; font-size: 14px; font-weight: 500;">${sanitizeHTML(emailItem.subject || data.subject)}</td>
+        </tr>
+        <tr>
+          <td style="color: #6b7280; font-size: 14px;">Retry Count:</td>
+          <td style="color: #111827; font-size: 14px; font-weight: 500;">${emailItem.retry_count || data.retryCount} / ${emailItem.max_retries || 5}</td>
+        </tr>
+        <tr>
+          <td style="color: #6b7280; font-size: 14px;">Failed At:</td>
+          <td style="color: #111827; font-size: 14px; font-weight: 500;">${new Date((emailItem.updated_at || Date.now() / 1000) * 1000).toLocaleString('en-US', { timeZone: 'Asia/Bangkok' })} GMT+7</td>
+        </tr>
+      `
+    }
+  } catch (error) {
+    // If we can't fetch details, use provided data
+    emailDetails = `
+      <tr>
+        <td style="color: #6b7280; font-size: 14px; width: 150px;">Email Type:</td>
+        <td style="color: #111827; font-size: 14px; font-weight: 500;">${sanitizeHTML(data.emailType)}</td>
+      </tr>
+      <tr>
+        <td style="color: #6b7280; font-size: 14px;">Recipient:</td>
+        <td style="color: #111827; font-size: 14px; font-weight: 500;">${sanitizeHTML(data.recipientEmail)}</td>
+      </tr>
+      <tr>
+        <td style="color: #6b7280; font-size: 14px;">Subject:</td>
+        <td style="color: #111827; font-size: 14px; font-weight: 500;">${sanitizeHTML(data.subject)}</td>
+      </tr>
+      <tr>
+        <td style="color: #6b7280; font-size: 14px;">Retry Count:</td>
+        <td style="color: #111827; font-size: 14px; font-weight: 500;">${data.retryCount}</td>
+      </tr>
+    `
+  }
+
+  const htmlContent = `
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Email Delivery Failed</title>
+</head>
+<body style="margin: 0; padding: 0; font-family: Arial, sans-serif; background-color: #f5f5f5;">
+  <table width="100%" cellpadding="0" cellspacing="0" style="background-color: #f5f5f5; padding: 20px;">
+    <tr>
+      <td align="center">
+        <table width="600" cellpadding="0" cellspacing="0" style="background-color: #ffffff; border-radius: 8px; overflow: hidden; box-shadow: 0 2px 4px rgba(0,0,0,0.1);">
+          <!-- Header -->
+          <tr>
+            <td style="background-color: #ef4444; padding: 30px; text-align: center;">
+              <h1 style="margin: 0; color: #ffffff; font-size: 24px; font-weight: bold;">
+                ⚠️ Email Delivery Failed
+              </h1>
+            </td>
+          </tr>
+          
+          <!-- Content -->
+          <tr>
+            <td style="padding: 30px;">
+              <p style="margin: 0 0 20px 0; color: #333333; font-size: 16px; line-height: 1.6;">
+                An email notification failed to deliver after multiple retry attempts. The user may not have received their notification.
+              </p>
+              
+              <div style="background-color: #fef2f2; border-left: 4px solid #ef4444; padding: 20px; margin: 20px 0; border-radius: 4px;">
+                <h3 style="margin: 0 0 15px 0; color: #111827; font-size: 18px;">Failed Email Details</h3>
+                <table width="100%" cellpadding="5" cellspacing="0">
+                  <tr>
+                    <td style="color: #6b7280; font-size: 14px; width: 150px;">Email ID:</td>
+                    <td style="color: #111827; font-size: 14px; font-weight: 500;">${sanitizeHTML(data.emailId)}</td>
+                  </tr>
+                  ${emailDetails}
+                  <tr>
+                    <td style="color: #6b7280; font-size: 14px; vertical-align: top;">Error:</td>
+                    <td style="color: #dc2626; font-size: 14px; font-weight: 500;">${sanitizeHTML(data.errorMessage)}</td>
+                  </tr>
+                </table>
+              </div>
+              
+              <div style="background-color: #fffbeb; border-left: 4px solid #f59e0b; padding: 20px; margin: 20px 0; border-radius: 4px;">
+                <p style="margin: 0; color: #92400e; font-size: 14px; line-height: 1.6;">
+                  <strong>Action Required:</strong> Please check the email queue in the admin panel and consider manually sending the notification to the user if it's critical.
+                </p>
+              </div>
+              
+              <p style="margin: 30px 0 0 0; color: #6b7280; font-size: 14px; line-height: 1.6;">
+                This is an automated notification from the email queue system.
+              </p>
+              
+              <p style="margin: 20px 0 0 0; color: #6b7280; font-size: 14px; line-height: 1.6;">
+                Best regards,<br>
+                <strong>Hell University Reservation System</strong>
+              </p>
+            </td>
+          </tr>
+        </table>
+      </td>
+    </tr>
+  </table>
+</body>
+</html>
+  `.trim()
+
+  const textContent = `Email Delivery Failed
+
+An email notification failed to deliver after multiple retry attempts. The user may not have received their notification.
+
+FAILED EMAIL DETAILS:
+Email ID: ${data.emailId}
+Email Type: ${data.emailType}
+Recipient: ${data.recipientEmail}
+Subject: ${data.subject}
+Retry Count: ${data.retryCount}
+Error: ${data.errorMessage}
+
+ACTION REQUIRED: Please check the email queue in the admin panel and consider manually sending the notification to the user if it's critical.
+
+This is an automated notification from the email queue system.
+
+Best regards,
+Hell University Reservation System
+  `.trim()
+
+  const mailOptions: nodemailer.SendMailOptions = {
+    from: `"Hell University Reservation System" <${process.env.SMTP_USER}>`,
+    to: recipientEmail,
+    subject: `⚠️ Email Delivery Failed [ID: ${data.emailId.substring(0, 8)}...] - ${data.emailType}`,
+    text: textContent,
+    html: htmlContent,
+  }
+
+  try {
+    const emailTransporter = await getTransporter()
+    const result = await emailTransporter.sendMail(mailOptions)
+    
+    console.log('Admin email failure notification sent:', result.messageId)
+  } catch (error) {
+    // Don't throw - this is a monitoring function and shouldn't break the system
+    // Just log the error
+    console.error('Failed to send admin email failure notification:', error)
+    // Don't queue this notification - it would create an infinite loop
   }
 }
 

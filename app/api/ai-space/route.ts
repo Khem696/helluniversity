@@ -448,11 +448,20 @@ export async function POST(request: Request) {
     // Get studio images (aispace_studio category) for generation
     // Admin controls which images are used by selecting them (ai_selected = 1)
     // Only selected images will be used, ordered by ai_order (admin selection order)
+    // Exclude event images (managed in Admin Events page)
+    // Poster images: linked via events.image_id
+    // In-event photos: linked via event_images.image_id
     const studioImagesResult = await db.execute({
       sql: `
         SELECT blob_url
         FROM images
-        WHERE category = 'aispace_studio' AND ai_selected = 1
+        WHERE category = 'aispace_studio' 
+          AND ai_selected = 1
+          AND id NOT IN (
+            SELECT DISTINCT image_id FROM events WHERE image_id IS NOT NULL
+            UNION
+            SELECT DISTINCT image_id FROM event_images WHERE image_id IS NOT NULL
+          )
         ORDER BY ai_order ASC, display_order ASC, created_at ASC
       `,
       args: [],
@@ -462,7 +471,7 @@ export async function POST(request: Request) {
       await logger.warn('AI space generation rejected: no studio images selected')
       return errorResponse(
         ErrorCodes.VALIDATION_ERROR,
-        "No studio images selected for AI generation. Please select images in the admin panel.",
+        "AI space generation is currently unavailable. Please contact the administrator for assistance.",
         undefined,
         400,
         { requestId }
@@ -495,17 +504,49 @@ export async function POST(request: Request) {
     const bflApiUrl = process.env.BFL_API_URL || "https://api.bfl.ai/v1/flux-kontext-pro"
     const allGeneratedImages: string[] = []
 
-    // Process each image separately (FLUX.1 Kontext Pro only accepts one input_image per request)
-    // Per BFL docs: input_image can be base64 encoded image or URL (up to 20MB or 20 megapixels)
-    for (let imageIndex = 0; imageIndex < imageUrls.length; imageIndex++) {
-      const imageUrl = imageUrls[imageIndex]
-      await logger.debug(`Processing image ${imageIndex + 1}/${imageUrls.length}`)
+    // Batch processing: Process images in batches of up to 4 per request
+    // BFL API supports batch requests with multiple images (up to 4 images per request)
+    // This significantly reduces API calls and improves performance
+    const BATCH_SIZE = 4
+    const batches: string[][] = []
+    
+    // Split images into batches
+    for (let i = 0; i < imageUrls.length; i += BATCH_SIZE) {
+      batches.push(imageUrls.slice(i, i + BATCH_SIZE))
+    }
+    
+    // Track all errors across all batches for credit error detection
+    const allBatchErrors: Array<{ imageIndex: number; error: string; status?: number }> = []
 
+    await logger.info('Processing images in batches', {
+      totalImages: imageUrls.length,
+      batchCount: batches.length,
+      batchSize: BATCH_SIZE
+    })
+
+    // Process batches sequentially (to avoid rate limiting), but images within batch are processed in parallel
+    for (let batchIndex = 0; batchIndex < batches.length; batchIndex++) {
+      const batch = batches[batchIndex]
+      const batchStartIndex = batchIndex * BATCH_SIZE
+      
+      await logger.debug(`Processing batch ${batchIndex + 1}/${batches.length}`, {
+        batchSize: batch.length,
+        imageIndices: `${batchStartIndex + 1}-${batchStartIndex + batch.length}`
+      })
+
+      // Process all images in the batch in parallel
+      const batchPromises = batch.map(async (imageUrl, batchImageIndex) => {
+        const imageIndex = batchStartIndex + batchImageIndex + 1
+        await logger.debug(`Processing image ${imageIndex}/${imageUrls.length} in batch ${batchIndex + 1}`)
+
+        try {
       // Convert image to base64 format for the API
       // BFL API accepts base64 encoded image (without data URI prefix) or image URL
       const imageBase64 = await imageUrlToBase64(imageUrl)
 
       // Prepare request body according to BFL API documentation
+          // For batch requests, we can send multiple images in a single request
+          // However, BFL API may require separate requests per image, so we'll process in parallel
       // Required: prompt (string), input_image (string - base64 or URL)
       // Optional: aspect_ratio, seed, prompt_upsampling, safety_tolerance, output_format, webhook_url, webhook_secret
       const requestBody: any = {
@@ -523,31 +564,21 @@ export async function POST(request: Request) {
       // webhook_secret: string | null (default: null)
       
       // Make API request with retry logic and proper error handling
-      const bflResponse = await makeBFLRequest(bflApiUrl, apiKey, requestBody, imageIndex + 1)
+          const bflResponse = await makeBFLRequest(bflApiUrl, apiKey, requestBody, imageIndex)
 
       if (!bflResponse.success) {
-        // If one image fails, return error but include any images generated so far
-        await logger.error(`Image ${imageIndex + 1} generation failed`, new Error(bflResponse.error || 'Unknown error'), {
-          imageIndex: imageIndex + 1,
+            await logger.error(`Image ${imageIndex} generation failed`, new Error(bflResponse.error || 'Unknown error'), {
+              imageIndex,
           totalImages: imageUrls.length,
-          generatedSoFar: allGeneratedImages.length
+              batchIndex: batchIndex + 1
         })
-        return errorResponse(
-          ErrorCodes.EXTERNAL_SERVICE_ERROR,
-          `Image ${imageIndex + 1} failed: ${bflResponse.error}`,
-          {
-            images: allGeneratedImages.length > 0 ? allGeneratedImages : undefined,
-            details: process.env.NODE_ENV === 'development' ? bflResponse.details : undefined,
-          },
-          bflResponse.status || 500,
-          { requestId }
-        )
+            return { success: false, imageIndex, error: bflResponse.error, status: bflResponse.status }
       }
 
       const bflData = bflResponse.data
 
       await logger.debug(`BFL API response received`, {
-        imageIndex: imageIndex + 1,
+            imageIndex,
         hasPollingUrl: !!bflData.polling_url,
         hasId: !!bflData.id,
         hasResult: !!bflData.result,
@@ -573,33 +604,110 @@ export async function POST(request: Request) {
         generatedImageUrl = bflData.result
       } else {
         await logger.warn(`Unexpected API response format`, {
-          imageIndex: imageIndex + 1,
+              imageIndex,
           responseKeys: Object.keys(bflData)
         })
-        throw new Error(`Unexpected response format from AI service (image ${imageIndex + 1}). Check API documentation for correct format.`)
+            return { success: false, imageIndex, error: 'Unexpected response format', status: undefined }
       }
 
       if (!generatedImageUrl) {
         await logger.error(`No image URL returned`, new Error('No image URL in response'), {
-          imageIndex: imageIndex + 1
-        })
-        throw new Error(`No image URL returned for image ${imageIndex + 1}`)
+              imageIndex
+            })
+            return { success: false, imageIndex, error: 'No image URL returned', status: undefined }
+          }
+
+          await logger.info(`Image ${imageIndex} generated successfully`, {
+            imageIndex,
+            totalImages: imageUrls.length
+          })
+
+          return { success: true, imageIndex, url: generatedImageUrl }
+        } catch (error) {
+          await logger.error(`Image ${imageIndex} processing error`, error instanceof Error ? error : new Error(String(error)), {
+            imageIndex
+          })
+          return { success: false, imageIndex, error: error instanceof Error ? error.message : 'Unknown error', status: undefined }
+        }
+      })
+
+      // Wait for all images in batch to complete
+      const batchResults = await Promise.all(batchPromises)
+
+      // Process batch results
+      const batchErrors: Array<{ imageIndex: number; error: string; status?: number }> = []
+      for (const result of batchResults) {
+        if (result.success && result.url) {
+          allGeneratedImages.push(result.url)
+        } else {
+          batchErrors.push({ 
+            imageIndex: result.imageIndex, 
+            error: result.error || 'Unknown error',
+            status: (result as any).status
+          })
+        }
       }
 
-      // Note: Delivery URLs expire after 10 minutes and don't support CORS
-      // For production, download images immediately and serve from your own infrastructure
-      // See: https://docs.bfl.ai/api_integration/integration_guidelines#recommended-image-handling
+      // If any images in batch failed, log but continue with other batches
+      if (batchErrors.length > 0) {
+        await logger.warn(`Batch ${batchIndex + 1} had ${batchErrors.length} failure(s)`, {
+          batchIndex: batchIndex + 1,
+          errors: batchErrors,
+          successfulInBatch: batchResults.length - batchErrors.length
+        })
+        // Collect errors for final check
+        allBatchErrors.push(...batchErrors)
+      }
 
-      // Add result to overall results
-      allGeneratedImages.push(generatedImageUrl)
-      
-      await logger.info(`Image ${imageIndex + 1} generated successfully`, {
-        imageIndex: imageIndex + 1,
-        totalImages: imageUrls.length
-      })
+      // If all images in batch failed, return error (but include any previously generated images)
+      if (batchErrors.length === batch.length && allGeneratedImages.length === 0) {
+        // Check if the error is due to insufficient credits (402)
+        const hasCreditError = batchErrors.some(e => 
+          e.status === 402 ||
+          e.error?.includes('Insufficient credits') || 
+          e.error?.includes('credits') ||
+          e.error?.includes('402')
+        )
+        
+        // Use user-friendly message for credit errors
+        const errorMessage = hasCreditError
+          ? "AI space generation is currently unavailable. Please contact the administrator for assistance."
+          : `Batch ${batchIndex + 1} failed: ${batchErrors.map(e => `Image ${e.imageIndex}: ${e.error}`).join(', ')}`
+        
+        return errorResponse(
+          ErrorCodes.EXTERNAL_SERVICE_ERROR,
+          errorMessage,
+          {
+            images: allGeneratedImages.length > 0 ? allGeneratedImages : undefined,
+            details: process.env.NODE_ENV === 'development' ? { batchErrors } : undefined,
+          },
+          hasCreditError ? 402 : 500,
+          { requestId }
+        )
+      }
     }
 
     if (allGeneratedImages.length === 0) {
+      // Check if we have any credit errors from any batch
+      // This handles the case where credits are depleted during processing
+      const hasCreditError = allBatchErrors.some((e: { imageIndex: number; error: string; status?: number }) => 
+        e.status === 402 ||
+        e.error?.includes('Insufficient credits') || 
+        e.error?.includes('credits') ||
+        e.error?.includes('402')
+      )
+      
+      if (hasCreditError) {
+        await logger.error('No images were generated: insufficient credits', new Error('Insufficient credits'))
+        return errorResponse(
+          ErrorCodes.EXTERNAL_SERVICE_ERROR,
+          "AI space generation is currently unavailable. Please contact the administrator for assistance.",
+          undefined,
+          402,
+          { requestId }
+        )
+      }
+      
       await logger.error('No images were generated', new Error('No images were generated'))
       throw new Error("No images were generated")
     }

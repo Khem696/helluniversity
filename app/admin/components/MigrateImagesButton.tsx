@@ -12,6 +12,7 @@ import {
   DialogTitle,
   DialogTrigger,
 } from "@/components/ui/dialog"
+import { API_PATHS, buildApiUrl } from "@/lib/api-config"
 
 export function MigrateImagesButton() {
   const [mounted, setMounted] = useState(false)
@@ -56,7 +57,7 @@ export function MigrateImagesButton() {
     setIsChecking(true)
     setStatus({ type: "checking" })
     try {
-      const response = await fetch("/api/admin/migrate-images")
+      const response = await fetch(API_PATHS.adminMigrateImages)
       
       // Check if response is ok
       if (!response.ok) {
@@ -116,7 +117,7 @@ export function MigrateImagesButton() {
     setIsDryRunning(true)
     setStatus({ type: "dryrun" })
     try {
-      const response = await fetch("/api/admin/migrate-images?dryRun=true", {
+      const response = await fetch(buildApiUrl(API_PATHS.adminMigrateImages, { dryRun: true }), {
         method: "POST",
       })
       
@@ -159,7 +160,7 @@ export function MigrateImagesButton() {
     setStatus({ type: "idle" })
 
     try {
-      const response = await fetch("/api/admin/cleanup-orphaned-images", {
+      const response = await fetch(API_PATHS.adminCleanupOrphanedImages, {
         method: "POST",
       })
 
@@ -220,7 +221,10 @@ export function MigrateImagesButton() {
       // Build URL with selected categories and force remigrate flag
       const categoriesParam = Array.from(selectedCategories).join(",")
       const forceParam = forceRemigrate ? "&forceRemigrate=true" : ""
-      const response = await fetch(`/api/admin/migrate-images?categories=${encodeURIComponent(categoriesParam)}${forceParam}`, {
+      const response = await fetch(buildApiUrl(API_PATHS.adminMigrateImages, { 
+        categories: categoriesParam,
+        ...(forceRemigrate && { forceRemigrate: true })
+      }), {
         method: "POST",
       })
 

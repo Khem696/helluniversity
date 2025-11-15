@@ -6,15 +6,21 @@
 
 import { getTursoClient } from "./turso"
 import { getTransporter } from "./email"
+import { getBangkokDateString, createBangkokTimestamp } from "./timezone"
 
 /**
  * Send daily digest email to admin with booking statistics
  */
 export async function sendDailyBookingDigest(): Promise<void> {
   const db = getTursoClient()
-  const now = Math.floor(Date.now() / 1000)
-  const oneDayAgo = now - (24 * 60 * 60)
-  const oneWeekAgo = now - (7 * 24 * 60 * 60)
+  
+  // Use Bangkok timezone day boundaries for "today" and "this week" calculations
+  // This ensures "new_today" and "new_week" represent calendar days in Bangkok timezone,
+  // not just "last 24 hours" or "last 7 days" in UTC
+  const todayBangkok = getBangkokDateString() // "2024-12-19"
+  const todayStart = createBangkokTimestamp(todayBangkok, "00:00") // Start of today in Bangkok (UTC timestamp)
+  const oneDayAgo = todayStart // Start of today in Bangkok timezone
+  const oneWeekAgo = todayStart - (7 * 24 * 60 * 60) // 7 days ago from start of today
 
   // Get booking statistics
   const stats = await db.execute({
@@ -22,11 +28,9 @@ export async function sendDailyBookingDigest(): Promise<void> {
       SELECT 
         COUNT(*) as total,
         SUM(CASE WHEN status = 'pending' THEN 1 ELSE 0 END) as pending,
-        SUM(CASE WHEN status = 'accepted' THEN 1 ELSE 0 END) as accepted,
-        SUM(CASE WHEN status = 'postponed' THEN 1 ELSE 0 END) as postponed,
-        SUM(CASE WHEN status = 'rejected' THEN 1 ELSE 0 END) as rejected,
+        SUM(CASE WHEN status = 'pending_deposit' THEN 1 ELSE 0 END) as pending_deposit,
+        SUM(CASE WHEN status = 'confirmed' THEN 1 ELSE 0 END) as confirmed,
         SUM(CASE WHEN status = 'cancelled' THEN 1 ELSE 0 END) as cancelled,
-        SUM(CASE WHEN status = 'checked-in' THEN 1 ELSE 0 END) as checked_in,
         SUM(CASE WHEN status = 'finished' THEN 1 ELSE 0 END) as finished,
         SUM(CASE WHEN created_at >= ? THEN 1 ELSE 0 END) as new_today,
         SUM(CASE WHEN created_at >= ? THEN 1 ELSE 0 END) as new_week
@@ -38,6 +42,7 @@ export async function sendDailyBookingDigest(): Promise<void> {
   const statsRow = stats.rows[0] as any
 
   // Get recent bookings (last 24 hours)
+  // Optimized: Uses idx_bookings_created_at index for filtering and ordering
   const recentBookings = await db.execute({
     sql: `
       SELECT id, name, email, event_type, status, created_at
@@ -94,24 +99,16 @@ export async function sendDailyBookingDigest(): Promise<void> {
                   <td style="border: 1px solid #e5e7eb; text-align: right; color: #f59e0b;">${statsRow.pending || 0}</td>
                 </tr>
                 <tr style="background-color: #f9fafb;">
-                  <td style="border: 1px solid #e5e7eb;">Accepted</td>
-                  <td style="border: 1px solid #e5e7eb; text-align: right; color: #10b981;">${statsRow.accepted || 0}</td>
+                  <td style="border: 1px solid #e5e7eb;">Pending Deposit</td>
+                  <td style="border: 1px solid #e5e7eb; text-align: right; color: #f59e0b;">${statsRow.pending_deposit || 0}</td>
                 </tr>
                 <tr>
-                  <td style="border: 1px solid #e5e7eb;">Postponed</td>
-                  <td style="border: 1px solid #e5e7eb; text-align: right; color: #f59e0b;">${statsRow.postponed || 0}</td>
+                  <td style="border: 1px solid #e5e7eb;">Confirmed</td>
+                  <td style="border: 1px solid #e5e7eb; text-align: right; color: #10b981;">${statsRow.confirmed || 0}</td>
                 </tr>
                 <tr style="background-color: #f9fafb;">
-                  <td style="border: 1px solid #e5e7eb;">Rejected</td>
-                  <td style="border: 1px solid #e5e7eb; text-align: right; color: #ef4444;">${statsRow.rejected || 0}</td>
-                </tr>
-                <tr>
                   <td style="border: 1px solid #e5e7eb;">Cancelled</td>
                   <td style="border: 1px solid #e5e7eb; text-align: right; color: #6b7280;">${statsRow.cancelled || 0}</td>
-                </tr>
-                <tr style="background-color: #f9fafb;">
-                  <td style="border: 1px solid #e5e7eb;">Checked-In</td>
-                  <td style="border: 1px solid #e5e7eb; text-align: right; color: #10b981;">${statsRow.checked_in || 0}</td>
                 </tr>
                 <tr>
                   <td style="border: 1px solid #e5e7eb;">Finished</td>
@@ -140,20 +137,18 @@ export async function sendDailyBookingDigest(): Promise<void> {
                     <td style="border: 1px solid #e5e7eb;">
                       <span style="padding: 4px 8px; border-radius: 4px; font-size: 12px; background-color: ${
                         row.status === 'pending' ? '#fef3c7' :
-                        row.status === 'accepted' ? '#d1fae5' :
-                        row.status === 'postponed' ? '#fef3c7' :
-                        row.status === 'rejected' ? '#fee2e2' :
+                        row.status === 'pending_deposit' ? '#fef3c7' :
+                        row.status === 'confirmed' ? '#d1fae5' :
                         row.status === 'cancelled' ? '#f3f4f6' :
-                        row.status === 'checked-in' ? '#d1fae5' :
-                        '#dbeafe'
+                        row.status === 'finished' ? '#dbeafe' :
+                        '#f3f4f6'
                       }; color: ${
                         row.status === 'pending' ? '#92400e' :
-                        row.status === 'accepted' ? '#065f46' :
-                        row.status === 'postponed' ? '#92400e' :
-                        row.status === 'rejected' ? '#991b1b' :
+                        row.status === 'pending_deposit' ? '#92400e' :
+                        row.status === 'confirmed' ? '#065f46' :
                         row.status === 'cancelled' ? '#374151' :
-                        row.status === 'checked-in' ? '#065f46' :
-                        '#1e40af'
+                        row.status === 'finished' ? '#1e40af' :
+                        '#374151'
                       };">
                         ${row.status}
                       </span>
@@ -188,11 +183,9 @@ ${new Date().toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', mon
 Booking Statistics:
 - Total Bookings: ${statsRow.total || 0}
 - Pending: ${statsRow.pending || 0}
-- Accepted: ${statsRow.accepted || 0}
-- Postponed: ${statsRow.postponed || 0}
-- Rejected: ${statsRow.rejected || 0}
+- Pending Deposit: ${statsRow.pending_deposit || 0}
+- Confirmed: ${statsRow.confirmed || 0}
 - Cancelled: ${statsRow.cancelled || 0}
-- Checked-In: ${statsRow.checked_in || 0}
 - Finished: ${statsRow.finished || 0}
 
 New Bookings:
@@ -229,9 +222,13 @@ Hell University Reservation System
  */
 export async function sendWeeklyBookingDigest(): Promise<void> {
   const db = getTursoClient()
-  const now = Math.floor(Date.now() / 1000)
-  const oneWeekAgo = now - (7 * 24 * 60 * 60)
-  const twoWeeksAgo = now - (14 * 24 * 60 * 60)
+  
+  // Use Bangkok timezone day boundaries for "this week" and "last week" calculations
+  // This ensures "new_week" and "new_last_week" represent calendar weeks in Bangkok timezone
+  const todayBangkok = getBangkokDateString() // "2024-12-19"
+  const todayStart = createBangkokTimestamp(todayBangkok, "00:00") // Start of today in Bangkok (UTC timestamp)
+  const oneWeekAgo = todayStart - (7 * 24 * 60 * 60) // 7 days ago from start of today
+  const twoWeeksAgo = todayStart - (14 * 24 * 60 * 60) // 14 days ago from start of today
 
   // Get booking statistics
   const stats = await db.execute({
@@ -239,11 +236,9 @@ export async function sendWeeklyBookingDigest(): Promise<void> {
       SELECT 
         COUNT(*) as total,
         SUM(CASE WHEN status = 'pending' THEN 1 ELSE 0 END) as pending,
-        SUM(CASE WHEN status = 'accepted' THEN 1 ELSE 0 END) as accepted,
-        SUM(CASE WHEN status = 'postponed' THEN 1 ELSE 0 END) as postponed,
-        SUM(CASE WHEN status = 'rejected' THEN 1 ELSE 0 END) as rejected,
+        SUM(CASE WHEN status = 'pending_deposit' THEN 1 ELSE 0 END) as pending_deposit,
+        SUM(CASE WHEN status = 'confirmed' THEN 1 ELSE 0 END) as confirmed,
         SUM(CASE WHEN status = 'cancelled' THEN 1 ELSE 0 END) as cancelled,
-        SUM(CASE WHEN status = 'checked-in' THEN 1 ELSE 0 END) as checked_in,
         SUM(CASE WHEN status = 'finished' THEN 1 ELSE 0 END) as finished,
         SUM(CASE WHEN created_at >= ? THEN 1 ELSE 0 END) as new_week,
         SUM(CASE WHEN created_at >= ? THEN 1 ELSE 0 END) as new_last_week
@@ -255,6 +250,7 @@ export async function sendWeeklyBookingDigest(): Promise<void> {
   const statsRow = stats.rows[0] as any
 
   // Get recent bookings (last 7 days)
+  // Optimized: Uses idx_bookings_created_at index for filtering and ordering
   const recentBookings = await db.execute({
     sql: `
       SELECT id, name, email, event_type, status, created_at
@@ -271,8 +267,9 @@ export async function sendWeeklyBookingDigest(): Promise<void> {
     throw new Error('RESERVATION_EMAIL or SMTP_USER not configured')
   }
 
-  const weekStart = new Date(now * 1000 - (7 * 24 * 60 * 60 * 1000))
-  const weekEnd = new Date(now * 1000)
+  // Use Bangkok timezone for date formatting in email
+  const weekStart = new Date(oneWeekAgo * 1000)
+  const weekEnd = new Date(todayStart * 1000)
 
   const htmlContent = `
 <!DOCTYPE html>
@@ -314,24 +311,16 @@ export async function sendWeeklyBookingDigest(): Promise<void> {
                   <td style="border: 1px solid #e5e7eb; text-align: right; color: #f59e0b;">${statsRow.pending || 0}</td>
                 </tr>
                 <tr style="background-color: #f9fafb;">
-                  <td style="border: 1px solid #e5e7eb;">Accepted</td>
-                  <td style="border: 1px solid #e5e7eb; text-align: right; color: #10b981;">${statsRow.accepted || 0}</td>
+                  <td style="border: 1px solid #e5e7eb;">Pending Deposit</td>
+                  <td style="border: 1px solid #e5e7eb; text-align: right; color: #f59e0b;">${statsRow.pending_deposit || 0}</td>
                 </tr>
                 <tr>
-                  <td style="border: 1px solid #e5e7eb;">Postponed</td>
-                  <td style="border: 1px solid #e5e7eb; text-align: right; color: #f59e0b;">${statsRow.postponed || 0}</td>
+                  <td style="border: 1px solid #e5e7eb;">Confirmed</td>
+                  <td style="border: 1px solid #e5e7eb; text-align: right; color: #10b981;">${statsRow.confirmed || 0}</td>
                 </tr>
                 <tr style="background-color: #f9fafb;">
-                  <td style="border: 1px solid #e5e7eb;">Rejected</td>
-                  <td style="border: 1px solid #e5e7eb; text-align: right; color: #ef4444;">${statsRow.rejected || 0}</td>
-                </tr>
-                <tr>
                   <td style="border: 1px solid #e5e7eb;">Cancelled</td>
                   <td style="border: 1px solid #e5e7eb; text-align: right; color: #6b7280;">${statsRow.cancelled || 0}</td>
-                </tr>
-                <tr style="background-color: #f9fafb;">
-                  <td style="border: 1px solid #e5e7eb;">Checked-In</td>
-                  <td style="border: 1px solid #e5e7eb; text-align: right; color: #10b981;">${statsRow.checked_in || 0}</td>
                 </tr>
                 <tr>
                   <td style="border: 1px solid #e5e7eb;">Finished</td>
@@ -360,20 +349,18 @@ export async function sendWeeklyBookingDigest(): Promise<void> {
                     <td style="border: 1px solid #e5e7eb;">
                       <span style="padding: 4px 8px; border-radius: 4px; font-size: 12px; background-color: ${
                         row.status === 'pending' ? '#fef3c7' :
-                        row.status === 'accepted' ? '#d1fae5' :
-                        row.status === 'postponed' ? '#fef3c7' :
-                        row.status === 'rejected' ? '#fee2e2' :
+                        row.status === 'pending_deposit' ? '#fef3c7' :
+                        row.status === 'confirmed' ? '#d1fae5' :
                         row.status === 'cancelled' ? '#f3f4f6' :
-                        row.status === 'checked-in' ? '#d1fae5' :
-                        '#dbeafe'
+                        row.status === 'finished' ? '#dbeafe' :
+                        '#f3f4f6'
                       }; color: ${
                         row.status === 'pending' ? '#92400e' :
-                        row.status === 'accepted' ? '#065f46' :
-                        row.status === 'postponed' ? '#92400e' :
-                        row.status === 'rejected' ? '#991b1b' :
+                        row.status === 'pending_deposit' ? '#92400e' :
+                        row.status === 'confirmed' ? '#065f46' :
                         row.status === 'cancelled' ? '#374151' :
-                        row.status === 'checked-in' ? '#065f46' :
-                        '#1e40af'
+                        row.status === 'finished' ? '#1e40af' :
+                        '#374151'
                       };">
                         ${row.status}
                       </span>
@@ -408,11 +395,9 @@ ${weekStart.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })} - $
 Booking Statistics:
 - Total Bookings: ${statsRow.total || 0}
 - Pending: ${statsRow.pending || 0}
-- Accepted: ${statsRow.accepted || 0}
-- Postponed: ${statsRow.postponed || 0}
-- Rejected: ${statsRow.rejected || 0}
+- Pending Deposit: ${statsRow.pending_deposit || 0}
+- Confirmed: ${statsRow.confirmed || 0}
 - Cancelled: ${statsRow.cancelled || 0}
-- Checked-In: ${statsRow.checked_in || 0}
 - Finished: ${statsRow.finished || 0}
 
 New Bookings:

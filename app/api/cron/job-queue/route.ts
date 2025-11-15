@@ -9,9 +9,10 @@
 
 import { NextResponse } from 'next/server'
 import { processJobQueue } from '@/lib/job-queue'
-import { successResponse, errorResponse, ErrorCodes } from '@/lib/api-response'
+import { withErrorHandling, successResponse, errorResponse, ErrorCodes } from '@/lib/api-response'
 import { createRequestLogger } from '@/lib/logger'
 import { registerAllJobHandlers } from '@/lib/job-handlers'
+import { verifyCronSecret, withTimeout, CRON_TIMEOUT_MS, CRON_LIMITS } from '@/lib/cron-utils'
 
 // Register handlers if not already registered (singleton pattern)
 let handlersRegistered = false
@@ -32,50 +33,63 @@ export async function POST(request: Request) {
 }
 
 async function handleJobQueue(request: Request) {
-  const requestId = crypto.randomUUID()
-  const logger = createRequestLogger(requestId, '/api/cron/job-queue')
-  
-  try {
+  return withErrorHandling(async () => {
+    const requestId = crypto.randomUUID()
+    const logger = createRequestLogger(requestId, '/api/cron/job-queue')
+    
     await logger.info('Job queue cron job started')
     
     // Verify Vercel cron secret
-    const authHeader = request.headers.get('authorization')
-    const cronSecret = process.env.CRON_SECRET
-    
-    if (!cronSecret) {
-      await logger.error('CRON_SECRET not configured', new Error('CRON_SECRET not configured'))
+    try {
+      verifyCronSecret(request)
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : 'Authentication failed'
+      await logger.error(errorMessage, error instanceof Error ? error : new Error(errorMessage))
       return errorResponse(
-        ErrorCodes.INTERNAL_ERROR,
-        'Cron secret not configured',
+        errorMessage.includes('not configured') ? ErrorCodes.INTERNAL_ERROR : ErrorCodes.UNAUTHORIZED,
+        errorMessage,
         undefined,
-        500,
-        { requestId }
-      )
-    }
-
-    if (authHeader !== `Bearer ${cronSecret}`) {
-      await logger.warn('Unauthorized cron job attempt')
-      return errorResponse(
-        ErrorCodes.UNAUTHORIZED,
-        'Unauthorized',
-        undefined,
-        401,
+        errorMessage.includes('not configured') ? 500 : 401,
         { requestId }
       )
     }
     
     const startTime = Date.now()
-    const limit = 10 // Process up to 10 jobs per run
+    const limit = CRON_LIMITS.JOB_QUEUE
     
     await logger.info('Processing job queue', {
       limit,
+      timeout: `${CRON_TIMEOUT_MS}ms`,
       timestamp: new Date().toISOString(),
       timezone: 'UTC'
     })
     
-    console.log(`[job-queue] Starting job queue processing (limit: ${limit})`)
+    console.log(`[job-queue] Starting job queue processing (limit: ${limit}, timeout: ${CRON_TIMEOUT_MS}ms)`)
     
-    const results = await processJobQueue(limit)
+    let results
+    try {
+      // Execute with timeout to prevent hanging
+      results = await withTimeout(
+        () => processJobQueue(limit),
+        CRON_TIMEOUT_MS,
+        'Job queue processing timed out'
+      )
+    } catch (error) {
+      const duration = Date.now() - startTime
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error'
+      await logger.error('Job queue processing failed', error instanceof Error ? error : new Error(errorMessage))
+      console.error(`[job-queue] Job queue processing failed after ${duration}ms:`, errorMessage)
+      
+      // Return partial results if available, otherwise return error
+      return errorResponse(
+        ErrorCodes.INTERNAL_ERROR,
+        `Job queue processing failed: ${errorMessage}`,
+        undefined,
+        500,
+        { requestId, duration: `${duration}ms` }
+      )
+    }
+    
     const duration = Date.now() - startTime
     
     await logger.info('Job queue processed', {
@@ -102,21 +116,6 @@ async function handleJobQueue(request: Request) {
       },
       { requestId }
     )
-  } catch (error) {
-    await logger.error(
-      'Job queue processing failed',
-      error instanceof Error ? error : new Error(String(error))
-    )
-    
-    console.error(`[job-queue] Job queue processing failed:`, error)
-    
-    return errorResponse(
-      ErrorCodes.INTERNAL_ERROR,
-      'Failed to process job queue',
-      error instanceof Error ? error.message : undefined,
-      500,
-      { requestId }
-    )
-  }
+  }, { endpoint: '/api/cron/job-queue' })
 }
 

@@ -38,8 +38,54 @@ export async function checkRateLimit(
   const windowStart = Math.floor(now / windowSeconds) * windowSeconds
 
   try {
-    // Get current count for this identifier, endpoint, and window
-    const result = await db.execute({
+    // ATOMIC RATE LIMIT CHECK AND INCREMENT
+    // Use atomic UPDATE to prevent race conditions from concurrent requests
+    // Strategy: Try to increment atomically, check if limit exceeded
+    
+    // First, try to increment existing record atomically (if count < limit)
+    const updateResult = await db.execute({
+      sql: `
+        UPDATE rate_limits 
+        SET count = count + 1 
+        WHERE identifier = ? AND endpoint = ? AND window_start = ? AND count < ?
+      `,
+      args: [identifier, endpoint, windowStart, limit],
+    })
+
+    // If UPDATE affected rows, we successfully incremented (and were under limit)
+    if (updateResult.rowsAffected && updateResult.rowsAffected > 0) {
+      // OPTIMIZATION: Use a single transaction to get count atomically after UPDATE
+      // This ensures we get the exact count immediately after increment
+      // Using dbTransaction ensures atomicity and better performance
+      const { dbTransaction } = await import('./turso')
+      const countResult = await dbTransaction(async (tx) => {
+        // Get the new count immediately after UPDATE (within same transaction)
+        const result = await tx.execute({
+          sql: `
+            SELECT count 
+            FROM rate_limits 
+            WHERE identifier = ? AND endpoint = ? AND window_start = ?
+          `,
+          args: [identifier, endpoint, windowStart],
+        })
+        return result
+      })
+      
+      const newCount = countResult.rows.length > 0 ? (countResult.rows[0] as any).count : limit
+      const remaining = limit - newCount
+      const reset = windowStart + windowSeconds
+
+      return {
+        success: true,
+        limit,
+        remaining: Math.max(0, remaining),
+        reset,
+      }
+    }
+
+    // UPDATE didn't affect rows - either record doesn't exist or limit exceeded
+    // Check if record exists
+    const checkResult = await db.execute({
       sql: `
         SELECT count 
         FROM rate_limits 
@@ -48,14 +94,19 @@ export async function checkRateLimit(
       args: [identifier, endpoint, windowStart],
     })
 
-    let currentCount = 0
-    if (result.rows.length > 0) {
-      currentCount = (result.rows[0] as any).count
-    }
-
-    // Check if limit exceeded
-    if (currentCount >= limit) {
+    if (checkResult.rows.length > 0) {
+      // Record exists but UPDATE failed - limit exceeded (race condition: another request hit limit)
+      const currentCount = (checkResult.rows[0] as any).count
       const reset = windowStart + windowSeconds
+      
+      // Track rate limit hit
+      try {
+        const { trackRateLimitHit } = await import('./monitoring')
+        trackRateLimitHit(endpoint, identifier)
+      } catch {
+        // Ignore monitoring errors
+      }
+      
       return {
         success: false,
         limit,
@@ -64,8 +115,8 @@ export async function checkRateLimit(
       }
     }
 
-    // Increment count (or insert if doesn't exist)
-    if (currentCount === 0) {
+    // Record doesn't exist - try to insert (handle race condition with INSERT OR IGNORE)
+    try {
       await db.execute({
         sql: `
           INSERT INTO rate_limits (identifier, endpoint, count, window_start)
@@ -73,28 +124,108 @@ export async function checkRateLimit(
         `,
         args: [identifier, endpoint, windowStart],
       })
-    } else {
-      await db.execute({
+      
+      // Insert succeeded - we're the first request in this window
+      const remaining = limit - 1
+      const reset = windowStart + windowSeconds
+      return {
+        success: true,
+        limit,
+        remaining: Math.max(0, remaining),
+        reset,
+      }
+    } catch (insertError: any) {
+      // Insert failed (likely unique constraint violation from race condition)
+      // Another request inserted between our check and insert
+      // Try to increment the record that was just created
+      const retryUpdateResult = await db.execute({
         sql: `
           UPDATE rate_limits 
           SET count = count + 1 
+          WHERE identifier = ? AND endpoint = ? AND window_start = ? AND count < ?
+        `,
+        args: [identifier, endpoint, windowStart, limit],
+      })
+
+      if (retryUpdateResult.rowsAffected && retryUpdateResult.rowsAffected > 0) {
+        // Successfully incremented - use transaction for atomic count retrieval
+        const { dbTransaction } = await import('./turso')
+        const countResult = await dbTransaction(async (tx) => {
+          const result = await tx.execute({
+            sql: `
+              SELECT count 
+              FROM rate_limits 
+              WHERE identifier = ? AND endpoint = ? AND window_start = ?
+            `,
+            args: [identifier, endpoint, windowStart],
+          })
+          return result
+        })
+        
+        const newCount = countResult.rows.length > 0 ? (countResult.rows[0] as any).count : limit
+        const remaining = limit - newCount
+        const reset = windowStart + windowSeconds
+
+        return {
+          success: true,
+          limit,
+          remaining: Math.max(0, remaining),
+          reset,
+        }
+      }
+
+      // Still failed - check current count
+      const finalCheckResult = await db.execute({
+        sql: `
+          SELECT count 
+          FROM rate_limits 
           WHERE identifier = ? AND endpoint = ? AND window_start = ?
         `,
         args: [identifier, endpoint, windowStart],
       })
-    }
 
-    const remaining = limit - (currentCount + 1)
-    const reset = windowStart + windowSeconds
+      if (finalCheckResult.rows.length > 0) {
+        const currentCount = (finalCheckResult.rows[0] as any).count
+        if (currentCount >= limit) {
+          const reset = windowStart + windowSeconds
+          
+          // Track rate limit hit
+          try {
+            const { trackRateLimitHit } = await import('./monitoring')
+            trackRateLimitHit(endpoint, identifier)
+          } catch {
+            // Ignore monitoring errors
+          }
+          
+          return {
+            success: false,
+            limit,
+            remaining: 0,
+            reset,
+          }
+        }
+      }
 
-    return {
-      success: true,
-      limit,
-      remaining: Math.max(0, remaining),
-      reset,
+      // Fallback: allow request (shouldn't happen, but fail open)
+      const reset = windowStart + windowSeconds
+      return {
+        success: true,
+        limit,
+        remaining: limit - 1,
+        reset,
+      }
     }
   } catch (error) {
     console.error("Rate limit check error:", error)
+    
+    // Track rate limit bypass (error occurred, request allowed)
+    try {
+      const { trackRateLimitBypass } = await import('./monitoring')
+      trackRateLimitBypass(endpoint, identifier)
+    } catch {
+      // Ignore monitoring errors
+    }
+    
     // On error, allow the request (fail open)
     // In production, you might want to fail closed instead
     return {

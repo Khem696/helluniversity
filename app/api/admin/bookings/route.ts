@@ -4,6 +4,7 @@ import { requireAuthorizedDomain } from "@/lib/auth"
 import { createRequestLogger } from "@/lib/logger"
 import { withErrorHandling, successResponse, errorResponse, unauthorizedResponse, forbiddenResponse, ErrorCodes } from "@/lib/api-response"
 import { createBangkokTimestamp } from "@/lib/timezone"
+import { getRequestPath } from "@/lib/api-versioning"
 
 /**
  * Admin Bookings Management API
@@ -27,7 +28,8 @@ async function checkAuth(requestId: string) {
 export async function GET(request: Request) {
   return withErrorHandling(async () => {
     const requestId = crypto.randomUUID()
-    const logger = createRequestLogger(requestId, '/api/admin/bookings')
+    const endpoint = getRequestPath(request)
+    const logger = createRequestLogger(requestId, endpoint)
     
     await logger.info('Admin bookings list request received')
     
@@ -43,13 +45,21 @@ export async function GET(request: Request) {
     const archive = searchParams.get("archive") === "true"
     const status = searchParams.get("status") as
       | "pending"
-      | "accepted"
-      | "rejected"
-      | "postponed"
+      | "pending_deposit"
+      | "confirmed"
+      | "cancelled"
+      | "finished"
       | null
     const limit = parseInt(searchParams.get("limit") || "50")
     const offset = parseInt(searchParams.get("offset") || "0")
     const email = searchParams.get("email") || undefined
+    const referenceNumber = searchParams.get("referenceNumber") || undefined
+    const name = searchParams.get("name") || undefined
+    const phone = searchParams.get("phone") || undefined
+    const eventType = searchParams.get("eventType") || undefined
+    const sortBy = (searchParams.get("sortBy") as "created_at" | "start_date" | "name" | "updated_at") || undefined
+    const sortOrder = (searchParams.get("sortOrder") as "ASC" | "DESC") || undefined
+    const showOverlappingOnly = searchParams.get("showOverlappingOnly") === "true"
 
     // Parse date filters (Unix timestamps)
     const startDateFrom = searchParams.get("startDateFrom")
@@ -65,18 +75,31 @@ export async function GET(request: Request) {
       limit,
       offset,
       hasEmail: !!email,
-      hasDateFilters: !!(startDateFrom || startDateTo)
+      hasReferenceNumber: !!referenceNumber,
+      hasName: !!name,
+      hasPhone: !!phone,
+      hasEventType: !!eventType,
+      hasDateFilters: !!(startDateFrom || startDateTo),
+      sortBy,
+      sortOrder
     })
     
     const result = await listBookings({
       status: status || undefined,
-      statuses: archive ? ["finished", "rejected", "cancelled"] : undefined,
+      statuses: archive ? ["finished", "cancelled"] : undefined,
       excludeArchived: !archive, // Exclude archived when not requesting archive
       limit,
       offset,
       email,
+      referenceNumber,
+      name,
+      phone,
+      eventType,
       startDateFrom,
       startDateTo,
+      sortBy,
+      sortOrder,
+      showOverlappingOnly,
     })
     
     await logger.info('Bookings list retrieved', { 
@@ -89,6 +112,7 @@ export async function GET(request: Request) {
     // CRITICAL: Use createBangkokTimestamp to handle YYYY-MM-DD strings in Bangkok timezone
     const transformedBookings = result.bookings.map((booking) => ({
       id: booking.id,
+      reference_number: booking.referenceNumber || null,
       name: booking.name,
       email: booking.email,
       phone: booking.phone,
@@ -116,6 +140,8 @@ export async function GET(request: Request) {
       deposit_evidence_url: booking.depositEvidenceUrl,
       deposit_verified_at: booking.depositVerifiedAt,
       deposit_verified_by: booking.depositVerifiedBy,
+      // Preserve boolean value correctly - use explicit check to avoid undefined -> false conversion
+      deposit_verified_from_other_channel: booking.depositVerifiedFromOtherChannel === true,
       created_at: booking.createdAt,
       updated_at: booking.updatedAt,
     }))
@@ -132,6 +158,6 @@ export async function GET(request: Request) {
       },
       { requestId }
     )
-  }, { endpoint: '/api/admin/bookings' })
+  }, { endpoint: getRequestPath(request) })
 }
 
