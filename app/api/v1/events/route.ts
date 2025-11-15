@@ -76,12 +76,41 @@ export const GET = withVersioning(async (request: Request) => {
     const events = eventsResult.rows
 
     // Split events into past and current/upcoming
+    // CRITICAL: For events with same start_date and end_date (or only event_date),
+    // we need to treat them as the end of the day (23:59:59) for comparison
     const pastEvents: any[] = []
     const currentEvents: any[] = []
 
     events.forEach((event: any) => {
       const endDate = event.end_date || event.event_date || event.start_date
-      if (endDate && endDate < now) {
+      const startDate = event.start_date || event.event_date
+      
+      if (!endDate) {
+        // No date information, treat as current
+        currentEvents.push(event)
+        return
+      }
+      
+      // If start_date and end_date are the same (or only event_date exists),
+      // treat the event as ending at 23:59:59 of that day for comparison
+      // This ensures events on the same day are not incorrectly classified as past
+      let comparisonTimestamp = endDate
+      
+      // Check if event has same start and end date (or only event_date)
+      const hasEndDate = event.end_date != null
+      const hasStartDate = event.start_date != null
+      const hasEventDate = event.event_date != null
+      
+      if (startDate && endDate === startDate) {
+        // Same start and end date - treat as end of day (23:59:59)
+        // Add 86399 seconds (23 hours, 59 minutes, 59 seconds) to the date timestamp
+        comparisonTimestamp = endDate + 86399
+      } else if (!hasEndDate && !hasStartDate && hasEventDate) {
+        // Only event_date exists - treat as end of day
+        comparisonTimestamp = event.event_date + 86399
+      }
+      
+      if (comparisonTimestamp < now) {
         pastEvents.push(event)
       } else {
         currentEvents.push(event)

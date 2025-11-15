@@ -2,7 +2,7 @@
 
 import Link from "next/link"
 import { useRef, useState, useEffect, useCallback } from "react"
-import { Calendar as CalendarIcon, Menu, X, AlertCircle, RefreshCw, Clock } from "lucide-react"
+import { Calendar as CalendarIcon, Menu, X, AlertCircle, RefreshCw, Clock, Loader2 } from "lucide-react"
 import { toast } from "sonner"
 import { Dialog, DialogTrigger, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog"
 import { Button } from "@/components/ui/button"
@@ -115,7 +115,7 @@ export function Header() {
     setMounted(true)
   }, [])
 
-  // Fetch booking enabled status
+  // Fetch booking enabled status and poll for changes
   useEffect(() => {
     async function fetchBookingStatus() {
       try {
@@ -123,7 +123,14 @@ export function Header() {
         const json = await response.json()
         
         if (json.success && json.data) {
-          setBookingsEnabled(json.data.enabled)
+          const newStatus = json.data.enabled
+          setBookingsEnabled(newStatus)
+          
+          // If bookings are disabled while dialog is open, close the dialog
+          if (!newStatus && bookingOpen) {
+            setBookingOpen(false)
+            toast.error("Bookings are currently disabled. Please try again later.")
+          }
         }
       } catch (error) {
         console.error("Failed to fetch booking status:", error)
@@ -133,9 +140,17 @@ export function Header() {
     }
 
     if (mounted) {
+      // Fetch immediately
       fetchBookingStatus()
+      
+      // Poll every 30 seconds to check for status changes
+      const pollInterval = setInterval(fetchBookingStatus, 30000)
+      
+      return () => {
+        clearInterval(pollInterval)
+      }
     }
-  }, [mounted])
+  }, [mounted, bookingOpen])
 
   // Fetch unavailable dates when booking dialog opens and refresh periodically
   useEffect(() => {
@@ -397,6 +412,17 @@ export function Header() {
     e.preventDefault()
     setError(null)
     
+    // Check if bookings are enabled before allowing submission
+    if (!bookingsEnabled) {
+      setError({
+        type: "validation",
+        message: "Bookings are currently disabled. Please try again later.",
+        retryable: false
+      })
+      setBookingOpen(false)
+      return
+    }
+    
     // Check if we're in static export mode (GitHub Pages)
     const isStaticMode = process.env.NEXT_PUBLIC_USE_STATIC_IMAGES === '1'
     
@@ -521,6 +547,27 @@ export function Header() {
         retryable: false
       })
       return
+    }
+    
+    // Double-check bookings are still enabled right before API call
+    // This prevents race conditions where status changes between form submission and API call
+    try {
+      const statusCheck = await fetch(API_PATHS.settingsBookingEnabled)
+      const statusJson = await statusCheck.json()
+      
+      if (statusJson.success && statusJson.data && !statusJson.data.enabled) {
+        setBookingsEnabled(false)
+        setError({
+          type: "validation",
+          message: "Bookings are currently disabled. Please try again later.",
+          retryable: false
+        })
+        setBookingOpen(false)
+        return
+      }
+    } catch (statusError) {
+      // If status check fails, proceed with submission (API will handle it)
+      console.warn("Failed to verify booking status before submission:", statusError)
     }
     
     setIsSubmitting(true)
@@ -1422,7 +1469,7 @@ export function Header() {
                         <Button
                           type="submit"
                           disabled={!isRecaptchaVerified || isSubmitting || process.env.NEXT_PUBLIC_USE_STATIC_IMAGES === '1'}
-                          className="font-comfortaa bg-[#5B9AB8] hover:bg-[#4d8ea7] text-white disabled:opacity-50 disabled:cursor-not-allowed"
+                          className="font-comfortaa bg-[#5B9AB8] hover:bg-[#4d8ea7] text-white disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
                           style={{ 
                             padding: 'clamp(0.5rem, 0.6vw, 0.75rem) clamp(1rem, 1.2vw, 1.5rem)',
                             fontSize: 'clamp(0.75rem, 0.85vw, 0.875rem)'
@@ -1431,7 +1478,12 @@ export function Header() {
                           {process.env.NEXT_PUBLIC_USE_STATIC_IMAGES === '1' 
                             ? "Form Unavailable" 
                             : isSubmitting 
-                            ? "Submitting..." 
+                            ? (
+                              <>
+                                <Loader2 className="w-4 h-4 animate-spin" />
+                                <span>Submitting...</span>
+                              </>
+                            )
                             : "Submit Inquiry"}
                         </Button>
                         <p className="text-[#5a3a2a]/70 text-center max-w-lg font-comfortaa leading-tight px-2" style={{ fontSize: 'clamp(0.5625rem, 0.6vw, 0.625rem)' }}>

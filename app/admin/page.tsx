@@ -1,10 +1,10 @@
 import { redirect } from "next/navigation"
 import { auth } from "@/lib/auth-config"
 import { SignOutButton } from "@/components/SignOutButton"
-import { InitDatabaseButton } from "./components/InitDatabaseButton"
-import { MigrateImagesButton } from "./components/MigrateImagesButton"
 import { BookingToggle } from "./components/BookingToggle"
+import { DevModeToggle } from "./components/DevModeToggle"
 import { DashboardClient } from "./components/DashboardClient"
+import { DevToolsSection } from "./components/DevToolsSection"
 
 // Mark as dynamic to prevent static export issues
 export const dynamic = 'force-dynamic'
@@ -37,12 +37,15 @@ export default async function AdminDashboard() {
         <BookingToggle />
       </div>
 
+      {/* Dev Mode Toggle */}
+      <div className="mb-6">
+        <DevModeToggle />
+      </div>
+
       <DashboardClient />
 
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 mt-6">
-          <InitDatabaseButton />
-          <MigrateImagesButton />
-      </div>
+      {/* Dev Tools Section - Only visible when dev mode is enabled */}
+      <DevToolsSection />
 
       <div className="mt-6 sm:mt-8 p-4 sm:p-6 bg-white rounded-lg shadow-md">
         <h2 className="text-lg sm:text-xl font-semibold text-gray-900 mb-3 sm:mb-4">Account Information</h2>
