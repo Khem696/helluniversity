@@ -18,16 +18,35 @@ import { getApiVersion, normalizeVersion, addVersionHeaders } from './api-versio
  *   return successResponse(data, { requestId })
  * })
  * ```
+ * 
+ * For routes with dynamic params:
+ * ```typescript
+ * export const GET = withVersioning(async (
+ *   request: Request,
+ *   { params }: { params: Promise<{ id: string }> }
+ * ) => {
+ *   // Your route logic
+ *   return successResponse(data, { requestId })
+ * })
+ * ```
  */
 export function withVersioning<T = any>(
   handler: (request: NextRequest) => Promise<NextResponse<T>>
-) {
-  return async (request: NextRequest): Promise<NextResponse<T>> => {
+): (request: NextRequest) => Promise<NextResponse<T>>
+export function withVersioning<T = any, P extends Record<string, string> = Record<string, string>>(
+  handler: (request: Request, context: { params: Promise<P> }) => Promise<NextResponse<T>>
+): (request: Request, context: { params: Promise<P> }) => Promise<NextResponse<T>>
+export function withVersioning<T = any>(
+  handler: ((request: NextRequest) => Promise<NextResponse<T>>) | ((request: Request, context: { params: Promise<any> }) => Promise<NextResponse<T>>)
+): any {
+  return async (request: NextRequest | Request, context?: { params: Promise<any> }): Promise<NextResponse<T>> => {
     // Detect API version from request
     const version = normalizeVersion(getApiVersion(request))
     
     // Call the original handler
-    const response = await handler(request)
+    const response = context 
+      ? await (handler as (request: Request, context: { params: Promise<any> }) => Promise<NextResponse<T>>)(request as Request, context)
+      : await (handler as (request: NextRequest) => Promise<NextResponse<T>>)(request as NextRequest)
     
     // Add version headers to response
     // Type assertion needed because addVersionHeaders preserves the response type

@@ -12,6 +12,8 @@ import { getBookingById } from "@/lib/bookings"
 import { requireAuthorizedDomain } from "@/lib/auth"
 import { createRequestLogger } from "@/lib/logger"
 import { errorResponse, unauthorizedResponse, forbiddenResponse, notFoundResponse, ErrorCodes } from "@/lib/api-response"
+import { withVersioning } from "@/lib/api-version-wrapper"
+import { getRequestPath } from "@/lib/api-versioning"
 
 async function checkAuth(requestId: string) {
   try {
@@ -25,13 +27,14 @@ async function checkAuth(requestId: string) {
   return null
 }
 
-export async function GET(
+export const GET = withVersioning(async (
   request: Request,
   { params }: { params: Promise<{ bookingId: string }> }
-) {
+) => {
   const { bookingId } = await params
   const requestId = crypto.randomUUID()
-  const logger = createRequestLogger(requestId, '/api/v1/admin/deposit/[bookingId]/image')
+  const endpoint = getRequestPath(request)
+  const logger = createRequestLogger(requestId, endpoint)
   
   try {
     await logger.info('Admin deposit image proxy request received', { bookingId })
@@ -128,5 +131,5 @@ export async function GET(
       { requestId }
     )
   }
-}
+})
 

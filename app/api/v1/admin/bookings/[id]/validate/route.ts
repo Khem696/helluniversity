@@ -16,19 +16,22 @@ import { getBookingById } from "@/lib/bookings"
 import { withErrorHandling, successResponse, errorResponse, notFoundResponse, unauthorizedResponse, forbiddenResponse, ErrorCodes } from "@/lib/api-response"
 import { createRequestLogger } from "@/lib/logger"
 import { createBangkokTimestamp } from "@/lib/timezone"
+import { withVersioning } from "@/lib/api-version-wrapper"
+import { getRequestPath } from "@/lib/api-versioning"
 
 /**
  * Validate booking action before execution
  * POST /api/v1/admin/bookings/[id]/validate
  */
-export async function POST(
+export const POST = withVersioning(async (
   request: Request,
   { params }: { params: Promise<{ id: string }> }
-) {
+) => {
   return withErrorHandling(async () => {
     const { id } = await params
     const requestId = crypto.randomUUID()
-    const logger = createRequestLogger(requestId, '/api/v1/admin/bookings/[id]/validate')
+    const endpoint = getRequestPath(request)
+    const logger = createRequestLogger(requestId, endpoint)
     
     await logger.info('Booking action validation request', { bookingId: id })
     
@@ -98,8 +101,8 @@ export async function POST(
         { requestId }
       )
     }
-  })
-}
+  }, { endpoint: getRequestPath(request) })
+})
 
 async function checkAuth(requestId: string) {
   try {

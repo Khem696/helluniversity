@@ -12,16 +12,19 @@ import { sendBookingReminders } from "@/lib/booking-reminders"
 import { checkAdminAuth } from "@/lib/admin-auth"
 import { createRequestLogger } from "@/lib/logger"
 import { withErrorHandling, successResponse, errorResponse, ErrorCodes, ApiResponse } from "@/lib/api-response"
+import { withVersioning } from "@/lib/api-version-wrapper"
+import { getRequestPath } from "@/lib/api-versioning"
 
-export async function POST(request: Request) {
+export const POST = withVersioning(async (request: Request) => {
   return withErrorHandling(async (): Promise<NextResponse<ApiResponse<any>>> => {
     const requestId = crypto.randomUUID()
-    const logger = createRequestLogger(requestId, '/api/v1/admin/bookings/reminders')
+    const endpoint = getRequestPath(request)
+    const logger = createRequestLogger(requestId, endpoint)
     
     await logger.info('Admin send reminders request received')
     
     // Check authentication
-    const authResult = await checkAdminAuth(requestId, logger, '/api/v1/admin/bookings/reminders')
+    const authResult = await checkAdminAuth(requestId, logger, endpoint)
     if (!authResult.success) {
       return authResult.response
     }
@@ -51,6 +54,6 @@ export async function POST(request: Request) {
       },
       { requestId }
     )
-  }, { endpoint: '/api/v1/admin/bookings/reminders' })
-}
+  }, { endpoint: getRequestPath(request) })
+})
 
