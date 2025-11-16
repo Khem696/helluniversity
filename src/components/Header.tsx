@@ -935,7 +935,7 @@ export function Header() {
                       
                       {/* reCAPTCHA v2 - Must be verified before using the form */}
                       {process.env.NEXT_PUBLIC_USE_STATIC_IMAGES !== '1' && (
-                        <div style={{ display: 'flex', flexDirection: 'column', gap: 'clamp(0.375rem, 0.5vw, 0.5rem)', paddingBottom: 'clamp(0.375rem, 0.5vw, 0.5rem)', borderBottom: '1px solid rgb(229 231 235)' }}>
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: 'clamp(0.375rem, 0.5vw, 0.5rem)', paddingBottom: 'clamp(0.5rem, 0.6vw, 0.75rem)', borderBottom: '1px solid rgb(229 231 235)' }}>
                           <p className="text-[#5a3a2a]/70 font-comfortaa" style={{ fontSize: 'clamp(0.625rem, 0.7vw, 0.75rem)' }}>
                             Please verify you're human before proceeding:
                           </p>
@@ -968,10 +968,13 @@ export function Header() {
                         </div>
                       )}
   
-                      {/* Required Information */}
-                      <div style={{ display: 'flex', flexDirection: 'column', gap: 'clamp(0.25rem, 0.4vw, 0.5rem)' }}>
-                        <h4 className="text-[#5a3a2a] font-comfortaa font-semibold" style={{ fontSize: 'clamp(0.75rem, 0.8vw, 0.875rem)' }}>Required Information</h4>
-                        <div className="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3" style={{ gap: 'clamp(0.375rem, 0.5vw, 0.75rem)' }}>
+                      {/* Section 1: Client Information */}
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: 'clamp(0.5rem, 0.6vw, 0.75rem)', paddingBottom: 'clamp(0.75rem, 1vw, 1.25rem)', borderBottom: '2px solid rgb(229 231 235)' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 'clamp(0.5rem, 0.6vw, 0.75rem)', marginBottom: 'clamp(0.25rem, 0.3vw, 0.5rem)' }}>
+                          <div style={{ width: '4px', height: 'clamp(1.5rem, 2vw, 2rem)', backgroundColor: '#5B9AB8', borderRadius: '2px' }}></div>
+                          <h4 className="text-[#5a3a2a] font-comfortaa font-bold" style={{ fontSize: 'clamp(0.875rem, 1vw, 1rem)' }}>Client Information</h4>
+                        </div>
+                        <div className="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3" style={{ gap: 'clamp(0.5rem, 0.6vw, 0.75rem)' }}>
                           <div style={{ display: 'flex', flexDirection: 'column', gap: 'clamp(0.25rem, 0.3vw, 0.375rem)' }}>
                             <Label htmlFor="name" className="text-[#5a3a2a] font-comfortaa" style={{ fontSize: 'clamp(0.6875rem, 0.7vw, 0.75rem)' }}>Full Name *</Label>
                             <Input
@@ -1039,28 +1042,15 @@ export function Header() {
                               />
                             </div>
                           </div>
-                          <div style={{ display: 'flex', flexDirection: 'column', gap: 'clamp(0.25rem, 0.3vw, 0.375rem)' }}>
-                            <Label htmlFor="participants" className="text-[#5a3a2a] font-comfortaa" style={{ fontSize: 'clamp(0.6875rem, 0.7vw, 0.75rem)' }}>Number of Participants *</Label>
-                            <Input
-                              id="participants"
-                              name="participants"
-                              type="number"
-                              min="1"
-                              required
-                              value={formData.participants || ""}
-                              onChange={(e) => handleInputChange("participants", e.target.value)}
-                              placeholder="Enter number of participants"
-                              disabled={!isRecaptchaVerified || process.env.NEXT_PUBLIC_USE_STATIC_IMAGES === '1'}
-                              className={`font-comfortaa ${!isRecaptchaVerified ? "opacity-50 cursor-not-allowed bg-gray-100" : ""}`}
-                              style={{ fontSize: 'clamp(0.75rem, 0.8vw, 0.875rem)', height: 'clamp(2rem, 2.2vw, 2.25rem)' }}
-                            />
-                          </div>
                         </div>
                       </div>
 
-                      {/* Event Details */}
-                      <div style={{ display: 'flex', flexDirection: 'column', gap: 'clamp(0.25rem, 0.4vw, 0.5rem)' }}>
-                        <h4 className="text-[#5a3a2a] font-comfortaa font-semibold" style={{ fontSize: 'clamp(0.75rem, 0.8vw, 0.875rem)' }}>Event Details</h4>
+                      {/* Section 2: Date & Time Information */}
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: 'clamp(0.5rem, 0.6vw, 0.75rem)', paddingBottom: 'clamp(0.75rem, 1vw, 1.25rem)', borderBottom: '2px solid rgb(229 231 235)' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 'clamp(0.5rem, 0.6vw, 0.75rem)', marginBottom: 'clamp(0.25rem, 0.3vw, 0.5rem)' }}>
+                          <div style={{ width: '4px', height: 'clamp(1.5rem, 2vw, 2rem)', backgroundColor: '#5B9AB8', borderRadius: '2px' }}></div>
+                          <h4 className="text-[#5a3a2a] font-comfortaa font-bold" style={{ fontSize: 'clamp(0.875rem, 1vw, 1rem)' }}>Date & Time Information</h4>
+                        </div>
                         
                         {/* Date Range Toggle */}
                         <div style={{ display: 'flex', flexDirection: 'column', gap: 'clamp(0.25rem, 0.3vw, 0.375rem)' }}>
@@ -1090,12 +1080,12 @@ export function Header() {
                                 disabled={!isRecaptchaVerified || process.env.NEXT_PUBLIC_USE_STATIC_IMAGES === '1'}
                                 className="cursor-pointer"
                               />
-                              <span className="font-comfortaa text-sm" style={{ fontSize: 'clamp(0.6875rem, 0.7vw, 0.75rem)' }}>Date Range</span>
+                              <span className="font-comfortaa text-sm" style={{ fontSize: 'clamp(0.6875rem, 0.7vw, 0.75rem)' }}>Multiple Days</span>
                             </label>
                           </div>
                         </div>
 
-                        <div className="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3" style={{ gap: 'clamp(0.375rem, 0.5vw, 0.75rem)' }}>
+                        <div className="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-4" style={{ gap: 'clamp(0.5rem, 0.6vw, 0.75rem)' }}>
                           {/* Start Date */}
                           <div style={{ display: 'flex', flexDirection: 'column', gap: 'clamp(0.25rem, 0.3vw, 0.375rem)', position: 'relative' }}>
                             <Label id="startDate-label" htmlFor="startDate" className="text-[#5a3a2a] font-comfortaa" style={{ fontSize: 'clamp(0.6875rem, 0.7vw, 0.75rem)' }}>
@@ -1283,6 +1273,34 @@ export function Header() {
                               className={!isRecaptchaVerified ? "opacity-50 cursor-not-allowed" : ""}
                             />
                           </div>
+                        </div>
+                      </div>
+
+                      {/* Section 3: Reservation Information */}
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: 'clamp(0.5rem, 0.6vw, 0.75rem)' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 'clamp(0.5rem, 0.6vw, 0.75rem)', marginBottom: 'clamp(0.25rem, 0.3vw, 0.5rem)' }}>
+                          <div style={{ width: '4px', height: 'clamp(1.5rem, 2vw, 2rem)', backgroundColor: '#5B9AB8', borderRadius: '2px' }}></div>
+                          <h4 className="text-[#5a3a2a] font-comfortaa font-bold" style={{ fontSize: 'clamp(0.875rem, 1vw, 1rem)' }}>Reservation Information</h4>
+                        </div>
+                        
+                        <div className="grid grid-cols-1 lg:grid-cols-2" style={{ gap: 'clamp(0.5rem, 0.6vw, 0.75rem)' }}>
+                          {/* Number of Participants */}
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: 'clamp(0.25rem, 0.3vw, 0.375rem)' }}>
+                            <Label htmlFor="participants" className="text-[#5a3a2a] font-comfortaa" style={{ fontSize: 'clamp(0.6875rem, 0.7vw, 0.75rem)' }}>Number of Participants *</Label>
+                            <Input
+                              id="participants"
+                              name="participants"
+                              type="number"
+                              min="1"
+                              required
+                              value={formData.participants || ""}
+                              onChange={(e) => handleInputChange("participants", e.target.value)}
+                              placeholder="Enter number of participants"
+                              disabled={!isRecaptchaVerified || process.env.NEXT_PUBLIC_USE_STATIC_IMAGES === '1'}
+                              className={`font-comfortaa ${!isRecaptchaVerified ? "opacity-50 cursor-not-allowed bg-gray-100" : ""}`}
+                              style={{ fontSize: 'clamp(0.75rem, 0.8vw, 0.875rem)', height: 'clamp(2rem, 2.2vw, 2.25rem)' }}
+                            />
+                          </div>
 
                           {/* Event Type */}
                           <div style={{ display: 'flex', flexDirection: 'column', gap: 'clamp(0.25rem, 0.3vw, 0.375rem)', position: 'relative' }}>
@@ -1385,43 +1403,40 @@ export function Header() {
                             </p>
                           )}
                         </div>
-                      </div>
 
-                      {/* Personal Information */}
-                      <div className="space-y-1 sm:space-y-2 lg:space-y-1">
-                        <h4 className="text-[#5a3a2a] font-comfortaa font-semibold" style={{ fontSize: 'clamp(0.75rem, 0.8vw, 0.875rem)' }}>Tailor Your Reservation</h4>
-                        <div className="space-y-1 sm:space-y-1.5 lg:space-y-1">
-                          <div className="space-y-1">
-                            <Label htmlFor="introduction" className="text-[#5a3a2a] font-comfortaa" style={{ fontSize: 'clamp(0.6875rem, 0.7vw, 0.75rem)' }}>Brief Your Desire *</Label>
-                            <Textarea
-                              id="introduction"
-                              name="introduction"
-                              autoComplete="off"
-                              required
-                              value={formData.introduction || ""}
-                              onChange={(e) => handleInputChange("introduction", e.target.value)}
-                              placeholder={isRecaptchaVerified ? "Tell us what you desire..." : "Please complete CAPTCHA verification first..."}
-                              disabled={!isRecaptchaVerified || process.env.NEXT_PUBLIC_USE_STATIC_IMAGES === '1'}
-                              rows={2}
-                              className={`font-comfortaa resize-none ${!isRecaptchaVerified ? "opacity-50 cursor-not-allowed bg-gray-100" : ""}`}
-                              style={{ fontSize: 'clamp(0.75rem, 0.8vw, 0.875rem)', minHeight: 'clamp(3rem, 3.5vw, 4rem)' }}
-                            />
-                          </div>
-                          <div className="space-y-1">
-                            <Label htmlFor="specialRequests" className="text-[#5a3a2a] font-comfortaa" style={{ fontSize: 'clamp(0.6875rem, 0.7vw, 0.75rem)' }}>Special Requirements</Label>
-                            <Textarea
-                              id="specialRequests"
-                              name="specialRequests"
-                              autoComplete="off"
-                              value={formData.specialRequests || ""}
-                              onChange={(e) => handleInputChange("specialRequests", e.target.value)}
-                              placeholder={isRecaptchaVerified ? "Describe any special requirements..." : "Please complete CAPTCHA verification first..."}
-                              disabled={!isRecaptchaVerified || process.env.NEXT_PUBLIC_USE_STATIC_IMAGES === '1'}
-                              rows={2}
-                              className={`font-comfortaa resize-none ${!isRecaptchaVerified ? "opacity-50 cursor-not-allowed bg-gray-100" : ""}`}
-                              style={{ fontSize: 'clamp(0.75rem, 0.8vw, 0.875rem)', minHeight: 'clamp(3rem, 3.5vw, 4rem)' }}
-                            />
-                          </div>
+                        {/* Brief Your Desire */}
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: 'clamp(0.25rem, 0.3vw, 0.375rem)' }}>
+                          <Label htmlFor="introduction" className="text-[#5a3a2a] font-comfortaa" style={{ fontSize: 'clamp(0.6875rem, 0.7vw, 0.75rem)' }}>Brief Your Desire *</Label>
+                          <Textarea
+                            id="introduction"
+                            name="introduction"
+                            autoComplete="off"
+                            required
+                            value={formData.introduction || ""}
+                            onChange={(e) => handleInputChange("introduction", e.target.value)}
+                            placeholder={isRecaptchaVerified ? "Tell us what you desire..." : "Please complete CAPTCHA verification first..."}
+                            disabled={!isRecaptchaVerified || process.env.NEXT_PUBLIC_USE_STATIC_IMAGES === '1'}
+                            rows={3}
+                            className={`font-comfortaa resize-none ${!isRecaptchaVerified ? "opacity-50 cursor-not-allowed bg-gray-100" : ""}`}
+                            style={{ fontSize: 'clamp(0.75rem, 0.8vw, 0.875rem)', minHeight: 'clamp(4rem, 4.5vw, 5rem)' }}
+                          />
+                        </div>
+
+                        {/* Special Requirements */}
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: 'clamp(0.25rem, 0.3vw, 0.375rem)' }}>
+                          <Label htmlFor="specialRequests" className="text-[#5a3a2a] font-comfortaa" style={{ fontSize: 'clamp(0.6875rem, 0.7vw, 0.75rem)' }}>Special Requirements</Label>
+                          <Textarea
+                            id="specialRequests"
+                            name="specialRequests"
+                            autoComplete="off"
+                            value={formData.specialRequests || ""}
+                            onChange={(e) => handleInputChange("specialRequests", e.target.value)}
+                            placeholder={isRecaptchaVerified ? "Describe any special requirements..." : "Please complete CAPTCHA verification first..."}
+                            disabled={!isRecaptchaVerified || process.env.NEXT_PUBLIC_USE_STATIC_IMAGES === '1'}
+                            rows={3}
+                            className={`font-comfortaa resize-none ${!isRecaptchaVerified ? "opacity-50 cursor-not-allowed bg-gray-100" : ""}`}
+                            style={{ fontSize: 'clamp(0.75rem, 0.8vw, 0.875rem)', minHeight: 'clamp(4rem, 4.5vw, 5rem)' }}
+                          />
                         </div>
                       </div>
 

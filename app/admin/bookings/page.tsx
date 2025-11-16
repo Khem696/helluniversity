@@ -1377,6 +1377,12 @@ export default function BookingsPage() {
         <>
           {/* Desktop Table View */}
           <div className="hidden lg:block bg-white rounded-lg shadow overflow-hidden">
+          {/* Total Count Header */}
+          <div className="px-6 xl:px-8 py-3 bg-gray-50 border-b border-gray-200 flex justify-end">
+            <div className="text-sm font-medium text-gray-700">
+              Total: <span className="font-semibold text-gray-900">{bookings.length}</span> {bookings.length === 1 ? 'booking' : 'bookings'}
+            </div>
+          </div>
           <div className="overflow-x-auto">
             <table className="min-w-full divide-y divide-gray-200">
               <thead className="bg-gray-50">
@@ -1509,6 +1515,12 @@ export default function BookingsPage() {
 
           {/* Mobile/Tablet Card View */}
           <div className="lg:hidden space-y-4">
+            {/* Total Count Header for Mobile */}
+            <div className="bg-white rounded-lg shadow px-4 py-3 border-b border-gray-200 flex justify-end">
+              <div className="text-sm font-medium text-gray-700">
+                Total: <span className="font-semibold text-gray-900">{bookings.length}</span> {bookings.length === 1 ? 'booking' : 'bookings'}
+              </div>
+            </div>
             {bookings.map((booking, index) => {
               const hasNewResponse = booking.user_response && booking.response_date && 
                 (booking.response_date * 1000) > lastCheckedAtRef.current - 300000
