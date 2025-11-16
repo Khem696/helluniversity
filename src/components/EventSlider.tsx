@@ -1,5 +1,6 @@
 "use client"
-import { useState, useEffect } from "react"
+import { useState, useEffect, useRef } from "react"
+import { ChevronLeft, ChevronRight } from "lucide-react"
 import { EventSlide } from "@/data/events"
 import { EventModalViewer } from "./EventModalViewer"
 
@@ -13,19 +14,35 @@ export function EventSlider({ events }: EventSliderProps) {
   const [currentSlide, setCurrentSlide] = useState(0)
   const [selectedEventId, setSelectedEventId] = useState<string | null>(null)
   const [isModalOpen, setIsModalOpen] = useState(false)
+  const autoRotateIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
-  // Auto-rotate only when there are 2+ slides
+  // Auto-rotate only when there are 2+ slides AND modal is NOT open
   useEffect(() => {
-    if (slides.length <= 1) {
-      return // Disable auto-rotate when only 1 slide
+    // Clear any existing interval
+    if (autoRotateIntervalRef.current) {
+      clearInterval(autoRotateIntervalRef.current)
+      autoRotateIntervalRef.current = null
     }
 
-    const interval = setInterval(() => {
+    // Don't auto-rotate if:
+    // - Only 1 slide
+    // - Modal is open
+    if (slides.length <= 1 || isModalOpen) {
+      return
+    }
+
+    // Start auto-rotation
+    autoRotateIntervalRef.current = setInterval(() => {
       setCurrentSlide((prev) => (prev + 1) % slides.length)
     }, 7000)
 
-    return () => clearInterval(interval)
-  }, [slides.length])
+    return () => {
+      if (autoRotateIntervalRef.current) {
+        clearInterval(autoRotateIntervalRef.current)
+        autoRotateIntervalRef.current = null
+      }
+    }
+  }, [slides.length, isModalOpen])
 
   if (slides.length === 0) {
     return null
@@ -36,10 +53,96 @@ export function EventSlider({ events }: EventSliderProps) {
     setIsModalOpen(true)
   }
 
+  // Manual navigation functions
+  const goToPrevious = () => {
+    setCurrentSlide((prev) => (prev - 1 + slides.length) % slides.length)
+    // Reset auto-rotation timer
+    if (autoRotateIntervalRef.current) {
+      clearInterval(autoRotateIntervalRef.current)
+    }
+    if (!isModalOpen && slides.length > 1) {
+      autoRotateIntervalRef.current = setInterval(() => {
+        setCurrentSlide((prev) => (prev + 1) % slides.length)
+      }, 7000)
+    }
+  }
+
+  const goToNext = () => {
+    setCurrentSlide((prev) => (prev + 1) % slides.length)
+    // Reset auto-rotation timer
+    if (autoRotateIntervalRef.current) {
+      clearInterval(autoRotateIntervalRef.current)
+    }
+    if (!isModalOpen && slides.length > 1) {
+      autoRotateIntervalRef.current = setInterval(() => {
+        setCurrentSlide((prev) => (prev + 1) % slides.length)
+      }, 7000)
+    }
+  }
+
   return (
     <>
       <div className="w-full overflow-hidden min-h-[100vh] h-[100vh]">
         <div className="relative w-full h-full">
+          {/* Navigation Arrows - Only show when there are 2+ slides */}
+          {slides.length > 1 && (
+            <>
+              {/* Left Arrow */}
+              <button
+                onClick={goToPrevious}
+                className="absolute left-4 sm:left-6 md:left-8 lg:left-12 xl:left-16 top-1/2 -translate-y-1/2 z-30 flex items-center justify-center w-12 h-12 sm:w-14 sm:h-14 md:w-16 md:h-16 rounded-full transition-all duration-300 hover:scale-110 focus:outline-none focus:ring-2 focus:ring-white/50 focus:ring-offset-2 focus:ring-offset-transparent disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:scale-100"
+                style={{
+                  background: 'rgba(255, 255, 255, 0.1)',
+                  backdropFilter: 'blur(12px)',
+                  WebkitBackdropFilter: 'blur(12px)',
+                  border: '1px solid rgba(255, 255, 255, 0.2)',
+                  boxShadow: '0 4px 16px rgba(0, 0, 0, 0.1), 0 0 0 1px rgba(255, 255, 255, 0.05) inset',
+                }}
+                onMouseEnter={(e) => {
+                  e.currentTarget.style.background = 'rgba(255, 255, 255, 0.15)'
+                  e.currentTarget.style.boxShadow = '0 6px 20px rgba(0, 0, 0, 0.15), 0 0 0 1px rgba(255, 255, 255, 0.1) inset'
+                }}
+                onMouseLeave={(e) => {
+                  e.currentTarget.style.background = 'rgba(255, 255, 255, 0.1)'
+                  e.currentTarget.style.boxShadow = '0 4px 16px rgba(0, 0, 0, 0.1), 0 0 0 1px rgba(255, 255, 255, 0.05) inset'
+                }}
+                aria-label="Previous event"
+              >
+                <ChevronLeft 
+                  className="w-6 h-6 sm:w-7 sm:h-7 md:w-8 md:h-8 text-white" 
+                  strokeWidth={2.5}
+                />
+              </button>
+
+              {/* Right Arrow */}
+              <button
+                onClick={goToNext}
+                className="absolute right-4 sm:right-6 md:right-8 lg:right-12 xl:right-16 top-1/2 -translate-y-1/2 z-30 flex items-center justify-center w-12 h-12 sm:w-14 sm:h-14 md:w-16 md:h-16 rounded-full transition-all duration-300 hover:scale-110 focus:outline-none focus:ring-2 focus:ring-white/50 focus:ring-offset-2 focus:ring-offset-transparent disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:scale-100"
+                style={{
+                  background: 'rgba(255, 255, 255, 0.1)',
+                  backdropFilter: 'blur(12px)',
+                  WebkitBackdropFilter: 'blur(12px)',
+                  border: '1px solid rgba(255, 255, 255, 0.2)',
+                  boxShadow: '0 4px 16px rgba(0, 0, 0, 0.1), 0 0 0 1px rgba(255, 255, 255, 0.05) inset',
+                }}
+                onMouseEnter={(e) => {
+                  e.currentTarget.style.background = 'rgba(255, 255, 255, 0.15)'
+                  e.currentTarget.style.boxShadow = '0 6px 20px rgba(0, 0, 0, 0.15), 0 0 0 1px rgba(255, 255, 255, 0.1) inset'
+                }}
+                onMouseLeave={(e) => {
+                  e.currentTarget.style.background = 'rgba(255, 255, 255, 0.1)'
+                  e.currentTarget.style.boxShadow = '0 4px 16px rgba(0, 0, 0, 0.1), 0 0 0 1px rgba(255, 255, 255, 0.05) inset'
+                }}
+                aria-label="Next event"
+              >
+                <ChevronRight 
+                  className="w-6 h-6 sm:w-7 sm:h-7 md:w-8 md:h-8 text-white" 
+                  strokeWidth={2.5}
+                />
+              </button>
+            </>
+          )}
+
           {/* Slider Container */}
           <div className="grid grid-cols-1 w-full h-full">
             {slides.map((slide, index) => (
@@ -82,9 +185,11 @@ export function EventSlider({ events }: EventSliderProps) {
                     </h2>
 
                     {/* Text Description */}
-                    <p className="text-white/90 font-comfortaa text-[clamp(14px,1vw,18px)] font-light leading-[1.6] text-center">
-                      {slide.description}
-                    </p>
+                    {slide.description && (
+                      <p className="text-white/90 font-comfortaa text-[clamp(14px,1vw,18px)] font-light leading-[1.6] text-center max-w-full break-words">
+                        {slide.description}
+                      </p>
+                    )}
                   </div>
                 </div>
               </div>

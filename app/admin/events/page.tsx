@@ -1039,10 +1039,19 @@ export default function EventsPage() {
         <>
           {/* Desktop Table View */}
           <div className="hidden lg:block bg-white rounded-lg shadow overflow-hidden">
+            {/* Total Count Header */}
+            <div className="px-6 py-3 bg-gray-50 border-b border-gray-200 flex justify-end">
+              <div className="text-sm font-medium text-gray-700">
+                Total: <span className="font-semibold text-gray-900">{events.length}</span> {events.length === 1 ? 'event' : 'events'}
+              </div>
+            </div>
             <div className="overflow-x-auto">
               <table className="min-w-full divide-y divide-gray-200">
                 <thead className="bg-gray-50">
                   <tr>
+                    <th className="px-6 py-4 text-left text-xs font-medium text-gray-500 uppercase tracking-wider w-16">
+                      No.
+                    </th>
                     <th className="px-6 py-4 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                       Event
                     </th>
@@ -1061,8 +1070,11 @@ export default function EventsPage() {
                   </tr>
                 </thead>
                 <tbody className="bg-white divide-y divide-gray-200">
-                  {events.map((event) => (
+                  {events.map((event, index) => (
                     <tr key={event.id} className="hover:bg-gray-50">
+                      <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
+                        {index + 1}
+                      </td>
                       <td className="px-6 py-4">
                         <div className="text-sm font-medium text-gray-900">{event.title}</div>
                         {event.description && (
@@ -1150,7 +1162,13 @@ export default function EventsPage() {
 
           {/* Mobile Card View */}
           <div className="lg:hidden space-y-4">
-            {events.map((event) => (
+            {/* Total Count Header for Mobile */}
+            <div className="bg-white rounded-lg shadow px-4 py-3 border-b border-gray-200 flex justify-end">
+              <div className="text-sm font-medium text-gray-700">
+                Total: <span className="font-semibold text-gray-900">{events.length}</span> {events.length === 1 ? 'event' : 'events'}
+              </div>
+            </div>
+            {events.map((event, index) => (
               <div
                 key={event.id}
                 className="bg-white rounded-lg shadow-md overflow-hidden"
@@ -1165,7 +1183,10 @@ export default function EventsPage() {
                   </div>
                 )}
                 <div className="p-4">
-                  <h3 className="font-semibold text-gray-900 mb-2">{event.title}</h3>
+                  <div className="flex items-center gap-2 mb-2">
+                    <span className="text-xs font-medium text-gray-500 bg-gray-100 px-2 py-1 rounded">No. {index + 1}</span>
+                    <h3 className="font-semibold text-gray-900 flex-1">{event.title}</h3>
+                  </div>
                   {event.description && (
                     <p className="text-sm text-gray-600 mb-2 line-clamp-2">
                       {event.description}
@@ -1236,15 +1257,33 @@ export default function EventsPage() {
           <DialogHeader>
             <DialogTitle>Edit Event: {editingEvent?.title}</DialogTitle>
             <DialogDescription>
-              Update event dates and images
+              Update event description, dates, and images
             </DialogDescription>
           </DialogHeader>
           {editingEvent && (
             <form onSubmit={handleUpdate} className="space-y-6">
               {/* Hidden title field to preserve title during updates */}
               <input type="hidden" name="title" value={editingEvent.title} />
-              {/* Dates Section */}
+              
+              {/* Description Section */}
               <div className="space-y-4">
+                <h3 className="text-lg font-semibold text-gray-900">Event Description</h3>
+                <div>
+                  <Label htmlFor="edit-description">Description</Label>
+                  <Textarea
+                    id="edit-description"
+                    name="description"
+                    rows={4}
+                    defaultValue={editingEvent.description || ""}
+                    disabled={saving}
+                    placeholder="Enter event description..."
+                  />
+                  <p className="text-sm text-gray-500 mt-1">Provide a description for this event</p>
+                </div>
+              </div>
+
+              {/* Dates Section */}
+              <div className="space-y-4 border-t pt-4">
                 <h3 className="text-lg font-semibold text-gray-900">Event Dates</h3>
                 <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
                   <div>
