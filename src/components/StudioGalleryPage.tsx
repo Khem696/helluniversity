@@ -525,8 +525,8 @@ export function StudioGalleryPage() {
               </DialogTrigger>
               <DialogContent className="top-0 left-0 translate-x-0 translate-y-0 w-full h-screen max-w-none sm:max-w-none rounded-none border-0 p-0 bg-transparent overflow-hidden">
                 <DialogHeader className="sr-only">
-                  <DialogTitle>AI Space Generator</DialogTitle>
-                  <DialogDescription>Generate AI spaces by selecting images and describing your decoration style</DialogDescription>
+                  <DialogTitle>Reservation Imaginate Generator</DialogTitle>
+                  <DialogDescription>Select your desired event to visualize what could be possible.</DialogDescription>
                 </DialogHeader>
                 <div className="relative h-full flex flex-col overflow-hidden">
                   <div className="flex flex-col lg:flex-row h-full min-h-0">
