@@ -113,6 +113,9 @@ const nextConfig = {
       exclude: ['error', 'warn'],
     } : false,
   },
+  // Disable source maps in production for security and performance
+  // Source maps expose source code structure and increase bundle size
+  productionBrowserSourceMaps: false,
   poweredByHeader: false,
   generateEtags: false,
   compress: true,
@@ -136,6 +139,10 @@ const nextConfig = {
     if (dev) {
       return config
     }
+    
+    // Disable source maps in production webpack builds
+    // This ensures no .map files are generated for production
+    config.devtool = false
     
     // In static export mode, exclude API routes from being processed
     const isStaticExport = isGitHubPages

@@ -1,6 +1,8 @@
 import { Facebook, Twitter, Instagram, Search, MapPin, Mail } from "lucide-react";
 import { ImageWithFallback } from "./figma/ImageWithFallback";
 import { withBasePath } from "@/lib/utils";
+import Link from "next/link";
+import { trackInternalLinkClick } from "@/lib/analytics";
 
 export function ContactPage() {
   return (
@@ -10,7 +12,7 @@ export function ContactPage() {
           <div className="w-[clamp(18rem,90vw,44rem)] lg:w-[clamp(18rem,46vw,48rem)] mx-auto -translate-y-[clamp(0rem,2vw,1rem)] lg:translate-y-0">
             <ImageWithFallback
               src={withBasePath('/assets/artwork/artwork_contact.png')}
-              alt="Contact artwork"
+              alt="Contact Hell University cultural hub in Mae Taeng, Chiang Mai, Thailand - Book event spaces and arrange cultural activities"
               className="w-full h-auto object-cover"
               width={1600}
               height={900}
@@ -45,7 +47,7 @@ export function ContactPage() {
               <div className="mb-[clamp(1.5rem,3vw,2.5rem)]">
                 <ImageWithFallback
                   src={withBasePath('/assets/qrcode/location.jpg')}
-                  alt="Location QR Code"
+                  alt="Location QR Code for Hell University cultural hub in Mae Taeng, Chiang Mai, Thailand - Scan to get directions"
                   className="w-full max-w-[150px] md:max-w-[180px] lg:max-w-[200px] h-auto object-cover rounded"
                   width={200}
                   height={200}
@@ -89,6 +91,36 @@ export function ContactPage() {
                 {/* <p className="text-white/70 font-light text-[clamp(0.95rem,1vw,1.125rem)]">
                 123-456-7890
               </p> */}
+            </div>
+            
+            {/* Internal Links Section */}
+            <div className="mt-8 pt-6 border-t border-white/20">
+              <p className="text-white/70 font-comfortaa text-[clamp(0.875rem,0.9vw,1rem)] mb-3">
+                Learn more about Hell University:
+              </p>
+              <nav className="flex flex-col gap-2" aria-label="Related pages">
+                <Link 
+                  href="/about" 
+                  className="text-white/70 hover:text-[#87CEEB] transition-colors text-[clamp(0.875rem,0.9vw,1rem)] font-light underline"
+                  onClick={() => trackInternalLinkClick('About Hell University', '/about', 'contact')}
+                >
+                  About Hell University
+                </Link>
+                <Link 
+                  href="/studio-gallery" 
+                  className="text-white/70 hover:text-[#87CEEB] transition-colors text-[clamp(0.875rem,0.9vw,1rem)] font-light underline"
+                  onClick={() => trackInternalLinkClick('Studio & Gallery', '/studio-gallery', 'contact')}
+                >
+                  Studio & Gallery
+                </Link>
+                <Link 
+                  href="/" 
+                  className="text-white/70 hover:text-[#87CEEB] transition-colors text-[clamp(0.875rem,0.9vw,1rem)] font-light underline"
+                  onClick={() => trackInternalLinkClick('View Events', '/', 'contact')}
+                >
+                  View Events
+                </Link>
+              </nav>
             </div>
           </div>
         </div>

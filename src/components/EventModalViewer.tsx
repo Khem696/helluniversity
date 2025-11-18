@@ -1,8 +1,10 @@
 "use client"
 
 import { useState, useEffect } from "react"
+import Link from "next/link"
 import { API_PATHS } from "@/lib/api-config"
-import { X, ChevronLeft, ChevronRight } from "lucide-react"
+import { X, ChevronLeft, ChevronRight, ExternalLink } from "lucide-react"
+import { trackEventModalOpen, trackViewAllEventPhotos } from "@/lib/analytics"
 import { Dialog, DialogContent, DialogTitle, DialogHeader } from "./ui/dialog"
 import {
   Carousel,
@@ -63,6 +65,8 @@ export function EventModalViewer({ eventId, isOpen, onClose }: EventModalViewerP
           const event = json.data?.event || json.event
           if (event) {
             setEventData(event)
+            // Track modal open
+            trackEventModalOpen(event.id, event.title)
           } else {
             throw new Error("Event not found")
           }
@@ -141,9 +145,26 @@ export function EventModalViewer({ eventId, isOpen, onClose }: EventModalViewerP
           <div className="flex flex-col h-full max-h-[95vh] overflow-hidden">
             {/* Event Header */}
             <div className="px-4 sm:px-6 lg:px-8 pt-6 sm:pt-8 pb-4 sm:pb-6 flex-shrink-0">
-              <h2 className="text-white font-urbanist text-[clamp(20px,3vw,32px)] lg:text-[clamp(24px,3.5vw,36px)] font-extrabold leading-[1.2] mb-2 sm:mb-3">
-                {eventData.title}
-              </h2>
+              <div className="flex items-start justify-between gap-4 mb-2 sm:mb-3">
+                <h2 className="text-white font-urbanist text-[clamp(20px,3vw,32px)] lg:text-[clamp(24px,3.5vw,36px)] font-extrabold leading-[1.2] flex-1">
+                  {eventData.title}
+                </h2>
+                {/* View All Event Photos Button */}
+                <Link
+                  href={`/events/${eventData.id}`}
+                  className="flex items-center gap-2 px-3 sm:px-4 py-2 bg-white/10 hover:bg-white/20 text-white rounded-lg transition-colors font-comfortaa text-[clamp(11px,1vw,13px)] sm:text-sm whitespace-nowrap"
+                  onClick={(e) => {
+                    // Track click
+                    trackViewAllEventPhotos(eventData.id, eventData.title)
+                    // Close modal when navigating
+                    onClose()
+                  }}
+                >
+                  <ExternalLink className="w-3 h-3 sm:w-4 sm:h-4" />
+                  <span className="hidden sm:inline">View All Event Photos</span>
+                  <span className="sm:hidden">All Photos</span>
+                </Link>
+              </div>
               {eventData.description && (
                 <p className="text-white/90 font-comfortaa text-[clamp(12px,1.2vw,16px)] leading-[1.6] mb-2">
                   {eventData.description}
@@ -172,10 +193,11 @@ export function EventModalViewer({ eventId, isOpen, onClose }: EventModalViewerP
                         <div className="relative w-full h-full flex items-center justify-center bg-black/20 rounded-lg overflow-hidden">
                           <img
                             src={image.url}
-                            alt={image.title}
+                            alt={image.title ? `${image.title} - Event photo from ${eventData.title} at Hell University cultural hub in Mae Taeng, Chiang Mai, Thailand` : `${eventData.title} event photo at Hell University cultural hub in Mae Taeng, Chiang Mai, Thailand`}
                             className="max-w-full max-h-full w-auto h-auto object-contain"
                             loading={index === 0 ? "eager" : "lazy"}
                             decoding="async"
+                            fetchPriority={index === 0 ? "high" : "auto"}
                           />
                           {image.title && (
                             <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/80 to-transparent p-3 sm:p-4">

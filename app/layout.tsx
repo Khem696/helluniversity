@@ -16,12 +16,24 @@ import { Providers } from '@/components/Providers'
 
 export const metadata: Metadata = {
   title: {
-    default: 'Hell University - A Cultural House for Creative Expression',
+    default: 'Hell University - A Cultural Hub in Mae Taeng, Chiang Mai, Thailand',
     template: '%s | Hell University'
   },
-  description: 'Promoting cultural activities and community engagement through art, music, and creativity. A dynamic hub for artistic community and creative expression.',
+  description: 'Hell University - A Cultural Hub in Mae Taeng, Chiang Mai, Thailand. Book event spaces, arrange cultural activities, and host creative workshops. Perfect venue for booking events, activities, and cultural gatherings in Northern Thailand.',
   keywords: [
-    'cultural house',
+    'cultural hub',
+    'event booking',
+    'book event space',
+    'arrange activities',
+    'event venue booking',
+    'cultural activities booking',
+    'Mae Taeng',
+    'Chiang Mai',
+    'Thailand',
+    'event space rental',
+    'book cultural events',
+    'activity arrangement',
+    'creative space booking',
     'creative expression',
     'art community',
     'cultural activities',
@@ -30,7 +42,9 @@ export const metadata: Metadata = {
     'studio gallery',
     'cultural engagement',
     'art workshops',
-    'creative events'
+    'creative events',
+    'venue booking',
+    'event arrangement',
   ],
   authors: [{ name: 'Hell University' }],
   creator: 'Hell University',
@@ -48,22 +62,22 @@ export const metadata: Metadata = {
     type: 'website',
     locale: 'en_US',
     url: process.env.NODE_ENV === 'production' ? 'https://khem696.github.io/helluniversity' : 'http://localhost:3000',
-    title: 'Hell University - A Cultural House for Creative Expression',
-    description: 'Promoting cultural activities and community engagement through art, music, and creativity.',
+    title: 'Hell University - A Cultural Hub in Mae Taeng, Chiang Mai, Thailand',
+    description: 'Book event spaces, arrange cultural activities, and host creative workshops. Perfect venue for booking events, activities, and cultural gatherings in Northern Thailand.',
     siteName: 'Hell University',
     images: [
       {
         url: withBasePath('/og-image.jpg'),
         width: 1200,
         height: 630,
-        alt: 'Hell University - Cultural House',
+        alt: 'Hell University - Cultural Hub in Mae Taeng, Chiang Mai, Thailand',
       },
     ],
   },
   twitter: {
     card: 'summary_large_image',
-    title: 'Hell University - A Cultural House for Creative Expression',
-    description: 'Promoting cultural activities and community engagement through art, music, and creativity.',
+    title: 'Hell University - A Cultural Hub in Mae Taeng, Chiang Mai, Thailand',
+    description: 'Book event spaces, arrange cultural activities, and host creative workshops. Perfect venue for booking events, activities, and cultural gatherings in Northern Thailand.',
     images: [withBasePath('/og-image.jpg')],
     creator: '@huculturehub',
   },
@@ -91,6 +105,14 @@ export default function RootLayout({
   return (
     <html lang="en" className={`${bodyFont.variable} ${headingFont.variable} ${uiFont.variable} ${comfortaaFont.variable} ${urbanistFont.variable} ${acuminAlt.variable}`} suppressHydrationWarning>
       <head>
+        {/* Resource Hints for Performance - Improve loading speed */}
+        <link rel="preconnect" href="https://fonts.googleapis.com" />
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossOrigin="anonymous" />
+        <link rel="dns-prefetch" href="https://www.google-analytics.com" />
+        <link rel="dns-prefetch" href="https://www.googletagmanager.com" />
+        
+        {/* Note: Next.js automatically handles font preloading via next/font/google */}
+        
         <link rel="icon" href={withBasePath('/assets/icons/icon_helluniversity.svg')} />
         <link rel="apple-touch-icon" sizes="180x180" href={withBasePath('/assets/icons/icon_helluniversity.svg')} />
         <link rel="manifest" href={withBasePath('/site.webmanifest')} />

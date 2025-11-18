@@ -3,6 +3,8 @@ import { withBasePath } from "@/lib/utils"
 import { useState, useEffect } from "react"
 import { Facebook, Twitter, Instagram, ChevronDown } from "lucide-react"
 import { API_PATHS } from "@/lib/api-config"
+import Link from "next/link"
+import { trackInternalLinkClick } from "@/lib/analytics"
 
 export function Hero() {
   const [hasEvents, setHasEvents] = useState(false)
@@ -93,6 +95,13 @@ export function Hero() {
                 Hongsee Culture House is a creative hub<br />
                 for cultural events and the artistic community.
               </p>
+              <Link 
+                href="/studio-gallery" 
+                className="inline-block mt-3 text-[#D4AF37] hover:text-[#F5D76E] font-comfortaa text-[clamp(13px,1.3vw,16px)] font-light underline transition-colors"
+                onClick={() => trackInternalLinkClick('Explore Studio & Gallery', '/studio-gallery', 'hero')}
+              >
+                Explore Studio & Gallery →
+              </Link>
               </div>
 
             {/* Gallery Section */}
@@ -104,6 +113,13 @@ export function Hero() {
                 An archive and gallery<br />
                 dedicated to research and education.
               </p>
+              <Link 
+                href="/about" 
+                className="inline-block mt-3 text-[#D4AF37] hover:text-[#F5D76E] font-comfortaa text-[clamp(13px,1.3vw,16px)] font-light underline transition-colors"
+                onClick={() => trackInternalLinkClick('Learn Our Story', '/about', 'hero')}
+              >
+                Learn Our Story →
+              </Link>
             </div>
           </div>
         </div>
@@ -127,7 +143,7 @@ export function Hero() {
             <div className="relative self-start 4xl:self-center 5xl:self-center w-full lg:w-fit overflow-hidden h-auto max-w-[560px] min-[769px]:max-w-[620px] lg:max-w-[700px] 3xl:max-w-[780px] 4xl:max-w-[880px] 5xl:max-w-[980px]">
               <img
                 src={withBasePath('/assets/portrait/portrait_kade.png')}
-                alt="Kade Javanalikikorn"
+                alt="Kade Javanalikikorn - Founder of Hell University cultural hub in Mae Taeng, Chiang Mai, Thailand"
                 className="w-full h-auto lg:max-h-[65vh] object-contain object-left grayscale contrast-110"
                 width={1600}
                 height={1800}

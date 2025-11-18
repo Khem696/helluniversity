@@ -4,6 +4,7 @@ import Link from "next/link"
 import { useRef, useState, useEffect, useCallback } from "react"
 import { Calendar as CalendarIcon, Menu, X, AlertCircle, RefreshCw, Clock, Loader2 } from "lucide-react"
 import { toast } from "sonner"
+import { trackBookingFormStart, trackBookingFormSubmit, trackBookingFormError } from "@/lib/analytics"
 import { Dialog, DialogTrigger, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -409,6 +410,8 @@ export function Header() {
       setRetryCount(0)
       // Force reCAPTCHA to re-render by incrementing key
       recaptchaKeyRef.current += 1
+      // Track booking form start
+      trackBookingFormStart()
     } else {
       // Modal closed - only clear on successful submission
       // Form data persists in localStorage
@@ -715,10 +718,16 @@ export function Header() {
       if (!data.success) {
         // Extract error message, prioritizing specific validation errors
         const errorMsg = getErrorMessage(data.error, "Failed to submit booking")
+        // Track booking error
+        trackBookingFormError(data.error?.code || 'unknown_error')
         throw new Error(errorMsg)
       }
       
       // Success - clear form data and localStorage
+      // Track successful booking submission
+      const eventType = formData.eventType === "Other" ? formData.otherEventType : formData.eventType
+      trackBookingFormSubmit(eventType)
+      
       toast.success("Reservation submitted successfully!", {
         description: "Thank you for your reservation request! We'll be in touch soon.",
         duration: 5000,
@@ -769,6 +778,12 @@ export function Header() {
       
     } catch (error: any) {
       console.error("Booking submission error:", error)
+      
+      // Track booking error
+      const errorTypeForTracking = error.name === "AbortError" ? "timeout" : 
+        error.message?.includes("email") ? "email_error" :
+        error.message?.includes("network") ? "network_error" : "unknown_error"
+      trackBookingFormError(errorTypeForTracking)
       
       let errorMessage = "Failed to submit booking. Please try again."
       let errorType: FormError["type"] = "network"
