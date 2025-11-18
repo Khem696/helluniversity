@@ -39,8 +39,9 @@ import { Plus, Trash2, Edit, Loader2, Calendar, Image as ImageIcon, X, Check, Gr
 import { toast } from "sonner"
 import { format } from "date-fns"
 import { TZDate } from '@date-fns/tz'
-import { useAdminData } from "@/hooks/useAdminData"
+import { useInfiniteAdminData } from "@/hooks/useInfiniteAdminData"
 import { API_PATHS, buildApiUrl } from "@/lib/api-config"
+import { useInfiniteScroll } from "@/hooks/useInfiniteScroll"
 import {
   DndContext,
   closestCenter,
@@ -196,11 +197,11 @@ export default function EventsPage() {
   const [useDateRange, setUseDateRange] = useState(false)
   const [sortBy, setSortBy] = useState<"created_at" | "updated_at" | "start_date" | "end_date" | "event_date" | "title">("created_at")
   const [sortOrder, setSortOrder] = useState<"ASC" | "DESC">("DESC")
+  const [pageSize, setPageSize] = useState(25)
   
-  // Build endpoint with filters (memoized to trigger refetch when filters change)
-  const endpoint = React.useMemo(() => {
+  // Build base endpoint with filters (without limit/offset for infinite scroll)
+  const baseEndpoint = React.useMemo(() => {
     const params = new URLSearchParams()
-    params.append("limit", "1000")
     if (upcomingFilter) {
       params.append("upcoming", "true")
     }
@@ -222,17 +223,23 @@ export default function EventsPage() {
     return buildApiUrl(API_PATHS.adminEvents, Object.fromEntries(params))
   }, [upcomingFilter, titleFilter, eventDateFilter, eventDateFrom, eventDateTo, useDateRange, sortBy, sortOrder])
   
-  // Use useAdminData hook for events with optimistic updates
+  // Use infinite scroll hook for events
   const {
     data: events,
+    total,
     loading,
+    hasMore,
+    loadMore,
     fetchData: fetchEvents,
     addItem,
     updateItem,
     removeItem,
     replaceItem
-  } = useAdminData<Event>({
-    endpoint,
+  } = useInfiniteAdminData<Event>({
+    baseEndpoint,
+    pageSize,
+    enablePolling: true,
+    pollInterval: 30000,
     transformResponse: (json) => {
       return Array.isArray(json.data?.events) 
         ? json.data.events 
@@ -241,8 +248,15 @@ export default function EventsPage() {
           : []
     },
     isDialogOpen: () => createDialogOpen || editDialogOpen,
-    enablePolling: true,
-    pollInterval: 30000
+  })
+  
+  // Infinite scroll setup
+  const { elementRef: scrollSentinelRef } = useInfiniteScroll({
+    hasMore,
+    loading,
+    onLoadMore: loadMore,
+    threshold: 200,
+    enabled: !!session && !createDialogOpen && !editDialogOpen,
   })
 
   // Redirect if not authenticated
@@ -1039,12 +1053,6 @@ export default function EventsPage() {
         <>
           {/* Desktop Table View */}
           <div className="hidden lg:block bg-white rounded-lg shadow overflow-hidden">
-            {/* Total Count Header */}
-            <div className="px-6 py-3 bg-gray-50 border-b border-gray-200 flex justify-end">
-              <div className="text-sm font-medium text-gray-700">
-                Total: <span className="font-semibold text-gray-900">{events.length}</span> {events.length === 1 ? 'event' : 'events'}
-              </div>
-            </div>
             <div className="overflow-x-auto">
               <table className="min-w-full divide-y divide-gray-200">
                 <thead className="bg-gray-50">
@@ -1158,16 +1166,47 @@ export default function EventsPage() {
                 </tbody>
               </table>
             </div>
+            {/* Page size selector and total count */}
+            <div className="px-6 py-3 bg-gray-50 border-t border-gray-200 flex items-center justify-between">
+              <div className="text-sm text-gray-700">
+                Showing <span className="font-medium">{events.length}</span> of <span className="font-medium">{total}</span> events
+              </div>
+              <div className="flex items-center gap-2">
+                <span className="text-sm text-gray-700">Items per page:</span>
+                <Select
+                  value={pageSize.toString()}
+                  onValueChange={(value) => {
+                    setPageSize(parseInt(value))
+                    fetchEvents()
+                  }}
+                >
+                  <SelectTrigger className="w-20 h-8">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="10">10</SelectItem>
+                    <SelectItem value="25">25</SelectItem>
+                    <SelectItem value="50">50</SelectItem>
+                    <SelectItem value="100">100</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+            {/* Infinite scroll sentinel */}
+            {hasMore && (
+              <div ref={scrollSentinelRef} className="py-4 flex justify-center">
+                {loading && <Loader2 className="w-6 h-6 animate-spin text-gray-400" />}
+              </div>
+            )}
+            {!hasMore && events.length > 0 && (
+              <div className="px-6 py-3 bg-gray-50 border-t border-gray-200 text-center text-sm text-gray-500">
+                No more events to load
+              </div>
+            )}
           </div>
 
           {/* Mobile Card View */}
           <div className="lg:hidden space-y-4">
-            {/* Total Count Header for Mobile */}
-            <div className="bg-white rounded-lg shadow px-4 py-3 border-b border-gray-200 flex justify-end">
-              <div className="text-sm font-medium text-gray-700">
-                Total: <span className="font-semibold text-gray-900">{events.length}</span> {events.length === 1 ? 'event' : 'events'}
-              </div>
-            </div>
             {events.map((event, index) => (
               <div
                 key={event.id}
@@ -1247,6 +1286,40 @@ export default function EventsPage() {
                 </div>
               </div>
             ))}
+            {/* Page size selector and total count for mobile */}
+            <div className="bg-white rounded-lg shadow px-4 py-3 border-t border-gray-200 flex items-center justify-between">
+              <div className="text-sm text-gray-700">
+                Showing <span className="font-medium">{events.length}</span> of <span className="font-medium">{total}</span>
+              </div>
+              <Select
+                value={pageSize.toString()}
+                onValueChange={(value) => {
+                  setPageSize(parseInt(value))
+                  fetchEvents()
+                }}
+              >
+                <SelectTrigger className="w-20 h-8">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="10">10</SelectItem>
+                  <SelectItem value="25">25</SelectItem>
+                  <SelectItem value="50">50</SelectItem>
+                  <SelectItem value="100">100</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            {/* Infinite scroll sentinel */}
+            {hasMore && (
+              <div ref={scrollSentinelRef} className="py-4 flex justify-center">
+                {loading && <Loader2 className="w-6 h-6 animate-spin text-gray-400" />}
+              </div>
+            )}
+            {!hasMore && events.length > 0 && (
+              <div className="bg-white rounded-lg shadow px-4 py-3 text-center text-sm text-gray-500">
+                No more events to load
+              </div>
+            )}
           </div>
         </>
       )}

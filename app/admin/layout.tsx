@@ -3,6 +3,7 @@ import Link from "next/link"
 import { SignOutButton } from "@/components/SignOutButton"
 import { LoginPageCleanup } from "@/components/LoginPageCleanup"
 import { AdminHeaderClient } from "./components/AdminHeaderClient"
+import { OverlayScrollbar } from "@/components/OverlayScrollbar"
 
 // Mark as dynamic to prevent static export issues
 export const dynamic = 'force-dynamic'
@@ -27,6 +28,8 @@ export default async function AdminLayout({
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-gray-50 to-gray-100">
+      {/* Custom overlay scrollbar - matches user pages */}
+      <OverlayScrollbar />
       {/* Cleanup component to remove data-login-page attribute on navigation */}
       <LoginPageCleanup />
       {/* Admin Header - only show if user is authenticated */}

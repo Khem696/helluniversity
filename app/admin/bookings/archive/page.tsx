@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useEffect, useCallback } from "react"
+import { useState, useEffect, useCallback, useMemo } from "react"
 import { redirect } from "next/navigation"
 import { useSession } from "next-auth/react"
 import { Button } from "@/components/ui/button"
@@ -53,6 +53,8 @@ import { TimePicker } from "@/components/ui/time-picker"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import { dateToBangkokDateString } from "@/lib/timezone-client"
 import { API_PATHS, buildApiUrl } from "@/lib/api-config"
+import { useInfiniteAdminBookings, type Booking as BookingType } from "@/hooks/useInfiniteAdminBookings"
+import { useInfiniteScroll } from "@/hooks/useInfiniteScroll"
 
 // Helper function to add AM/PM to 24-hour time format for display
 // Converts "13:00" -> "13:00 PM", "09:30" -> "09:30 AM", "00:00" -> "00:00 AM"
@@ -74,40 +76,8 @@ function formatTimeForDisplay(time24: string | null | undefined): string {
   }
 }
 
-interface Booking {
-  id: string
-  reference_number: string | null
-  name: string
-  email: string
-  phone: string
-  participants: string | null
-  event_type: string
-  other_event_type: string | null
-  date_range: number
-  start_date: number
-  end_date: number | null
-  start_time: string
-  end_time: string
-  organization_type: string | null
-  organized_person: string | null
-  introduction: string | null
-  biography: string | null
-  special_requests: string | null
-  status: "pending" | "pending_deposit" | "confirmed" | "cancelled" | "finished"
-  admin_notes: string | null
-  response_token: string | null
-  token_expires_at: number | null
-  proposed_date: number | null
-  proposed_end_date: number | null
-  user_response: string | null
-  response_date: number | null
-  deposit_evidence_url: string | null
-  deposit_verified_at: number | null
-  deposit_verified_by: string | null
-  deposit_verified_from_other_channel: boolean
-  created_at: number
-  updated_at: number
-}
+// Use Booking type from hook
+type Booking = BookingType
 
 interface StatusHistory {
   id: string
@@ -121,8 +91,7 @@ interface StatusHistory {
 
 export default function BookingsArchivePage() {
   const { data: session, status } = useSession()
-  const [bookings, setBookings] = useState<Booking[]>([])
-  const [loading, setLoading] = useState(true)
+  const [pageSize, setPageSize] = useState(25)
   const [selectedBooking, setSelectedBooking] = useState<Booking | null>(null)
   const [statusHistory, setStatusHistory] = useState<StatusHistory[]>([])
   const [viewDialogOpen, setViewDialogOpen] = useState(false)
@@ -215,76 +184,91 @@ export default function BookingsArchivePage() {
     { value: "Other", label: "Other" },
   ]
 
-  // Fetch bookings
-  const fetchBookings = async () => {
-    try {
-      setLoading(true)
-      const params = new URLSearchParams()
-      params.append("archive", "true") // Request archive bookings
-      if (statusFilter !== "all") {
-        params.append("status", statusFilter)
-      }
-      if (emailFilter) {
-        params.append("email", emailFilter)
-      }
-      if (referenceNumberFilter) {
-        params.append("referenceNumber", referenceNumberFilter)
-      }
-      if (nameFilter) {
-        params.append("name", nameFilter)
-      }
-      if (phoneFilter) {
-        params.append("phone", phoneFilter)
-      }
-      if (eventTypeFilter !== "all") {
-        params.append("eventType", eventTypeFilter)
-      }
-      params.append("sortBy", sortBy)
-      params.append("sortOrder", sortOrder)
-      params.append("limit", "1000")
-
-      const response = await fetch(buildApiUrl(API_PATHS.adminBookings, Object.fromEntries(params)))
-      const json = await response.json()
-      
-      if (json.success && json.data) {
-        let bookings = json.data.bookings || []
-        
-        // Client-side filtering for deposit status
-        if (depositStatusFilter !== "all") {
-          bookings = bookings.filter((booking: Booking) => {
-            switch (depositStatusFilter) {
-              case "no_deposit":
-                return !booking.deposit_evidence_url && !booking.deposit_verified_at
-              case "deposit_available":
-                return booking.deposit_evidence_url && !booking.deposit_verified_at
-              case "deposit_verified":
-                return booking.deposit_evidence_url && booking.deposit_verified_at
-              case "deposit_verified_other_channel":
-                return !booking.deposit_evidence_url && booking.deposit_verified_at && booking.deposit_verified_from_other_channel
-              default:
-                return true
-            }
-          })
-        }
-        
-        setBookings(Array.isArray(bookings) ? bookings : [])
-      } else {
-        const errorMessage = json.error?.message || "Failed to load archived bookings"
-        toast.error(errorMessage)
-      }
-    } catch (error) {
-      toast.error("Failed to load archived bookings")
-      console.error(error)
-    } finally {
-      setLoading(false)
+  // Build base endpoint with filters (without limit/offset for infinite scroll)
+  const baseEndpoint = useMemo(() => {
+    const params = new URLSearchParams()
+    params.append("archive", "true") // Request archive bookings
+    if (statusFilter !== "all") {
+      params.append("status", statusFilter)
     }
-  }
-
-  useEffect(() => {
-    if (session) {
-      fetchBookings()
+    if (emailFilter) {
+      params.append("email", emailFilter)
     }
-  }, [session, statusFilter, emailFilter, referenceNumberFilter, nameFilter, phoneFilter, eventTypeFilter, depositStatusFilter, sortBy, sortOrder])
+    if (referenceNumberFilter) {
+      params.append("referenceNumber", referenceNumberFilter)
+    }
+    if (nameFilter) {
+      params.append("name", nameFilter)
+    }
+    if (phoneFilter) {
+      params.append("phone", phoneFilter)
+    }
+    if (eventTypeFilter !== "all") {
+      params.append("eventType", eventTypeFilter)
+    }
+    params.append("sortBy", sortBy)
+    params.append("sortOrder", sortOrder)
+    return buildApiUrl(API_PATHS.adminBookings, Object.fromEntries(params))
+  }, [statusFilter, emailFilter, referenceNumberFilter, nameFilter, phoneFilter, eventTypeFilter, sortBy, sortOrder])
+  
+  // Use infinite scroll hook for bookings
+  const {
+    bookings,
+    total,
+    loading,
+    hasMore,
+    loadMore,
+    refetch: fetchBookings,
+    updateItem,
+    removeItem,
+    replaceItem
+  } = useInfiniteAdminBookings({
+    baseEndpoint,
+    pageSize,
+    refetchInterval: 30000,
+    enabled: !!session,
+    isDialogOpen: () => viewDialogOpen || statusDialogOpen,
+  })
+  
+  // Infinite scroll setup
+  const { elementRef: scrollSentinelRef } = useInfiniteScroll({
+    hasMore,
+    loading,
+    onLoadMore: loadMore,
+    threshold: 200,
+    enabled: !!session && !viewDialogOpen && !statusDialogOpen,
+  })
+
+  // Client-side filtering for deposit status (since API doesn't support it)
+  // Note: This works with infinite scroll but may show fewer items per "page"
+  // since filtering happens after loading
+  const filteredBookings = useMemo(() => {
+    if (depositStatusFilter === "all") {
+      return bookings
+    }
+    return bookings.filter((booking) => {
+      switch (depositStatusFilter) {
+        case "no_deposit":
+          return !booking.deposit_evidence_url && !booking.deposit_verified_at
+        case "deposit_available":
+          return booking.deposit_evidence_url && !booking.deposit_verified_at
+        case "deposit_verified":
+          return booking.deposit_evidence_url && booking.deposit_verified_at
+        case "deposit_verified_other_channel":
+          return !booking.deposit_evidence_url && booking.deposit_verified_at && booking.deposit_verified_from_other_channel
+        default:
+          return true
+      }
+    })
+  }, [bookings, depositStatusFilter])
+  
+  // When deposit filter is active, we still load more but filter client-side
+  // This means hasMore might be true even if filtered results are empty
+  const displayTotal = depositStatusFilter === "all" ? total : filteredBookings.length
+  const displayHasMore = depositStatusFilter === "all" ? hasMore : (filteredBookings.length < bookings.length || hasMore)
+
+  // The hook automatically refetches when endpoint changes (which includes all filters)
+  // No need for manual useEffect here
 
   // Fetch unavailable dates for restoration calendar (excludes current booking's dates)
   const fetchUnavailableDatesForRestoration = useCallback(async (bookingId: string | null) => {
@@ -1105,7 +1089,7 @@ export default function BookingsArchivePage() {
       </div>
 
       {/* Bookings Table */}
-      {bookings.length === 0 ? (
+      {filteredBookings.length === 0 ? (
         <div className="text-center py-12">
           <Archive className="w-16 h-16 mx-auto text-gray-400 mb-4" />
           <p className="text-gray-600">No archived bookings found</p>
@@ -1114,12 +1098,6 @@ export default function BookingsArchivePage() {
         <>
           {/* Desktop Table View */}
           <div className="hidden lg:block bg-white rounded-lg shadow overflow-hidden">
-            {/* Total Count Header */}
-            <div className="px-6 xl:px-8 py-3 bg-gray-50 border-b border-gray-200 flex justify-end">
-              <div className="text-sm font-medium text-gray-700">
-                Total: <span className="font-semibold text-gray-900">{bookings.length}</span> {bookings.length === 1 ? 'booking' : 'bookings'}
-              </div>
-            </div>
             <div className="overflow-x-auto">
               <table className="min-w-full divide-y divide-gray-200">
                 <thead className="bg-gray-50">
@@ -1151,7 +1129,7 @@ export default function BookingsArchivePage() {
                   </tr>
                 </thead>
                 <tbody className="bg-white divide-y divide-gray-200">
-                  {bookings.map((booking, index) => (
+                  {filteredBookings.map((booking, index) => (
                     <tr key={booking.id} className="hover:bg-gray-50">
                       <td className="px-6 xl:px-8 py-4 whitespace-nowrap text-sm text-gray-500">
                         {index + 1}
@@ -1235,17 +1213,48 @@ export default function BookingsArchivePage() {
                 </tbody>
               </table>
             </div>
+            {/* Page size selector and total count */}
+            <div className="px-6 py-3 bg-gray-50 border-t border-gray-200 flex items-center justify-between">
+              <div className="text-sm text-gray-700">
+                Showing <span className="font-medium">{filteredBookings.length}</span> of <span className="font-medium">{displayTotal}</span> bookings
+              </div>
+              <div className="flex items-center gap-2">
+                <span className="text-sm text-gray-700">Items per page:</span>
+                <Select
+                  value={pageSize.toString()}
+                  onValueChange={(value) => {
+                    setPageSize(parseInt(value))
+                    fetchBookings()
+                  }}
+                >
+                  <SelectTrigger className="w-20 h-8">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="10">10</SelectItem>
+                    <SelectItem value="25">25</SelectItem>
+                    <SelectItem value="50">50</SelectItem>
+                    <SelectItem value="100">100</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+            {/* Infinite scroll sentinel */}
+            {displayHasMore && (
+              <div ref={scrollSentinelRef} className="py-4 flex justify-center">
+                {loading && <Loader2 className="w-6 h-6 animate-spin text-gray-400" />}
+              </div>
+            )}
+            {!displayHasMore && filteredBookings.length > 0 && (
+              <div className="px-6 py-3 bg-gray-50 border-t border-gray-200 text-center text-sm text-gray-500">
+                No more bookings to load
+              </div>
+            )}
           </div>
 
           {/* Mobile/Tablet Card View */}
           <div className="lg:hidden space-y-4">
-            {/* Total Count Header for Mobile */}
-            <div className="bg-white rounded-lg shadow px-4 py-3 border-b border-gray-200 flex justify-end">
-              <div className="text-sm font-medium text-gray-700">
-                Total: <span className="font-semibold text-gray-900">{bookings.length}</span> {bookings.length === 1 ? 'booking' : 'bookings'}
-              </div>
-            </div>
-            {bookings.map((booking, index) => (
+            {filteredBookings.map((booking, index) => (
               <div
                 key={booking.id}
                 className="bg-white rounded-lg shadow p-4 sm:p-6"
@@ -1339,6 +1348,40 @@ export default function BookingsArchivePage() {
                 </div>
               </div>
             ))}
+            {/* Page size selector and total count for mobile */}
+            <div className="bg-white rounded-lg shadow px-4 py-3 border-t border-gray-200 flex items-center justify-between">
+              <div className="text-sm text-gray-700">
+                Showing <span className="font-medium">{filteredBookings.length}</span> of <span className="font-medium">{displayTotal}</span>
+              </div>
+              <Select
+                value={pageSize.toString()}
+                onValueChange={(value) => {
+                  setPageSize(parseInt(value))
+                  fetchBookings()
+                }}
+              >
+                <SelectTrigger className="w-20 h-8">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="10">10</SelectItem>
+                  <SelectItem value="25">25</SelectItem>
+                  <SelectItem value="50">50</SelectItem>
+                  <SelectItem value="100">100</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            {/* Infinite scroll sentinel */}
+            {displayHasMore && (
+              <div ref={scrollSentinelRef} className="py-4 flex justify-center">
+                {loading && <Loader2 className="w-6 h-6 animate-spin text-gray-400" />}
+              </div>
+            )}
+            {!displayHasMore && filteredBookings.length > 0 && (
+              <div className="bg-white rounded-lg shadow px-4 py-3 text-center text-sm text-gray-500">
+                No more bookings to load
+              </div>
+            )}
           </div>
         </>
       )}

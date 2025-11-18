@@ -35,8 +35,9 @@ import {
 import { toast } from "sonner"
 import { format } from "date-fns"
 import { TZDate } from '@date-fns/tz'
-import { useAdminEmails, type EmailQueueItem } from "@/hooks/useAdminEmails"
+import { useInfiniteAdminEmails, type EmailQueueItem } from "@/hooks/useInfiniteAdminEmails"
 import { API_PATHS, buildApiUrl } from "@/lib/api-config"
+import { useInfiniteScroll } from "@/hooks/useInfiniteScroll"
 
 interface EmailQueueStats {
   pending: number
@@ -60,9 +61,10 @@ export default function EmailQueuePage() {
   const [viewDialogOpen, setViewDialogOpen] = useState(false)
   const [statusFilter, setStatusFilter] = useState<string>("all")
   const [emailTypeFilter, setEmailTypeFilter] = useState<string>("all")
+  const [pageSize, setPageSize] = useState(25)
   
-  // Build endpoint with filters (memoized to trigger refetch when filters change)
-  const endpoint = useMemo(() => {
+  // Build base endpoint with filters (without limit/offset for infinite scroll)
+  const baseEndpoint = useMemo(() => {
     const params = new URLSearchParams()
     if (statusFilter !== "all") {
       params.append("status", statusFilter)
@@ -70,27 +72,39 @@ export default function EmailQueuePage() {
     if (emailTypeFilter !== "all") {
       params.append("emailType", emailTypeFilter)
     }
-    params.append("limit", "50")
     return buildApiUrl(API_PATHS.adminEmailQueue, Object.fromEntries(params))
   }, [statusFilter, emailTypeFilter])
   
-  // Use React Query hook for emails with event-based updates
+  // Use infinite scroll hook for emails
   const {
     emails,
+    total,
     stats: emailStats,
     loading,
+    hasMore,
+    loadMore,
     refetch: fetchEmails,
     updateItem,
     removeItem,
     replaceItem
-  } = useAdminEmails({
-    endpoint,
-    refetchInterval: 30000, // Refetch every 30 seconds
+  } = useInfiniteAdminEmails({
+    baseEndpoint,
+    pageSize,
+    refetchInterval: 30000,
     enabled: !!session,
     isDialogOpen: () => viewDialogOpen,
     onStatsUpdate: (stats) => {
       setStats(stats)
     },
+  })
+  
+  // Infinite scroll setup
+  const { elementRef: scrollSentinelRef } = useInfiniteScroll({
+    hasMore,
+    loading,
+    onLoadMore: loadMore,
+    threshold: 200,
+    enabled: !!session && !viewDialogOpen,
   })
 
   // Redirect if not authenticated
@@ -403,12 +417,6 @@ export default function EmailQueuePage() {
         <>
           {/* Desktop Table View */}
           <div className="hidden lg:block bg-white rounded-lg shadow overflow-hidden">
-            {/* Total Count Header */}
-            <div className="px-6 py-3 bg-gray-50 border-b border-gray-200 flex justify-end">
-              <div className="text-sm font-medium text-gray-700">
-                Total: <span className="font-semibold text-gray-900">{emails.length}</span> {emails.length === 1 ? 'email' : 'emails'}
-              </div>
-            </div>
             <div className="overflow-x-auto">
               <table className="min-w-full divide-y divide-gray-200">
                 <thead className="bg-gray-50">
@@ -482,16 +490,47 @@ export default function EmailQueuePage() {
                 </tbody>
               </table>
             </div>
+            {/* Page size selector and total count */}
+            <div className="px-6 py-3 bg-gray-50 border-t border-gray-200 flex items-center justify-between">
+              <div className="text-sm text-gray-700">
+                Showing <span className="font-medium">{emails.length}</span> of <span className="font-medium">{total}</span> emails
+              </div>
+              <div className="flex items-center gap-2">
+                <span className="text-sm text-gray-700">Items per page:</span>
+                <Select
+                  value={pageSize.toString()}
+                  onValueChange={(value) => {
+                    setPageSize(parseInt(value))
+                    fetchEmails()
+                  }}
+                >
+                  <SelectTrigger className="w-20 h-8">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="10">10</SelectItem>
+                    <SelectItem value="25">25</SelectItem>
+                    <SelectItem value="50">50</SelectItem>
+                    <SelectItem value="100">100</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+            {/* Infinite scroll sentinel */}
+            {hasMore && (
+              <div ref={scrollSentinelRef} className="py-4 flex justify-center">
+                {loading && <Loader2 className="w-6 h-6 animate-spin text-gray-400" />}
+              </div>
+            )}
+            {!hasMore && emails.length > 0 && (
+              <div className="px-6 py-3 bg-gray-50 border-t border-gray-200 text-center text-sm text-gray-500">
+                No more emails to load
+              </div>
+            )}
           </div>
 
           {/* Mobile/Tablet Card View */}
           <div className="lg:hidden space-y-4">
-            {/* Total Count Header for Mobile */}
-            <div className="bg-white rounded-lg shadow px-4 py-3 border-b border-gray-200 flex justify-end">
-              <div className="text-sm font-medium text-gray-700">
-                Total: <span className="font-semibold text-gray-900">{emails.length}</span> {emails.length === 1 ? 'email' : 'emails'}
-              </div>
-            </div>
             {emails.map((email) => (
               <div
                 key={email.id}
@@ -561,6 +600,40 @@ export default function EmailQueuePage() {
                 </div>
               </div>
             ))}
+            {/* Page size selector and total count for mobile */}
+            <div className="bg-white rounded-lg shadow px-4 py-3 border-t border-gray-200 flex items-center justify-between">
+              <div className="text-sm text-gray-700">
+                Showing <span className="font-medium">{emails.length}</span> of <span className="font-medium">{total}</span>
+              </div>
+              <Select
+                value={pageSize.toString()}
+                onValueChange={(value) => {
+                  setPageSize(parseInt(value))
+                  fetchEmails()
+                }}
+              >
+                <SelectTrigger className="w-20 h-8">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="10">10</SelectItem>
+                  <SelectItem value="25">25</SelectItem>
+                  <SelectItem value="50">50</SelectItem>
+                  <SelectItem value="100">100</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            {/* Infinite scroll sentinel */}
+            {hasMore && (
+              <div ref={scrollSentinelRef} className="py-4 flex justify-center">
+                {loading && <Loader2 className="w-6 h-6 animate-spin text-gray-400" />}
+              </div>
+            )}
+            {!hasMore && emails.length > 0 && (
+              <div className="bg-white rounded-lg shadow px-4 py-3 text-center text-sm text-gray-500">
+                No more emails to load
+              </div>
+            )}
           </div>
         </>
       )}
