@@ -83,15 +83,36 @@ export const trackTimeOnPage = (timeInSeconds: number) => {
 
 // SEO-Specific Event Tracking Functions
 
-// Track event page views
-export const trackEventPageView = (eventId: string, eventTitle: string) => {
+// Track event page views with custom dimensions
+export const trackEventPageView = (eventId: string, eventTitle: string, eventType?: string) => {
+  if (typeof window !== 'undefined' && window.gtag) {
+    // Track with custom parameters (these will be mapped to custom dimensions in GA4)
+    window.gtag('event', 'view_event_page', {
+      event_category: 'seo',
+      event_label: eventTitle,
+      // Custom parameters that will be mapped to custom dimensions in GA4
+      event_type: eventType || 'unknown',
+      content_type: 'event_page',
+      user_journey: 'content_discovery',
+      event_id: eventId,
+      event_title: eventTitle,
+    })
+    
+    // Track as engagement goal
+    window.gtag('event', 'engagement', {
+      engagement_time_msec: 1000, // Estimated initial engagement
+      event_category: 'engagement',
+      event_label: `event_${eventId}`,
+    })
+  }
+  
+  // Also track as standard events
   event({
     action: 'view_event_page',
     category: 'seo',
     label: eventTitle,
     value: undefined,
   })
-  // Also track as content view
   event({
     action: 'content_view',
     category: 'engagement',
@@ -126,14 +147,27 @@ export const trackRelatedEventClick = (eventId: string, eventTitle: string) => {
   })
 }
 
-// Track internal link clicks
+// Track internal link clicks with user journey
 export const trackInternalLinkClick = (linkText: string, destination: string, source: string) => {
+  if (typeof window !== 'undefined' && window.gtag) {
+    // Track user journey
+    window.gtag('event', 'internal_navigation', {
+      event_category: 'engagement',
+      event_label: `${source} -> ${destination}`,
+      custom_parameters: {
+        source_page: source,
+        destination_page: destination,
+        link_text: linkText,
+        user_journey: 'internal_linking',
+      },
+    })
+  }
+  
   event({
     action: 'click_internal_link',
     category: 'seo',
     label: `${linkText} -> ${destination}`,
   })
-  // Track for internal linking analysis
   event({
     action: 'internal_navigation',
     category: 'engagement',
@@ -141,25 +175,120 @@ export const trackInternalLinkClick = (linkText: string, destination: string, so
   })
 }
 
-// Track booking form interactions
+// ============================================
+// CONVERSION GOALS & FUNNEL TRACKING
+// ============================================
+
+// Track booking form interactions with funnel steps
 export const trackBookingFormStart = () => {
-  event({
-    action: 'start_booking',
-    category: 'conversion',
-    label: 'booking_form_opened',
-  })
+  if (typeof window !== 'undefined' && window.gtag) {
+    // Funnel Step 1: Form Opened
+    window.gtag('event', 'booking_funnel_step', {
+      funnel_step: 1,
+      funnel_name: 'booking_conversion',
+      step_name: 'form_opened',
+      event_category: 'conversion',
+      event_label: 'booking_form_opened',
+    })
+    // Also track as conversion event
+    event({
+      action: 'start_booking',
+      category: 'conversion',
+      label: 'booking_form_opened',
+    })
+  }
 }
 
-export const trackBookingFormSubmit = (eventType: string) => {
-  event({
-    action: 'submit_booking',
-    category: 'conversion',
-    label: eventType,
-    value: 1,
-  })
+// Track booking form field interactions (funnel step 2)
+export const trackBookingFormFieldInteraction = (fieldName: string) => {
+  if (typeof window !== 'undefined' && window.gtag) {
+    window.gtag('event', 'booking_funnel_step', {
+      funnel_step: 2,
+      funnel_name: 'booking_conversion',
+      step_name: 'form_field_interaction',
+      field_name: fieldName,
+      event_category: 'conversion',
+    })
+  }
 }
 
-export const trackBookingFormError = (errorType: string) => {
+// Track booking form completion attempt (funnel step 3)
+export const trackBookingFormCompletionAttempt = (eventType: string, hasAllFields: boolean) => {
+  if (typeof window !== 'undefined' && window.gtag) {
+    window.gtag('event', 'booking_funnel_step', {
+      funnel_step: 3,
+      funnel_name: 'booking_conversion',
+      step_name: 'form_completion_attempt',
+      event_type: eventType,
+      form_complete: hasAllFields,
+      event_category: 'conversion',
+    })
+  }
+}
+
+// Track successful booking submission (CONVERSION GOAL)
+export const trackBookingFormSubmit = (eventType: string, bookingData?: {
+  participants?: string
+  dateRange?: boolean
+  organizationType?: string
+}) => {
+  if (typeof window !== 'undefined' && window.gtag) {
+    // Funnel Step 4: Conversion Complete
+    window.gtag('event', 'booking_funnel_step', {
+      funnel_step: 4,
+      funnel_name: 'booking_conversion',
+      step_name: 'conversion_complete',
+      event_type: eventType,
+      event_category: 'conversion',
+    })
+    
+    // Track as conversion goal (GA4 format)
+    window.gtag('event', 'conversion', {
+      send_to: GA_TRACKING_ID,
+      event_category: 'conversion',
+      event_label: 'booking_submission',
+      value: 1,
+      currency: 'THB',
+    })
+    
+    // Enhanced ecommerce tracking
+    window.gtag('event', 'purchase', {
+      transaction_id: `booking_${Date.now()}`,
+      value: 0, // Free booking, but track for analytics
+      currency: 'THB',
+      items: [{
+        item_id: 'event_booking',
+        item_name: `Event Booking - ${eventType}`,
+        item_category: eventType,
+        quantity: bookingData?.participants ? parseInt(bookingData.participants) || 1 : 1,
+        price: 0,
+      }],
+      custom_parameters: {
+        event_type: eventType,
+        organization_type: bookingData?.organizationType || 'unknown',
+        date_range: bookingData?.dateRange ? 'yes' : 'no',
+      },
+    })
+    
+    // Also track as standard event
+    event({
+      action: 'submit_booking',
+      category: 'conversion',
+      label: eventType,
+      value: 1,
+    })
+  }
+}
+
+export const trackBookingFormError = (errorType: string, funnelStep?: number) => {
+  if (typeof window !== 'undefined' && window.gtag) {
+    window.gtag('event', 'booking_funnel_abandonment', {
+      funnel_name: 'booking_conversion',
+      abandonment_step: funnelStep || 0,
+      error_type: errorType,
+      event_category: 'conversion',
+    })
+  }
   event({
     action: 'booking_error',
     category: 'conversion',
@@ -203,6 +332,60 @@ export const trackCoreWebVital = (metric: string, value: number, id: string) => 
     label: id,
     value: Math.round(value),
   })
+}
+
+// ============================================
+// ENGAGEMENT METRICS & USER BEHAVIOR
+// ============================================
+
+// Track page engagement (time on page, scroll depth, etc.)
+export const trackPageEngagement = (metrics: {
+  timeOnPage?: number // seconds
+  scrollDepth?: number // percentage
+  interactions?: number
+  pageType?: string
+}) => {
+  if (typeof window !== 'undefined' && window.gtag) {
+    window.gtag('event', 'page_engagement', {
+      event_category: 'engagement',
+      custom_parameters: {
+        time_on_page: metrics.timeOnPage || 0,
+        scroll_depth: metrics.scrollDepth || 0,
+        interactions: metrics.interactions || 0,
+        page_type: metrics.pageType || 'unknown',
+      },
+    })
+  }
+}
+
+// Track content engagement
+export const trackContentEngagement = (contentType: string, contentId: string, engagementType: 'view' | 'click' | 'share' | 'complete') => {
+  if (typeof window !== 'undefined' && window.gtag) {
+    window.gtag('event', 'content_engagement', {
+      event_category: 'engagement',
+      event_label: `${contentType}_${engagementType}`,
+      custom_parameters: {
+        content_type: contentType,
+        content_id: contentId,
+        engagement_type: engagementType,
+      },
+    })
+  }
+}
+
+// Track user journey step
+export const trackUserJourneyStep = (step: string, journeyName: string, metadata?: Record<string, any>) => {
+  if (typeof window !== 'undefined' && window.gtag) {
+    window.gtag('event', 'user_journey_step', {
+      event_category: 'user_journey',
+      event_label: step,
+      custom_parameters: {
+        journey_name: journeyName,
+        step_name: step,
+        ...metadata,
+      },
+    })
+  }
 }
 
 // Declare gtag function for TypeScript

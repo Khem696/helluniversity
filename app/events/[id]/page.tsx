@@ -2,7 +2,7 @@ import { Metadata } from 'next'
 import { notFound } from 'next/navigation'
 import { getTursoClient } from '@/lib/turso'
 import { withBasePath } from '@/lib/utils'
-import { generateEventStructuredData } from '@/lib/structured-data'
+import { generateEventStructuredData, generateArticleStructuredData, EventForStructuredData } from '@/lib/structured-data'
 import { EventDetailPage } from '@/components/EventDetailPage'
 
 interface PageProps {
@@ -61,6 +61,8 @@ async function getEvent(id: string) {
     start_date: event.start_date,
     end_date: event.end_date,
     event_date: event.event_date,
+    created_at: event.created_at,
+    updated_at: event.updated_at,
     in_event_photos: inEventPhotos.rows.map((row: any) => ({
       blob_url: row.blob_url,
       title: row.title,
@@ -118,7 +120,7 @@ export async function generateMetadata({ params }: PageProps): Promise<Metadata>
   
   const baseUrl = process.env.NEXT_PUBLIC_BASE_URL || 
     (process.env.NODE_ENV === 'production' 
-      ? 'https://khem696.github.io/helluniversity' 
+      ? 'https://www.huculturehub.com' 
       : 'http://localhost:3000')
   
   const eventDate = event.start_date || event.event_date || event.end_date
@@ -135,6 +137,10 @@ export async function generateMetadata({ params }: PageProps): Promise<Metadata>
     : `Join us at Hell University for ${event.title}${formattedDate ? ` on ${formattedDate}` : ''}.`
   
   const imageUrl = event.image_url || withBasePath('/og-image.jpg')
+  
+  // Format dates for Open Graph
+  const publishedTime = event.created_at ? new Date((event.created_at as number) * 1000).toISOString() : undefined
+  const modifiedTime = event.updated_at ? new Date((event.updated_at as number) * 1000).toISOString() : publishedTime
   
   return {
     title: `${event.title} | Hell University`,
@@ -159,8 +165,11 @@ export async function generateMetadata({ params }: PageProps): Promise<Metadata>
           alt: event.title,
         },
       ],
-      type: 'website',
+      type: 'article',
       locale: 'en_US',
+      publishedTime,
+      modifiedTime,
+      authors: ['Hell University'],
     },
     twitter: {
       card: 'summary_large_image',
@@ -188,22 +197,30 @@ export async function generateMetadata({ params }: PageProps): Promise<Metadata>
 export default async function EventPage({ params }: PageProps) {
   const { id } = await params
   const event = await getEvent(id)
-  
+
   if (!event) {
     notFound()
   }
-  
+
   // Get related events
   const relatedEvents = await getRelatedEvents(id, 3)
-  
-  const structuredData = generateEventStructuredData(event)
-  
+
+  // Generate both Event and Article structured data for better SEO and social sharing
+  const eventStructuredData = generateEventStructuredData(event as EventForStructuredData)
+  const articleStructuredData = generateArticleStructuredData(event as EventForStructuredData)
+
   return (
     <>
       <script
         type="application/ld+json"
         dangerouslySetInnerHTML={{
-          __html: JSON.stringify(structuredData),
+          __html: JSON.stringify(eventStructuredData),
+        }}
+      />
+      <script
+        type="application/ld+json"
+        dangerouslySetInnerHTML={{
+          __html: JSON.stringify(articleStructuredData),
         }}
       />
       <EventDetailPage event={event} relatedEvents={relatedEvents} />

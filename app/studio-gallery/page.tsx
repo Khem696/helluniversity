@@ -1,5 +1,6 @@
 import { StudioGalleryPage as StudioGalleryContent } from '@/components/StudioGalleryPage'
 import { generateMetadata as generateSEOMetadata, getBaseUrl } from '@/lib/seo-utils'
+import { Breadcrumbs } from '@/components/Breadcrumbs'
 
 export const metadata = generateSEOMetadata({
   title: 'Studio & Gallery',
@@ -23,7 +24,20 @@ export const metadata = generateSEOMetadata({
 })
 
 export default function StudioGallery() {
-  return <StudioGalleryContent />
+  return (
+    <>
+      {/* Breadcrumbs - Fixed position to not affect layout */}
+      <div className="fixed top-[calc(var(--header-h)+1rem)] left-0 right-0 z-[100] pointer-events-none">
+        <div className="container mx-auto px-4 sm:px-6 lg:px-8">
+          <div className="pointer-events-auto">
+            <Breadcrumbs items={[{ name: 'Studio & Gallery', url: '/studio-gallery' }]} />
+          </div>
+        </div>
+      </div>
+      {/* Original Studio Gallery page layout - untouched */}
+      <StudioGalleryContent />
+    </>
+  )
 }
 
 

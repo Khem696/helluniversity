@@ -4,7 +4,7 @@ import Link from "next/link"
 import { useRef, useState, useEffect, useCallback } from "react"
 import { Calendar as CalendarIcon, Menu, X, AlertCircle, RefreshCw, Clock, Loader2 } from "lucide-react"
 import { toast } from "sonner"
-import { trackBookingFormStart, trackBookingFormSubmit, trackBookingFormError } from "@/lib/analytics"
+import { trackBookingFormStart, trackBookingFormSubmit, trackBookingFormError, trackBookingFormFieldInteraction, trackBookingFormCompletionAttempt } from "@/lib/analytics"
 import { Dialog, DialogTrigger, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -297,6 +297,8 @@ export function Header() {
     if (error) {
       setError(null)
     }
+    // Track field interaction for funnel analysis
+    trackBookingFormFieldInteraction(field)
   }
 
   const handleStartDateChange = (date: Date | undefined) => {
@@ -455,6 +457,19 @@ export function Header() {
       })
       return
     }
+    
+    // Track form completion attempt (funnel step 3) - before validation
+    const eventType = formData.eventType === "Other" ? formData.otherEventType : formData.eventType
+    const hasAllRequiredFields = !!(
+      formData.name &&
+      formData.email &&
+      formData.phone &&
+      formData.eventType &&
+      startDate &&
+      formData.startTime &&
+      formData.endTime
+    )
+    trackBookingFormCompletionAttempt(eventType || 'unknown', hasAllRequiredFields)
     
     // Validate required fields
     if (!startDate) {
@@ -718,15 +733,19 @@ export function Header() {
       if (!data.success) {
         // Extract error message, prioritizing specific validation errors
         const errorMsg = getErrorMessage(data.error, "Failed to submit booking")
-        // Track booking error
-        trackBookingFormError(data.error?.code || 'unknown_error')
+        // Track booking error with funnel step
+        trackBookingFormError(data.error?.code || 'unknown_error', 3) // Step 3 = completion attempt
         throw new Error(errorMsg)
       }
       
       // Success - clear form data and localStorage
-      // Track successful booking submission
+      // Track successful booking submission with enhanced data
       const eventType = formData.eventType === "Other" ? formData.otherEventType : formData.eventType
-      trackBookingFormSubmit(eventType)
+      trackBookingFormSubmit(eventType, {
+        participants: formData.participants,
+        dateRange: formData.dateRange,
+        organizationType: formData.organizationType,
+      })
       
       toast.success("Reservation submitted successfully!", {
         description: "Thank you for your reservation request! We'll be in touch soon.",
@@ -779,11 +798,11 @@ export function Header() {
     } catch (error: any) {
       console.error("Booking submission error:", error)
       
-      // Track booking error
+      // Track booking error with funnel step
       const errorTypeForTracking = error.name === "AbortError" ? "timeout" : 
         error.message?.includes("email") ? "email_error" :
         error.message?.includes("network") ? "network_error" : "unknown_error"
-      trackBookingFormError(errorTypeForTracking)
+      trackBookingFormError(errorTypeForTracking, 3) // Step 3 = completion attempt
       
       let errorMessage = "Failed to submit booking. Please try again."
       let errorType: FormError["type"] = "network"

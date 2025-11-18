@@ -6,7 +6,7 @@ import { Header } from '@/components/Header'
 import { DisableServiceWorker } from '@/components/DisableServiceWorker'
 import { GlobalErrorHandler } from '@/components/GlobalErrorHandler'
 import { OverlayScrollbar } from '@/components/OverlayScrollbar'
-import { organizationStructuredData, websiteStructuredData, localBusinessStructuredData, eventStructuredData } from '@/lib/structured-data'
+import { organizationStructuredData, websiteStructuredData, localBusinessStructuredData, eventStructuredData, generateServiceStructuredData } from '@/lib/structured-data'
 import './globals.css'
 import { bodyFont, headingFont, uiFont, comfortaaFont, urbanistFont, acuminAlt } from '@/lib/fonts'
 import { withBasePath } from '@/lib/utils'
@@ -54,14 +54,14 @@ export const metadata: Metadata = {
     address: false,
     telephone: false,
   },
-  metadataBase: new URL(process.env.NODE_ENV === 'production' ? 'https://khem696.github.io/helluniversity' : 'http://localhost:3000'),
+  metadataBase: new URL(process.env.NODE_ENV === 'production' ? 'https://www.huculturehub.com' : 'http://localhost:3000'),
   alternates: {
     canonical: '/',
   },
   openGraph: {
     type: 'website',
     locale: 'en_US',
-    url: process.env.NODE_ENV === 'production' ? 'https://khem696.github.io/helluniversity' : 'http://localhost:3000',
+    url: process.env.NODE_ENV === 'production' ? 'https://www.huculturehub.com' : 'http://localhost:3000',
     title: 'Hell University - A Cultural Hub in Mae Taeng, Chiang Mai, Thailand',
     description: 'Book event spaces, arrange cultural activities, and host creative workshops. Perfect venue for booking events, activities, and cultural gatherings in Northern Thailand.',
     siteName: 'Hell University',
@@ -142,6 +142,12 @@ export default function RootLayout({
           type="application/ld+json"
           dangerouslySetInnerHTML={{
             __html: JSON.stringify(eventStructuredData),
+          }}
+        />
+        <script
+          type="application/ld+json"
+          dangerouslySetInnerHTML={{
+            __html: JSON.stringify(generateServiceStructuredData()),
           }}
         />
       </head>

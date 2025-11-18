@@ -3,7 +3,7 @@ export const organizationStructuredData = {
   "@type": "Organization",
   "name": "Hell University",
   "description": "A Cultural Hub in Mae Taeng, Chiang Mai, Thailand. Book event spaces, arrange cultural activities, and host creative workshops. Perfect venue for booking events, activities, and cultural gatherings.",
-  "url": process.env.NODE_ENV === 'production' ? "https://khem696.github.io/helluniversity" : "http://localhost:3000",
+  "url": process.env.NODE_ENV === 'production' ? "https://www.huculturehub.com" : "http://localhost:3000",
   "logo": "https://huculturehub.com/logo.png",
   "image": "https://huculturehub.com/og-image.jpg",
   "address": {
@@ -32,7 +32,7 @@ export const websiteStructuredData = {
   "@type": "WebSite",
   "name": "Hell University",
   "description": "A Cultural Hub in Mae Taeng, Chiang Mai, Thailand - Book event spaces and arrange cultural activities",
-  "url": process.env.NODE_ENV === 'production' ? "https://khem696.github.io/helluniversity" : "http://localhost:3000",
+  "url": process.env.NODE_ENV === 'production' ? "https://www.huculturehub.com" : "http://localhost:3000",
   "potentialAction": {
     "@type": "SearchAction",
     "target": process.env.NODE_ENV === 'production' ? "https://khem696.github.io/helluniversity/search?q={search_term_string}" : "http://localhost:3000/search?q={search_term_string}",
@@ -45,8 +45,9 @@ export const localBusinessStructuredData = {
   "@type": "LocalBusiness",
   "name": "Hell University",
   "description": "A Cultural Hub in Mae Taeng, Chiang Mai, Thailand. Book event spaces, arrange cultural activities, and host creative workshops. Perfect venue for booking events, activities, and cultural gatherings.",
-  "url": process.env.NODE_ENV === 'production' ? "https://khem696.github.io/helluniversity" : "http://localhost:3000",
-  "email": "hello@huculturehub.com",
+  "url": process.env.NODE_ENV === 'production' ? "https://www.huculturehub.com" : "http://localhost:3000",
+  "email": "hucultureinfo@huculturehub.com",
+  "telephone": "+66-XX-XXX-XXXX", // Update with actual phone number if available
   "address": {
     "@type": "PostalAddress",
     "addressLocality": "Mae Taeng",
@@ -58,18 +59,41 @@ export const localBusinessStructuredData = {
     "latitude": "19.1200",
     "longitude": "98.9417"
   },
-  "openingHours": "Mo-Su 09:00-21:00",
+  "openingHoursSpecification": [
+    {
+      "@type": "OpeningHoursSpecification",
+      "dayOfWeek": [
+        "Monday",
+        "Tuesday",
+        "Wednesday",
+        "Thursday",
+        "Friday",
+        "Saturday",
+        "Sunday"
+      ],
+      "opens": "09:00",
+      "closes": "21:00"
+    }
+  ],
   "priceRange": "$$",
   "paymentAccepted": "Cash, Credit Card",
   "currenciesAccepted": "THB",
-  "image": "https://huculturehub.com/og-image.jpg",
-  "logo": "https://huculturehub.com/logo.png",
+  "image": "https://www.huculturehub.com/og-image.jpg",
+  "logo": "https://www.huculturehub.com/logo.png",
   "serviceArea": {
     "@type": "GeoCircle",
     "geoMidpoint": {
       "@type": "GeoCoordinates",
       "latitude": "19.1200",
       "longitude": "98.9417"
+    }
+  },
+  "areaServed": {
+    "@type": "City",
+    "name": "Mae Taeng",
+    "containedIn": {
+      "@type": "State",
+      "name": "Chiang Mai"
     }
   }
 }
@@ -118,6 +142,8 @@ export interface EventForStructuredData {
   start_date?: number | null
   end_date?: number | null
   event_date?: number | null
+  created_at?: number | null
+  updated_at?: number | null
   image_url?: string | null
   image_title?: string | null
   in_event_photos?: Array<{
@@ -133,12 +159,80 @@ function formatDateForSchema(timestamp?: number | null): string {
 }
 
 /**
+ * Generate Article structured data for event pages (for social sharing)
+ */
+export function generateArticleStructuredData(event: EventForStructuredData) {
+  const baseUrl = process.env.NEXT_PUBLIC_BASE_URL || 
+    (process.env.NODE_ENV === 'production' 
+      ? 'https://khem696.github.io/helluniversity' 
+      : 'http://localhost:3000')
+  
+  const publishedDate = formatDateForSchema(event.created_at || Date.now() / 1000)
+  const modifiedDate = formatDateForSchema(event.updated_at || event.created_at || Date.now() / 1000)
+  
+  const articleData: any = {
+    "@context": "https://schema.org",
+    "@type": "Article",
+    "headline": event.title,
+    "description": event.description,
+    "url": `${baseUrl}/events/${event.id}`,
+    "datePublished": publishedDate,
+    "dateModified": modifiedDate,
+    "author": {
+      "@type": "Organization",
+      "name": "Hell University",
+      "url": baseUrl
+    },
+    "publisher": {
+      "@type": "Organization",
+      "name": "Hell University",
+      "logo": {
+        "@type": "ImageObject",
+        "url": `${baseUrl}/logo.png`
+      }
+    },
+    "mainEntityOfPage": {
+      "@type": "WebPage",
+      "@id": `${baseUrl}/events/${event.id}`
+    }
+  }
+  
+  // Add event images
+  const images: string[] = []
+  if (event.image_url) {
+    images.push(event.image_url)
+    articleData.image = {
+      "@type": "ImageObject",
+      "url": event.image_url,
+      "width": 1200,
+      "height": 630
+    }
+  }
+  if (event.in_event_photos && event.in_event_photos.length > 0) {
+    event.in_event_photos.forEach((photo) => {
+      if (photo.blob_url) {
+        images.push(photo.blob_url)
+      }
+    })
+  }
+  
+  if (images.length > 1) {
+    articleData.image = images.map((url) => ({
+      "@type": "ImageObject",
+      "url": url
+    }))
+  }
+  
+  return articleData
+}
+
+/**
  * Generate event-specific structured data for SEO
  */
 export function generateEventStructuredData(event: EventForStructuredData) {
   const baseUrl = process.env.NEXT_PUBLIC_BASE_URL || 
     (process.env.NODE_ENV === 'production' 
-      ? 'https://khem696.github.io/helluniversity' 
+      ? 'https://www.huculturehub.com' 
       : 'http://localhost:3000')
   
   const startDate = formatDateForSchema(event.start_date || event.event_date)
@@ -211,7 +305,7 @@ export function generateEventStructuredData(event: EventForStructuredData) {
 export function generateBreadcrumbStructuredData(items: Array<{ name: string; url: string }>) {
   const baseUrl = process.env.NEXT_PUBLIC_BASE_URL || 
     (process.env.NODE_ENV === 'production' 
-      ? 'https://khem696.github.io/helluniversity' 
+      ? 'https://www.huculturehub.com' 
       : 'http://localhost:3000')
   
   return {
@@ -248,7 +342,7 @@ export function generateImageGalleryStructuredData(images: Array<{ url: string; 
 export function generateAboutPageStructuredData() {
   const baseUrl = process.env.NEXT_PUBLIC_BASE_URL || 
     (process.env.NODE_ENV === 'production' 
-      ? 'https://khem696.github.io/helluniversity' 
+      ? 'https://www.huculturehub.com' 
       : 'http://localhost:3000')
   
   return {
@@ -272,12 +366,77 @@ export function generateAboutPageStructuredData() {
 }
 
 /**
+ * Generate Service structured data for booking services
+ */
+export function generateServiceStructuredData() {
+  const baseUrl = process.env.NEXT_PUBLIC_BASE_URL || 
+    (process.env.NODE_ENV === 'production' 
+      ? 'https://www.huculturehub.com' 
+      : 'http://localhost:3000')
+  
+  return {
+    "@context": "https://schema.org",
+    "@type": "Service",
+    "serviceType": "Event Space Rental",
+    "provider": {
+      "@type": "LocalBusiness",
+      "name": "Hell University",
+      "address": {
+        "@type": "PostalAddress",
+        "addressLocality": "Mae Taeng",
+        "addressRegion": "Chiang Mai",
+        "addressCountry": "TH"
+      }
+    },
+    "areaServed": {
+      "@type": "City",
+      "name": "Mae Taeng",
+      "containedIn": {
+        "@type": "State",
+        "name": "Chiang Mai"
+      }
+    },
+    "hasOfferCatalog": {
+      "@type": "OfferCatalog",
+      "name": "Event Booking Services",
+      "itemListElement": [
+        {
+          "@type": "Offer",
+          "itemOffered": {
+            "@type": "Service",
+            "name": "Event Space Booking",
+            "description": "Book event spaces for cultural activities, workshops, and creative gatherings"
+          }
+        },
+        {
+          "@type": "Offer",
+          "itemOffered": {
+            "@type": "Service",
+            "name": "Venue Rental",
+            "description": "Rent venue space for events and activities in Mae Taeng, Chiang Mai"
+          }
+        },
+        {
+          "@type": "Offer",
+          "itemOffered": {
+            "@type": "Service",
+            "name": "Cultural Activity Arrangement",
+            "description": "Arrange and host cultural activities and creative workshops"
+          }
+        }
+      ]
+    },
+    "url": `${baseUrl}/contact`
+  }
+}
+
+/**
  * Generate ContactPage structured data
  */
 export function generateContactPageStructuredData() {
   const baseUrl = process.env.NEXT_PUBLIC_BASE_URL || 
     (process.env.NODE_ENV === 'production' 
-      ? 'https://khem696.github.io/helluniversity' 
+      ? 'https://www.huculturehub.com' 
       : 'http://localhost:3000')
   
   return {
@@ -299,7 +458,7 @@ export function generateContactPageStructuredData() {
       "contactPoint": {
         "@type": "ContactPoint",
         "contactType": "customer service",
-        "email": "hello@huculturehub.com",
+        "email": "hucultureinfo@huculturehub.com",
         "areaServed": "Thailand",
         "availableLanguage": ["en", "th"]
       }

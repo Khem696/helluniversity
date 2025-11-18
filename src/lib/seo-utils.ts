@@ -21,7 +21,7 @@ export interface SEOConfig {
 export function generateMetadata(config: SEOConfig): Metadata {
   const baseUrl = process.env.NEXT_PUBLIC_BASE_URL || 
     (process.env.NODE_ENV === 'production' 
-      ? 'https://khem696.github.io/helluniversity' 
+      ? 'https://www.huculturehub.com' 
       : 'http://localhost:3000')
   
   const fullTitle = config.title.includes('Hell University') 
@@ -107,7 +107,7 @@ export function truncateDescription(description: string, maxLength: number = 160
 export function getBaseUrl(): string {
   return process.env.NEXT_PUBLIC_BASE_URL || 
     (process.env.NODE_ENV === 'production' 
-      ? 'https://khem696.github.io/helluniversity' 
+      ? 'https://www.huculturehub.com' 
       : 'http://localhost:3000')
 }
 

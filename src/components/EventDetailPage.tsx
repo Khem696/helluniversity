@@ -4,7 +4,8 @@ import { useEffect } from "react"
 import Link from "next/link"
 import { ArrowLeft, Calendar } from "lucide-react"
 import Image from "next/image"
-import { trackEventPageView, trackRelatedEventClick, trackInternalLinkClick } from "@/lib/analytics"
+import { trackEventPageView, trackRelatedEventClick, trackInternalLinkClick, trackUserJourneyStep } from "@/lib/analytics"
+import { SocialShareButtons } from "./SocialShareButtons"
 
 interface RelatedEvent {
   id: string
@@ -36,10 +37,22 @@ interface EventDetailPageProps {
 }
 
 export function EventDetailPage({ event, relatedEvents = [] }: EventDetailPageProps) {
-  // Track page view on mount
+  // Track page view on mount with engagement tracking
   useEffect(() => {
-    trackEventPageView(event.id, event.title)
-  }, [event.id, event.title])
+    // Extract event type from title or description if possible
+    const eventType = event.description?.toLowerCase().includes('workshop') ? 'workshop' :
+                     event.description?.toLowerCase().includes('exhibition') ? 'exhibition' :
+                     event.description?.toLowerCase().includes('concert') ? 'concert' :
+                     'cultural_event'
+    
+    trackEventPageView(event.id, event.title, eventType)
+    
+    // Track initial engagement
+    trackUserJourneyStep('event_page_viewed', 'event_discovery', {
+      event_id: event.id,
+      event_title: event.title,
+    })
+  }, [event.id, event.title, event.description])
 
   const formatDate = (timestamp: number | null): string => {
     if (!timestamp) return ""
@@ -84,7 +97,7 @@ export function EventDetailPage({ event, relatedEvents = [] }: EventDetailPagePr
               {event.description}
             </p>
           )}
-          <div className="flex flex-wrap gap-4 text-gray-600 font-comfortaa text-sm sm:text-base">
+          <div className="flex flex-wrap items-center gap-4 text-gray-600 font-comfortaa text-sm sm:text-base">
             {event.start_date && (
               <span>📅 {formatDate(event.start_date)}</span>
             )}
@@ -94,6 +107,16 @@ export function EventDetailPage({ event, relatedEvents = [] }: EventDetailPagePr
             {!event.start_date && !event.end_date && event.event_date && (
               <span>📅 {formatDate(event.event_date)}</span>
             )}
+          </div>
+          
+          {/* Social Share Buttons */}
+          <div className="mt-4">
+            <SocialShareButtons
+              url={`/events/${event.id}`}
+              title={event.title}
+              description={event.description || `Join us at Hell University for ${event.title}`}
+              variant="compact"
+            />
           </div>
         </div>
 
