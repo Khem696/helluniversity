@@ -23,7 +23,7 @@ export interface EmailQueueItem {
   updatedAt: number
 }
 
-interface EmailQueueStats {
+export interface EmailQueueStats {
   pending: number
   processing: number
   failed: number
@@ -41,6 +41,7 @@ interface UseAdminEmailsOptions {
 
 interface UseAdminEmailsReturn {
   emails: EmailQueueItem[]
+  total: number
   stats: EmailQueueStats | null
   loading: boolean
   error: Error | null
@@ -78,7 +79,7 @@ export function useAdminEmails(options: UseAdminEmailsOptions): UseAdminEmailsRe
     isLoading,
     error,
     refetch: refetchQuery,
-  } = useQuery<{ items: EmailQueueItem[]; stats: EmailQueueStats }>({
+  } = useQuery<{ items: EmailQueueItem[]; total: number; stats: EmailQueueStats }>({
     queryKey: ['adminEmails', endpoint],
     queryFn: async () => {
       const response = await fetch(endpoint)
@@ -90,6 +91,7 @@ export function useAdminEmails(options: UseAdminEmailsOptions): UseAdminEmailsRe
       
       const responseData = json.data || json
       const items = responseData.items || []
+      const total = responseData.total || items.length
       const stats = responseData.stats || {}
       
       // Call stats update callback if provided
@@ -97,7 +99,7 @@ export function useAdminEmails(options: UseAdminEmailsOptions): UseAdminEmailsRe
         onStatsUpdate(stats)
       }
       
-      return { items, stats }
+      return { items, total, stats }
     },
     refetchInterval: (query) => {
       // Don't refetch if dialog is open
@@ -138,7 +140,7 @@ export function useAdminEmails(options: UseAdminEmailsOptions): UseAdminEmailsRe
 
   // Optimistic update functions
   const updateItem = React.useCallback((id: string, updates: Partial<EmailQueueItem>) => {
-    queryClient.setQueryData<{ items: EmailQueueItem[]; stats: EmailQueueStats }>(['adminEmails', endpoint], (old) => {
+    queryClient.setQueryData<{ items: EmailQueueItem[]; total: number; stats: EmailQueueStats }>(['adminEmails', endpoint], (old) => {
       if (!old) return old
       return {
         ...old,
@@ -148,17 +150,18 @@ export function useAdminEmails(options: UseAdminEmailsOptions): UseAdminEmailsRe
   }, [queryClient, endpoint])
 
   const removeItem = React.useCallback((id: string) => {
-    queryClient.setQueryData<{ items: EmailQueueItem[]; stats: EmailQueueStats }>(['adminEmails', endpoint], (old) => {
+    queryClient.setQueryData<{ items: EmailQueueItem[]; total: number; stats: EmailQueueStats }>(['adminEmails', endpoint], (old) => {
       if (!old) return old
       return {
         ...old,
-        items: old.items.filter(item => item.id !== id)
+        items: old.items.filter(item => item.id !== id),
+        total: Math.max(0, old.total - 1)
       }
     })
   }, [queryClient, endpoint])
 
   const replaceItem = React.useCallback((id: string, newItem: EmailQueueItem) => {
-    queryClient.setQueryData<{ items: EmailQueueItem[]; stats: EmailQueueStats }>(['adminEmails', endpoint], (old) => {
+    queryClient.setQueryData<{ items: EmailQueueItem[]; total: number; stats: EmailQueueStats }>(['adminEmails', endpoint], (old) => {
       if (!old) return old
       return {
         ...old,
@@ -169,6 +172,7 @@ export function useAdminEmails(options: UseAdminEmailsOptions): UseAdminEmailsRe
 
   return {
     emails: data?.items || [],
+    total: data?.total || 0,
     stats: data?.stats || null,
     loading: isLoading,
     error: error as Error | null,

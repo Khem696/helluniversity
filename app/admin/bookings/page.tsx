@@ -58,7 +58,8 @@ import { useBookingActions } from "@/hooks/useBookingActions"
 import { getAvailableActions, mapActionToStatus, type ActionDefinition } from "@/lib/booking-state-machine"
 import { calculateStartTimestamp } from "@/lib/booking-validations"
 import { getBangkokTime } from "@/lib/timezone"
-import { useAdminBookings, type Booking as BookingType } from "@/hooks/useAdminBookings"
+import { useInfiniteAdminBookings, type Booking as BookingType } from "@/hooks/useInfiniteAdminBookings"
+import { useInfiniteScroll } from "@/hooks/useInfiniteScroll"
 import { API_PATHS, buildApiUrl } from "@/lib/api-config"
 import { SimpleCalendar } from "@/components/ui/simple-calendar"
 import { TimePicker } from "@/components/ui/time-picker"
@@ -147,6 +148,7 @@ export default function BookingsPage() {
   const [sortBy, setSortBy] = useState<"created_at" | "start_date" | "name" | "updated_at">("created_at")
   const [sortOrder, setSortOrder] = useState<"ASC" | "DESC">("DESC")
   const [proposedDateRange, setProposedDateRange] = useState<"single" | "multiple">("single")
+  const [pageSize, setPageSize] = useState(25)
   const [postponeMode, setPostponeMode] = useState<"user-propose" | "admin-propose">("user-propose")
   const [selectedStatusInForm, setSelectedStatusInForm] = useState<string>("")
   const [selectedAction, setSelectedAction] = useState<"accept" | "reject" | "accept_deposit" | "accept_deposit_other_channel" | "reject_deposit" | "cancel" | "change_date" | "confirm_other_channel" | null>(null)
@@ -231,8 +233,8 @@ export default function BookingsPage() {
     { value: "Other", label: "Other" },
   ]
   
-  // Build endpoint with filters (memoized to trigger refetch when filters change)
-  const endpoint = useMemo(() => {
+  // Build base endpoint with filters (without limit/offset for infinite scroll)
+  const baseEndpoint = useMemo(() => {
     const params = new URLSearchParams()
     if (statusFilter !== "all") {
       params.append("status", statusFilter)
@@ -257,23 +259,35 @@ export default function BookingsPage() {
     }
     params.append("sortBy", sortBy)
     params.append("sortOrder", sortOrder)
-    params.append("limit", "1000")
     return buildApiUrl(API_PATHS.adminBookings, Object.fromEntries(params))
   }, [statusFilter, emailFilter, referenceNumberFilter, nameFilter, phoneFilter, eventTypeFilter, showOverlappingOnly, sortBy, sortOrder])
   
-  // Use React Query hook for bookings with event-based updates
+  // Use infinite scroll hook for bookings
   const {
     bookings,
+    total,
     loading,
+    hasMore,
+    loadMore,
     refetch: fetchBookings,
     updateItem,
     removeItem,
     replaceItem
-  } = useAdminBookings({
-    endpoint,
-    refetchInterval: 30000, // Fallback polling every 30 seconds
+  } = useInfiniteAdminBookings({
+    baseEndpoint,
+    pageSize,
+    refetchInterval: 30000,
     enabled: !!session,
     isDialogOpen: () => viewDialogOpen || statusDialogOpen,
+  })
+  
+  // Infinite scroll setup
+  const { elementRef: scrollSentinelRef } = useInfiniteScroll({
+    hasMore,
+    loading,
+    onLoadMore: loadMore,
+    threshold: 200,
+    enabled: !!session && !viewDialogOpen && !statusDialogOpen,
   })
   
   // Initialize booking actions hook
@@ -1377,12 +1391,6 @@ export default function BookingsPage() {
         <>
           {/* Desktop Table View */}
           <div className="hidden lg:block bg-white rounded-lg shadow overflow-hidden">
-          {/* Total Count Header */}
-          <div className="px-6 xl:px-8 py-3 bg-gray-50 border-b border-gray-200 flex justify-end">
-            <div className="text-sm font-medium text-gray-700">
-              Total: <span className="font-semibold text-gray-900">{bookings.length}</span> {bookings.length === 1 ? 'booking' : 'bookings'}
-            </div>
-          </div>
           <div className="overflow-x-auto">
             <table className="min-w-full divide-y divide-gray-200">
               <thead className="bg-gray-50">
@@ -1511,16 +1519,47 @@ export default function BookingsPage() {
               </tbody>
             </table>
           </div>
+          {/* Page size selector and total count */}
+          <div className="px-6 py-3 bg-gray-50 border-t border-gray-200 flex items-center justify-between">
+            <div className="text-sm text-gray-700">
+              Showing <span className="font-medium">{bookings.length}</span> of <span className="font-medium">{total}</span> bookings
+            </div>
+            <div className="flex items-center gap-2">
+              <span className="text-sm text-gray-700">Items per page:</span>
+              <Select
+                value={pageSize.toString()}
+                onValueChange={(value) => {
+                  setPageSize(parseInt(value))
+                  fetchBookings()
+                }}
+              >
+                <SelectTrigger className="w-20 h-8">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="10">10</SelectItem>
+                  <SelectItem value="25">25</SelectItem>
+                  <SelectItem value="50">50</SelectItem>
+                  <SelectItem value="100">100</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+          {/* Infinite scroll sentinel */}
+          {hasMore && (
+            <div ref={scrollSentinelRef} className="py-4 flex justify-center">
+              {loading && <Loader2 className="w-6 h-6 animate-spin text-gray-400" />}
+            </div>
+          )}
+          {!hasMore && bookings.length > 0 && (
+            <div className="px-6 py-3 bg-gray-50 border-t border-gray-200 text-center text-sm text-gray-500">
+              No more bookings to load
+            </div>
+          )}
         </div>
 
           {/* Mobile/Tablet Card View */}
           <div className="lg:hidden space-y-4">
-            {/* Total Count Header for Mobile */}
-            <div className="bg-white rounded-lg shadow px-4 py-3 border-b border-gray-200 flex justify-end">
-              <div className="text-sm font-medium text-gray-700">
-                Total: <span className="font-semibold text-gray-900">{bookings.length}</span> {bookings.length === 1 ? 'booking' : 'bookings'}
-              </div>
-            </div>
             {bookings.map((booking, index) => {
               const hasNewResponse = booking.user_response && booking.response_date && 
                 (booking.response_date * 1000) > lastCheckedAtRef.current - 300000
@@ -1625,6 +1664,40 @@ export default function BookingsPage() {
                 </div>
               )
             })}
+            {/* Page size selector and total count for mobile */}
+            <div className="bg-white rounded-lg shadow px-4 py-3 border-t border-gray-200 flex items-center justify-between">
+              <div className="text-sm text-gray-700">
+                Showing <span className="font-medium">{bookings.length}</span> of <span className="font-medium">{total}</span>
+              </div>
+              <Select
+                value={pageSize.toString()}
+                onValueChange={(value) => {
+                  setPageSize(parseInt(value))
+                  fetchBookings()
+                }}
+              >
+                <SelectTrigger className="w-20 h-8">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="10">10</SelectItem>
+                  <SelectItem value="25">25</SelectItem>
+                  <SelectItem value="50">50</SelectItem>
+                  <SelectItem value="100">100</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            {/* Infinite scroll sentinel */}
+            {hasMore && (
+              <div ref={scrollSentinelRef} className="py-4 flex justify-center">
+                {loading && <Loader2 className="w-6 h-6 animate-spin text-gray-400" />}
+              </div>
+            )}
+            {!hasMore && bookings.length > 0 && (
+              <div className="bg-white rounded-lg shadow px-4 py-3 text-center text-sm text-gray-500">
+                No more bookings to load
+              </div>
+            )}
           </div>
         </>
       )}

@@ -48,6 +48,7 @@ interface UseAdminBookingsOptions {
 
 interface UseAdminBookingsReturn {
   bookings: Booking[]
+  total: number
   loading: boolean
   error: Error | null
   refetch: () => Promise<void>
@@ -85,7 +86,7 @@ export function useAdminBookings(options: UseAdminBookingsOptions): UseAdminBook
     isLoading,
     error,
     refetch: refetchQuery,
-  } = useQuery<Booking[]>({
+  } = useQuery<{ bookings: Booking[]; total: number }>({
     queryKey: ['adminBookings', endpoint],
     queryFn: async () => {
       const response = await fetch(endpoint)
@@ -95,7 +96,10 @@ export function useAdminBookings(options: UseAdminBookingsOptions): UseAdminBook
         throw new Error(json.error?.message || json.error || "Failed to load bookings")
       }
       
-      return json.data?.bookings || json.bookings || []
+      const bookings = json.data?.bookings || json.bookings || []
+      const total = json.data?.pagination?.total || json.data?.total || bookings.length
+      
+      return { bookings, total }
     },
     refetchInterval: (query) => {
       // Don't refetch if dialog is open
@@ -116,33 +120,44 @@ export function useAdminBookings(options: UseAdminBookingsOptions): UseAdminBook
 
   // Optimistic update functions
   const updateItem = React.useCallback((id: string, updates: Partial<Booking>) => {
-    queryClient.setQueryData<Booking[]>(['adminBookings', endpoint], (old) => {
+    queryClient.setQueryData<{ bookings: Booking[]; total: number }>(['adminBookings', endpoint], (old) => {
       if (!old) return old
-      return old.map(item => item.id === id ? { ...item, ...updates } : item)
+      return {
+        ...old,
+        bookings: old.bookings.map(item => item.id === id ? { ...item, ...updates } : item)
+      }
     })
   }, [queryClient, endpoint])
 
   const removeItem = React.useCallback((id: string) => {
-    queryClient.setQueryData<Booking[]>(['adminBookings', endpoint], (old) => {
+    queryClient.setQueryData<{ bookings: Booking[]; total: number }>(['adminBookings', endpoint], (old) => {
       if (!old) return old
-      return old.filter(item => item.id !== id)
+      return {
+        ...old,
+        bookings: old.bookings.filter(item => item.id !== id),
+        total: Math.max(0, old.total - 1)
+      }
     })
   }, [queryClient, endpoint])
 
   const replaceItem = React.useCallback((id: string, newItem: Booking) => {
-    queryClient.setQueryData<Booking[]>(['adminBookings', endpoint], (old) => {
+    queryClient.setQueryData<{ bookings: Booking[]; total: number }>(['adminBookings', endpoint], (old) => {
       if (!old) return old
-      return old.map(item => item.id === id ? newItem : item)
+      return {
+        ...old,
+        bookings: old.bookings.map(item => item.id === id ? newItem : item)
+      }
     })
   }, [queryClient, endpoint])
 
   const setBookings = React.useCallback((updater: React.SetStateAction<Booking[]>) => {
-    queryClient.setQueryData<Booking[]>(['adminBookings', endpoint], (old) => {
-      if (!old) return []
-      if (typeof updater === 'function') {
-        return updater(old)
+    queryClient.setQueryData<{ bookings: Booking[]; total: number }>(['adminBookings', endpoint], (old) => {
+      if (!old) return { bookings: [], total: 0 }
+      const newBookings = typeof updater === 'function' ? updater(old.bookings) : updater
+      return {
+        ...old,
+        bookings: newBookings
       }
-      return updater
     })
   }, [queryClient, endpoint])
 
@@ -167,7 +182,8 @@ export function useAdminBookings(options: UseAdminBookingsOptions): UseAdminBook
   }
 
   return {
-    bookings: data || [],
+    bookings: data?.bookings || [],
+    total: data?.total || 0,
     loading: isLoading,
     error: error as Error | null,
     refetch,

@@ -1,9 +1,73 @@
 "use client"
 import { withBasePath } from "@/lib/utils"
-
-import { Facebook, Twitter, Instagram } from "lucide-react"
+import { useState, useEffect } from "react"
+import { Facebook, Twitter, Instagram, ChevronDown } from "lucide-react"
+import { API_PATHS } from "@/lib/api-config"
 
 export function Hero() {
+  const [hasEvents, setHasEvents] = useState(false)
+  const [isVisible, setIsVisible] = useState(true)
+
+  // Check if events exist to show the scroll indicator
+  useEffect(() => {
+    async function checkEvents() {
+      try {
+        const response = await fetch(API_PATHS.events)
+        if (!response.ok) {
+          setHasEvents(false)
+          return
+        }
+        const json = await response.json()
+        if (json.success) {
+          const responseData = json.data || json
+          const events = responseData.events || responseData.pastEvents || responseData.currentEvents || []
+          setHasEvents(Array.isArray(events) && events.length > 0)
+        } else {
+          setHasEvents(false)
+        }
+      } catch (error) {
+        console.error("Failed to check events:", error)
+        setHasEvents(false)
+      }
+    }
+
+    checkEvents()
+
+    // Hide arrow when user scrolls down
+    const handleScroll = () => {
+      const scrollY = window.scrollY || window.pageYOffset
+      const heroHeight = window.innerHeight
+      setIsVisible(scrollY < heroHeight * 0.5) // Hide when scrolled past half of hero
+    }
+
+    window.addEventListener('scroll', handleScroll, { passive: true })
+    return () => window.removeEventListener('scroll', handleScroll)
+  }, [])
+
+  const scrollToEvents = () => {
+    // Find the event sliders section by ID
+    const eventSliders = document.getElementById('event-sliders')
+    if (eventSliders) {
+      eventSliders.scrollIntoView({ behavior: 'smooth', block: 'start' })
+    } else {
+      // Fallback: find first event slider section
+      const eventSections = document.querySelectorAll('section[style*="background-color"]')
+      if (eventSections.length > 0) {
+        eventSections[0].scrollIntoView({ behavior: 'smooth', block: 'start' })
+      } else {
+        // Final fallback: scroll to main content or next section
+        const mainContent = document.getElementById('main-content')
+        if (mainContent) {
+          const hero = mainContent.querySelector('section')
+          if (hero) {
+            const heroHeight = hero.offsetHeight
+            window.scrollTo({ top: heroHeight, behavior: 'smooth' })
+          }
+        }
+      }
+    }
+  }
+
   return (
     <section className="relative min-h-vp lg:h-[100dvh] overflow-visible no-horiz-overflow">
       <div className="flex flex-col lg:flex-row lg:items-stretch h-full">
@@ -103,6 +167,36 @@ export function Hero() {
           <div className="absolute bottom-0 left-0 right-0 h-32 bg-gradient-to-t from-[#D4AF37]/20 to-transparent" />
         </div>
       </div>
+
+      {/* Scroll Down Arrow Indicator - Only show if events exist */}
+      {hasEvents && isVisible && (
+        <button
+          onClick={scrollToEvents}
+          className="absolute bottom-8 left-1/2 -translate-x-1/2 z-40 flex flex-col items-center gap-2 group cursor-pointer transition-opacity duration-300 hover:opacity-80 focus:outline-none focus:ring-2 focus:ring-white/50 focus:ring-offset-2 focus:ring-offset-transparent rounded-full"
+          aria-label="Scroll to events"
+        >
+          <span className="text-white/80 font-comfortaa text-xs sm:text-sm font-light tracking-wider uppercase">
+            Events
+          </span>
+          <div 
+            className="flex items-center justify-center w-12 h-12 sm:w-14 sm:h-14 rounded-full transition-all duration-300 group-hover:scale-110 group-hover:bg-white/10"
+            style={{
+              background: 'rgba(255, 255, 255, 0.1)',
+              backdropFilter: 'blur(12px)',
+              WebkitBackdropFilter: 'blur(12px)',
+              border: '1px solid rgba(255, 255, 255, 0.2)',
+              boxShadow: '0 4px 16px rgba(0, 0, 0, 0.1), 0 0 0 1px rgba(255, 255, 255, 0.05) inset',
+            }}
+          >
+            <ChevronDown 
+              className="w-6 h-6 sm:w-7 sm:h-7 text-white animate-bounce" 
+              style={{
+                animation: 'bounce 2s infinite',
+              }}
+            />
+          </div>
+        </button>
+      )}
     </section>
   )
 }

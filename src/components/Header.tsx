@@ -107,7 +107,8 @@ export function Header() {
     startDate: number
     endDate: number
   }>>([])
-  const [bookingsEnabled, setBookingsEnabled] = useState<boolean>(true)
+  const [bookingsEnabled, setBookingsEnabled] = useState<boolean>(false) // Start as false to prevent flash
+  const [bookingStatusLoaded, setBookingStatusLoaded] = useState<boolean>(false) // Track if status has been fetched
   const [calendarMonth, setCalendarMonth] = useState<Date>(new Date())
 
   // Ensure component is mounted (client-side only)
@@ -125,17 +126,23 @@ export function Header() {
         if (json.success && json.data) {
           const newStatus = json.data.enabled
           setBookingsEnabled(newStatus)
+          setBookingStatusLoaded(true) // Mark as loaded after first fetch
           
           // If bookings are disabled while dialog is open, close the dialog
           if (!newStatus && bookingOpen) {
             setBookingOpen(false)
             toast.error("Bookings are currently disabled. Please try again later.")
           }
+        } else {
+          // If API call succeeds but no data, default to disabled
+          setBookingsEnabled(false)
+          setBookingStatusLoaded(true)
         }
       } catch (error) {
         console.error("Failed to fetch booking status:", error)
-        // Default to enabled on error
-        setBookingsEnabled(true)
+        // On error, default to disabled (safer than showing button when it shouldn't be)
+        setBookingsEnabled(false)
+        setBookingStatusLoaded(true)
       }
     }
 
@@ -857,8 +864,8 @@ export function Header() {
           <span className="text-[#2a1f1a] font-urbanist font-extrabold leading-[1.2]">University</span>
         </h1>
 
-        {/* Booking Button - Only show if bookings are enabled */}
-        {mounted && bookingsEnabled && (
+        {/* Booking Button - Only show if bookings are enabled and status has been loaded */}
+        {mounted && bookingStatusLoaded && bookingsEnabled && (
           <Dialog open={bookingOpen} onOpenChange={handleBookingOpenChange}>
             <DialogTrigger className="hidden lg:flex items-center gap-3 text-white/80 hover:text-white transition-colors mr-1 sm:mr-2 md:mr-3 lg:mr-0" aria-label="Open Booking">
             <div className="flex items-center justify-center w-10 h-10 lg:w-12 lg:h-12 3xl:w-14 3xl:h-14 4xl:w-16 4xl:h-16 5xl:w-20 5xl:h-20 rounded-full bg-white border-2 border-[var(--hell-dusty-blue)]">
