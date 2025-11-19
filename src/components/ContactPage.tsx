@@ -1,6 +1,6 @@
 "use client"
 
-import { Facebook, Twitter, Instagram, Search, MapPin, Mail, Navigation, Clock } from "lucide-react";
+import { Facebook, Twitter, Instagram, Search, MapPin, Mail, Navigation } from "lucide-react";
 import { ImageWithFallback } from "./figma/ImageWithFallback";
 import { withBasePath } from "@/lib/utils";
 import Link from "next/link";
@@ -9,9 +9,9 @@ import { GoogleMapsEmbed } from "./GoogleMapsEmbed";
 
 export function ContactPage() {
   return (
-    <div className="@container/contact flex flex-col lg:flex-row justify-center items-center lg:justify-center min-h-screen lg:h-screen lg:items-center overflow-y-auto overflow-x-hidden bg-[#3a3a3e] no-horiz-overflow pt-[calc(var(--header-h)+1rem)] pb-[clamp(3rem,6vw,5rem)] lg:py-0">
+    <div className="@container/contact flex flex-col lg:flex-row justify-center items-start lg:justify-center min-h-screen lg:h-screen lg:items-stretch overflow-x-hidden bg-[#3a3a3e] no-horiz-overflow pt-[calc(var(--header-h)+1rem)] pb-[clamp(3rem,6vw,5rem)] lg:py-0">
       {/* Left: artwork as full background (half width) */}
-      <div className="w-full lg:w-1/2 relative overflow-hidden lg:flex lg:items-start lg:justify-center">
+      <div className="w-full lg:w-1/2 relative overflow-hidden lg:flex lg:items-center lg:justify-center lg:h-full">
           <div className="w-[clamp(18rem,90vw,44rem)] lg:w-[clamp(18rem,46vw,48rem)] mx-auto -translate-y-[clamp(0rem,2vw,1rem)] lg:translate-y-0">
             <ImageWithFallback
               src={withBasePath('/assets/artwork/artwork_contact.png')}
@@ -25,16 +25,16 @@ export function ContactPage() {
           </div>
       </div>
 
-      {/* Right: contact content segment (half width) */}
-      <div className="w-full lg:w-1/2 relative">
-          <div className="w-11/12 max-w-3xl xl:max-w-none px-[clamp(1rem,3vw,4rem)] py-[clamp(1.5rem,4vw,3rem)] mx-auto -translate-y-[clamp(0rem,2vw,1rem)] lg:translate-y-0">
+      {/* Right: contact content segment (half width) - scrollable, vertically centered */}
+      <div className="w-full lg:w-1/2 relative lg:h-full lg:overflow-y-auto lg:overflow-x-hidden lg:flex lg:flex-col lg:justify-center lg:pt-[calc(var(--header-h)+1rem)]">
+          <div className="w-11/12 max-w-3xl xl:max-w-none px-[clamp(1rem,3vw,4rem)] py-[clamp(1.5rem,4vw,3rem)] lg:py-[clamp(2rem,4vw,3rem)] mx-auto -translate-y-[clamp(0rem,2vw,1rem)] lg:translate-y-0 lg:flex-shrink-0">
             <div className="max-w-md">
               <h1 className="text-[#87CEEB] mb-[clamp(0.5rem,1.5vw,1rem)] font-comfortaa font-bold tracking-wider text-[clamp(1.5rem,4vw,3rem)] @min-[80rem]/contact:text-[clamp(2.5rem,5vw,4rem)] 3xl:tracking-[0.2em] 4xl:tracking-[0.25em] 5xl:tracking-[0.3em]">
               CONTACT
             </h1>
 
               {/* Location & Directions */}
-              <div className="mb-4 space-y-2">
+              <div className="mb-3 lg:mb-2.5 space-y-2">
                 <div>
                   <a 
                     href="https://maps.app.goo.gl/gnW3rP7SsAdhd2ft9?g_st=ipc" 
@@ -59,40 +59,30 @@ export function ContactPage() {
                 </div>
               </div>
 
-              {/* Business Hours */}
-              <div className="mb-4">
-                <div className="flex items-start gap-2 text-white/70 text-[clamp(0.875rem,0.9vw,1rem)]">
-                  <Clock size={18} className="flex-shrink-0 mt-0.5" />
-                  <div>
-                    <p className="font-medium mb-1">Opening Hours</p>
-                    <p className="font-light">Monday - Sunday: 9:00 AM - 9:00 PM</p>
-                  </div>
-                </div>
-              </div>
-
-              {/* Google Maps Embed */}
-              <div className="mb-[clamp(1.5rem,3vw,2.5rem)]">
+              {/* Google Maps Embed - Reduced height on desktop */}
+              <div className="mb-[clamp(1rem,2vw,1.5rem)]">
                 <GoogleMapsEmbed
-                  latitude="19.1200"
-                  longitude="98.9417"
-                  height="250px"
+                  latitude="19.0882"
+                  longitude="98.8565"
+                  height="clamp(200px, 25vh, 250px)"
                   className="rounded-lg shadow-lg"
                 />
               </div>
 
-              {/* QR Code */}
-              <div className="mb-[clamp(1.5rem,3vw,2.5rem)]">
+              {/* QR Code - Smaller on desktop */}
+              {/* Temporarily hidden - can be uncommented to restore */}
+              {/* <div className="mb-[clamp(1rem,2vw,1.5rem)]">
                 <ImageWithFallback
                   src={withBasePath('/assets/qrcode/location.jpg')}
                   alt="Location QR Code for Hell University cultural hub in Mae Taeng, Chiang Mai, Thailand - Scan to get directions"
-                  className="w-full max-w-[150px] md:max-w-[180px] lg:max-w-[200px] h-auto object-cover rounded"
+                  className="w-full max-w-[120px] md:max-w-[150px] lg:max-w-[140px] h-auto object-cover rounded"
                   width={200}
                   height={200}
-                  sizes="(max-width: 768px) 150px, (max-width: 1024px) 180px, 200px"
+                  sizes="(max-width: 768px) 120px, (max-width: 1024px) 150px, 140px"
                 />
-              </div>
+              </div> */}
 
-              <div className="space-y-4 mb-[clamp(1.5rem,3vw,2.5rem)]">
+              <div className="space-y-4 mb-[clamp(1rem,2vw,1.5rem)]">
                 {/* <p className="text-white/80 font-light text-[clamp(1rem,1.1vw,1.125rem)]">
                 Text.
               </p>
@@ -105,7 +95,7 @@ export function ContactPage() {
               </div> */}
             </div>
 
-            <div className="flex gap-[clamp(1rem,2vw,2rem)] mb-[clamp(1.5rem,3vw,2.5rem)]">
+            <div className="flex gap-[clamp(1rem,2vw,2rem)] mb-[clamp(1rem,2vw,1.5rem)]">
               <a 
                 href="https://www.facebook.com/kadejavanalikhikara" 
                 target="_blank" 
@@ -131,7 +121,7 @@ export function ContactPage() {
             </div>
             
             {/* Internal Links Section */}
-            <div className="mt-8 pt-6 border-t border-white/20">
+            <div className="mt-6 lg:mt-4 pt-4 lg:pt-3 border-t border-white/20">
               <p className="text-white/70 font-comfortaa text-[clamp(0.875rem,0.9vw,1rem)] mb-3">
                 Learn more about Hell University:
               </p>

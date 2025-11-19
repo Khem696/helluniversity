@@ -19,7 +19,10 @@ export function GoogleMapsEmbed({
   const embedUrl = `https://www.google.com/maps?q=${latitude},${longitude}&hl=en&z=14&output=embed`
   
   return (
-    <div className={`w-full rounded-lg overflow-hidden ${className}`} style={{ height }}>
+    <div 
+      className={`w-full rounded-lg overflow-hidden ${className}`} 
+      style={{ height }}
+    >
       <iframe
         src={embedUrl}
         width="100%"
