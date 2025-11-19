@@ -99,13 +99,18 @@ export async function getTursoClientWithRetry(
 
 /**
  * Check database health
+ * IMPROVED: Enhanced with connection pool monitoring
  * 
- * @returns Health check result with latency
+ * @returns Health check result with latency and connection info
  */
 export async function checkDatabaseHealth(): Promise<{
   healthy: boolean
   latency?: number
   error?: string
+  connectionInfo?: {
+    url: string
+    isRemote: boolean
+  }
 }> {
   try {
     const startTime = Date.now()
@@ -116,15 +121,48 @@ export async function checkDatabaseHealth(): Promise<{
     
     const latency = Date.now() - startTime
     
+    // IMPROVED: Include connection info for monitoring
+    const databaseUrl = process.env.TURSO_DATABASE_URL || "unknown"
+    const isRemote = !databaseUrl.startsWith("file:")
+    
     return {
       healthy: true,
       latency,
+      connectionInfo: {
+        url: isRemote ? "remote" : "local",
+        isRemote,
+      },
     }
   } catch (error) {
     return {
       healthy: false,
       error: error instanceof Error ? error.message : String(error),
     }
+  }
+}
+
+/**
+ * Get database connection statistics
+ * IMPROVED: Provides connection pool monitoring information
+ * 
+ * Note: SQLite/Turso doesn't expose detailed connection pool stats,
+ * but this provides basic connection health information
+ */
+export async function getConnectionStats(): Promise<{
+  healthy: boolean
+  latency: number
+  connectionType: "local" | "remote"
+  lastHealthCheck: number
+}> {
+  const health = await checkDatabaseHealth()
+  const databaseUrl = process.env.TURSO_DATABASE_URL || ""
+  const isRemote = !databaseUrl.startsWith("file:")
+  
+  return {
+    healthy: health.healthy,
+    latency: health.latency || 0,
+    connectionType: isRemote ? "remote" : "local",
+    lastHealthCheck: Date.now(),
   }
 }
 
@@ -161,51 +199,173 @@ export async function dbQuery<T = any>(
 }
 
 /**
- * Execute a transaction
+ * Execute a transaction with optional timeout and deadlock retry
  */
 export async function dbTransaction<T>(
-  callback: (tx: Transaction) => Promise<T>
+  callback: (tx: Transaction) => Promise<T>,
+  options?: {
+    timeout?: number // Timeout in milliseconds (default: 30 seconds)
+    maxRetries?: number // Maximum retries for deadlocks (default: 3)
+  }
 ): Promise<T> {
   const db = getTursoClient()
+  const timeout = options?.timeout || 30000 // Default 30 seconds
+  const maxRetries = options?.maxRetries || 3 // Default 3 retries for deadlocks
   
-  try {
-    const tx = await db.transaction()
+  let lastError: Error | null = null
+  
+  for (let attempt = 0; attempt < maxRetries; attempt++) {
+    let timeoutId: NodeJS.Timeout | null = null
+    
+    // Create a promise that rejects after timeout
+    const timeoutPromise = new Promise<never>((_, reject) => {
+      timeoutId = setTimeout(() => {
+        reject(new Error(`Transaction timeout after ${timeout}ms`))
+      }, timeout)
+    })
+    
+    let transactionRef: { tx: Transaction | null } = { tx: null }
+    
     try {
-      const result = await callback(tx)
-      await tx.commit()
+      // Race between transaction and timeout
+      const result = await Promise.race([
+        (async (): Promise<T> => {
+          try {
+            const tx = await db.transaction()
+            transactionRef.tx = tx // Store reference for cleanup if timeout occurs
+            try {
+              const result = await callback(tx)
+              await tx.commit()
+              transactionRef.tx = null // Clear reference after successful commit
+              // Clear timeout if transaction completes before timeout
+              if (timeoutId) clearTimeout(timeoutId)
+              return result
+            } catch (error) {
+              // IMPROVED: Ensure transaction is rolled back before clearing reference
+              if (transactionRef.tx) {
+                try {
+                  await transactionRef.tx.rollback()
+                } catch (rollbackError) {
+                  console.error("Failed to rollback transaction:", rollbackError)
+                }
+                transactionRef.tx = null
+              }
+              
+              // Clear timeout on error
+              if (timeoutId) clearTimeout(timeoutId)
+              
+              // Check for deadlock/lock errors
+              const errorMessage = error instanceof Error ? error.message : String(error)
+              const isDeadlock = errorMessage.includes('database is locked') ||
+                                errorMessage.includes('SQLITE_BUSY') ||
+                                errorMessage.includes('SQLITE_LOCKED') ||
+                                errorMessage.includes('database lock')
+              
+              if (isDeadlock && attempt < maxRetries - 1) {
+                // This is a deadlock - will retry
+                lastError = error instanceof Error ? error : new Error(String(error))
+                throw new Error('DEADLOCK_RETRY') // Special marker for retry
+              }
+              
+              // Track transaction failure
+              try {
+                const { trackTransactionFailure } = await import('./monitoring')
+                const errorObj = error instanceof Error ? error : new Error(String(error))
+                trackTransactionFailure('dbTransaction', errorObj, {
+                  operation: 'transaction_rollback',
+                  isDeadlock
+                })
+              } catch {
+                // Ignore monitoring errors
+              }
+              
+              throw error
+            }
+          } catch (error) {
+            // IMPROVED: Ensure transaction is rolled back if it exists
+            if (transactionRef.tx) {
+              try {
+                await transactionRef.tx.rollback()
+              } catch (rollbackError) {
+                console.error("Failed to rollback transaction in outer catch:", rollbackError)
+              }
+              transactionRef.tx = null
+            }
+            
+            // Clear timeout on error
+            if (timeoutId) clearTimeout(timeoutId)
+            
+            // Check for deadlock retry marker
+            if (error instanceof Error && error.message === 'DEADLOCK_RETRY') {
+              throw error // Re-throw to trigger retry
+            }
+            
+            console.error("Database transaction error:", error)
+            
+            // Track transaction failure (outer catch for transaction creation failures)
+            try {
+              const { trackTransactionFailure } = await import('./monitoring')
+              const errorObj = error instanceof Error ? error : new Error(String(error))
+              trackTransactionFailure('dbTransaction', errorObj, {
+                operation: 'transaction_creation'
+              })
+            } catch {
+              // Ignore monitoring errors
+            }
+            
+            throw error
+          }
+        })(),
+        timeoutPromise
+      ])
+      
+      // Success - return result
       return result
     } catch (error) {
-      await tx.rollback()
-      
-      // Track transaction failure
-      try {
-        const { trackTransactionFailure } = await import('./monitoring')
-        const errorObj = error instanceof Error ? error : new Error(String(error))
-        trackTransactionFailure('dbTransaction', errorObj, {
-          operation: 'transaction_rollback'
-        })
-      } catch {
-        // Ignore monitoring errors
+      // IMPROVED: Ensure transaction is rolled back if timeout occurred
+      // If timeout wins the race, transaction might still be running
+      if (transactionRef.tx) {
+        try {
+          await transactionRef.tx.rollback()
+          console.warn('Transaction rolled back due to timeout or error', {
+            timeout: error instanceof Error && error.message.includes('timeout'),
+            error: error instanceof Error ? error.message : String(error)
+          })
+        } catch (rollbackError) {
+          console.error("Failed to rollback transaction after timeout/error:", rollbackError)
+        }
+        transactionRef.tx = null
       }
       
+      // Ensure timeout is cleared on any error
+      if (timeoutId) clearTimeout(timeoutId)
+      
+      // Check if this is a deadlock retry
+      if (error instanceof Error && error.message === 'DEADLOCK_RETRY') {
+        lastError = error
+        
+        // Exponential backoff for deadlocks: 50ms, 100ms, 200ms
+        if (attempt < maxRetries - 1) {
+          const delay = Math.pow(2, attempt) * 50
+          await new Promise(resolve => setTimeout(resolve, delay))
+          continue // Retry
+        }
+      }
+      
+      // Check if this is a timeout error
+      if (error instanceof Error && error.message.includes('timeout')) {
+        lastError = error
+        // Don't retry on timeout - it's a different issue than deadlock
+        throw error
+      }
+      
+      // Not a deadlock or max retries reached - throw error
       throw error
     }
-  } catch (error) {
-    console.error("Database transaction error:", error)
-    
-    // Track transaction failure (outer catch for transaction creation failures)
-    try {
-      const { trackTransactionFailure } = await import('./monitoring')
-      const errorObj = error instanceof Error ? error : new Error(String(error))
-      trackTransactionFailure('dbTransaction', errorObj, {
-        operation: 'transaction_creation'
-      })
-    } catch {
-      // Ignore monitoring errors
-    }
-    
-    throw error
   }
+  
+  // All retries exhausted
+  throw lastError || new Error('Transaction failed after retries')
 }
 
 /**
@@ -787,14 +947,84 @@ export async function initializeDatabase(options?: { cleanupOrphanedImages?: boo
 }
 
 /**
+ * Create migration version tracking table
+ * IMPROVED: Tracks migration versions for rollback capability
+ */
+async function createMigrationVersionTable(db: ReturnType<typeof createClient>): Promise<void> {
+  const tables = await db.execute(`
+    SELECT name FROM sqlite_master WHERE type='table' AND name='migration_versions'
+  `)
+  
+  if (tables.rows.length === 0) {
+    await db.execute(`
+      CREATE TABLE migration_versions (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        version TEXT NOT NULL UNIQUE,
+        description TEXT,
+        applied_at INTEGER DEFAULT (unixepoch()),
+        rolled_back_at INTEGER,
+        rollback_sql TEXT
+      )
+    `)
+    await db.execute(`
+      CREATE INDEX IF NOT EXISTS idx_migration_versions_version ON migration_versions(version)
+    `)
+    console.log("✓ Created migration_versions table")
+  }
+}
+
+/**
+ * Record migration version
+ */
+async function recordMigrationVersion(
+  db: ReturnType<typeof createClient>,
+  version: string,
+  description: string,
+  rollbackSql?: string
+): Promise<void> {
+  try {
+    await db.execute(`
+      INSERT OR IGNORE INTO migration_versions (version, description, rollback_sql)
+      VALUES (?, ?, ?)
+    `, [version, description, rollbackSql || null])
+  } catch (error) {
+    // Don't fail if version tracking fails
+    console.warn(`Failed to record migration version ${version}:`, error)
+  }
+}
+
+/**
+ * Check if migration version has been applied
+ */
+async function isMigrationApplied(
+  db: ReturnType<typeof createClient>,
+  version: string
+): Promise<boolean> {
+  try {
+    const result = await db.execute(`
+      SELECT COUNT(*) as count FROM migration_versions 
+      WHERE version = ? AND rolled_back_at IS NULL
+    `, [version])
+    return ((result.rows[0] as any)?.count || 0) > 0
+  } catch {
+    return false
+  }
+}
+
+/**
  * Migrate existing tables by adding new columns if they don't exist
- * Safe to run multiple times - checks for column existence first
+ * IMPROVED: Safe to run multiple times - checks for column existence first
+ * IMPROVED: Uses transactions where possible for rollback capability
+ * IMPROVED: Tracks migration versions for audit trail
  */
 async function migrateExistingTables(
   db: ReturnType<typeof createClient>,
   existingTables: Set<string>
 ): Promise<void> {
   try {
+    // Create migration version tracking table first
+    await createMigrationVersionTable(db)
+    
     // Migrate images table: add category and display_order
     if (existingTables.has("images")) {
       const imageColumns = await db.execute(`
@@ -805,40 +1035,85 @@ async function migrateExistingTables(
       )
 
       if (!columnNames.has("category")) {
-        await db.execute(`
-          ALTER TABLE images ADD COLUMN category TEXT
-        `)
-        console.log("✓ Added category column to images table")
+        const migrationVersion = "images_add_category"
+        if (!(await isMigrationApplied(db, migrationVersion))) {
+          await db.execute(`
+            ALTER TABLE images ADD COLUMN category TEXT
+          `)
+          await recordMigrationVersion(
+            db,
+            migrationVersion,
+            "Add category column to images table",
+            "-- Rollback: ALTER TABLE images DROP COLUMN category (SQLite doesn't support DROP COLUMN, manual rollback required)"
+          )
+          console.log("✓ Added category column to images table")
+        }
       }
 
       if (!columnNames.has("display_order")) {
-        await db.execute(`
-          ALTER TABLE images ADD COLUMN display_order INTEGER DEFAULT 0
-        `)
-        // Create index for category + display_order queries
-        await db.execute(`
-          CREATE INDEX IF NOT EXISTS idx_images_category_order 
-          ON images(category, display_order)
-        `)
-        console.log("✓ Added display_order column to images table")
+        const migrationVersion = "images_add_display_order"
+        if (!(await isMigrationApplied(db, migrationVersion))) {
+          // IMPROVED: Use transaction for column + index creation
+          const tx = await db.transaction()
+          try {
+            await tx.execute(`
+              ALTER TABLE images ADD COLUMN display_order INTEGER DEFAULT 0
+            `)
+            await tx.execute(`
+              CREATE INDEX IF NOT EXISTS idx_images_category_order 
+              ON images(category, display_order)
+            `)
+            await tx.commit()
+            
+            await recordMigrationVersion(
+              db,
+              migrationVersion,
+              "Add display_order column and index to images table",
+              "-- Rollback: DROP INDEX idx_images_category_order; ALTER TABLE images DROP COLUMN display_order (SQLite doesn't support DROP COLUMN, manual rollback required)"
+            )
+            console.log("✓ Added display_order column to images table")
+          } catch (error) {
+            await tx.rollback()
+            throw error
+          }
+        }
       }
 
       if (!columnNames.has("ai_selected")) {
-        await db.execute(`
-          ALTER TABLE images ADD COLUMN ai_selected INTEGER DEFAULT 0
-        `)
-        console.log("✓ Added ai_selected column to images table")
+        const migrationVersion = "images_add_ai_selected"
+        if (!(await isMigrationApplied(db, migrationVersion))) {
+          await db.execute(`
+            ALTER TABLE images ADD COLUMN ai_selected INTEGER DEFAULT 0
+          `)
+          await recordMigrationVersion(
+            db,
+            migrationVersion,
+            "Add ai_selected column to images table",
+            "-- Rollback: ALTER TABLE images DROP COLUMN ai_selected (SQLite doesn't support DROP COLUMN, manual rollback required)"
+          )
+          console.log("✓ Added ai_selected column to images table")
+        }
       }
 
       if (!columnNames.has("ai_order")) {
-        await db.execute(`
-          ALTER TABLE images ADD COLUMN ai_order INTEGER
-        `)
-        console.log("✓ Added ai_order column to images table")
+        const migrationVersion = "images_add_ai_order"
+        if (!(await isMigrationApplied(db, migrationVersion))) {
+          await db.execute(`
+            ALTER TABLE images ADD COLUMN ai_order INTEGER
+          `)
+          await recordMigrationVersion(
+            db,
+            migrationVersion,
+            "Add ai_order column to images table",
+            "-- Rollback: ALTER TABLE images DROP COLUMN ai_order (SQLite doesn't support DROP COLUMN, manual rollback required)"
+          )
+          console.log("✓ Added ai_order column to images table")
+        }
       }
     }
 
     // Migrate events table: add start_date and end_date
+    // IMPROVED: Use transaction for atomic migration where possible
     if (existingTables.has("events")) {
       const eventColumns = await db.execute(`
         PRAGMA table_info(events)
@@ -848,24 +1123,60 @@ async function migrateExistingTables(
       )
 
       if (!columnNames.has("start_date")) {
-        await db.execute(`
-          ALTER TABLE events ADD COLUMN start_date INTEGER
-        `)
-        // Migrate existing event_date to start_date if event_date exists
-        await db.execute(`
-          UPDATE events SET start_date = event_date WHERE start_date IS NULL AND event_date IS NOT NULL
-        `)
-        console.log("✓ Added start_date column to events table")
+        const migrationVersion = "events_add_start_date"
+        if (!(await isMigrationApplied(db, migrationVersion))) {
+          // IMPROVED: Use transaction for column addition + data migration
+          const tx = await db.transaction()
+          try {
+            await tx.execute(`
+              ALTER TABLE events ADD COLUMN start_date INTEGER
+            `)
+            // Migrate existing event_date to start_date if event_date exists
+            await tx.execute(`
+              UPDATE events SET start_date = event_date WHERE start_date IS NULL AND event_date IS NOT NULL
+            `)
+            await tx.commit()
+            
+            await recordMigrationVersion(
+              db,
+              migrationVersion,
+              "Add start_date column to events table and migrate data",
+              "-- Rollback: ALTER TABLE events DROP COLUMN start_date (SQLite doesn't support DROP COLUMN, manual rollback required)"
+            )
+            console.log("✓ Added start_date column to events table")
+          } catch (error) {
+            await tx.rollback()
+            throw error
+          }
+        }
       }
 
       if (!columnNames.has("end_date")) {
-        await db.execute(`
-          ALTER TABLE events ADD COLUMN end_date INTEGER
-        `)
-        await db.execute(`
-          CREATE INDEX IF NOT EXISTS idx_events_end_date ON events(end_date)
-        `)
-        console.log("✓ Added end_date column to events table")
+        const migrationVersion = "events_add_end_date"
+        if (!(await isMigrationApplied(db, migrationVersion))) {
+          // IMPROVED: Use transaction for column + index creation
+          const tx = await db.transaction()
+          try {
+            await tx.execute(`
+              ALTER TABLE events ADD COLUMN end_date INTEGER
+            `)
+            await tx.execute(`
+              CREATE INDEX IF NOT EXISTS idx_events_end_date ON events(end_date)
+            `)
+            await tx.commit()
+            
+            await recordMigrationVersion(
+              db,
+              migrationVersion,
+              "Add end_date column and index to events table",
+              "-- Rollback: DROP INDEX idx_events_end_date; ALTER TABLE events DROP COLUMN end_date (SQLite doesn't support DROP COLUMN, manual rollback required)"
+            )
+            console.log("✓ Added end_date column to events table")
+          } catch (error) {
+            await tx.rollback()
+            throw error
+          }
+        }
       }
 
       // Ensure all search and date indexes exist for admin UI (add if missing)
@@ -943,21 +1254,36 @@ async function migrateExistingTables(
                              !createSql.includes("'postponed'")
       
       // If CHECK constraint has old statuses, migrate by creating new table and copying data
+      // IMPROVED: Track this complex migration for rollback documentation
       if (!hasNewStatuses && createSql.includes("CHECK")) {
-        console.log("⚠️ Migrating bookings table to update CHECK constraint (preserving data)...")
-        
-        // Check if there are any bookings
-        const bookingCount = await db.execute(`SELECT COUNT(*) as count FROM bookings`)
-        const count = (bookingCount.rows[0] as any)?.count || 0
-        
-        if (count > 0) {
-          console.log(`✓ Found ${count} existing bookings. Will preserve all data during migration.`)
-        } else {
-          console.log("✓ No existing bookings found. Safe to recreate table.")
-        }
-        
-        // Step 1: Enable foreign keys to ensure proper constraint handling
-        await db.execute(`PRAGMA foreign_keys = ON`)
+        const migrationVersion = "bookings_update_check_constraint"
+        if (!(await isMigrationApplied(db, migrationVersion))) {
+          console.log("⚠️ Migrating bookings table to update CHECK constraint (preserving data)...")
+          
+          // Check if there are any bookings
+          const bookingCount = await db.execute(`SELECT COUNT(*) as count FROM bookings`)
+          const count = (bookingCount.rows[0] as any)?.count || 0
+          
+          if (count > 0) {
+            console.log(`✓ Found ${count} existing bookings. Will preserve all data during migration.`)
+          } else {
+            console.log("✓ No existing bookings found. Safe to recreate table.")
+          }
+          
+          // IMPROVED: Store rollback SQL for this complex migration
+          // Note: This migration is complex and cannot be easily rolled back
+          // Manual rollback would require recreating the old table structure
+          const rollbackSql = `
+-- Manual rollback required for bookings table CHECK constraint migration
+-- This migration recreates the bookings table, so rollback requires:
+-- 1. Backup current bookings_new table (if exists)
+-- 2. Restore old bookings table structure
+-- 3. Copy data back to old structure
+-- This should be done manually with database backup/restore
+          `.trim()
+          
+          // Step 1: Enable foreign keys to ensure proper constraint handling
+          await db.execute(`PRAGMA foreign_keys = ON`)
         
         // Step 2: Create new table with updated CHECK constraint
         await db.execute(`
@@ -1074,6 +1400,14 @@ async function migrateExistingTables(
         
         console.log("✓ Migration completed successfully - all booking data preserved")
         
+        // Record migration version after successful completion
+        await recordMigrationVersion(
+          db,
+          migrationVersion,
+          "Update bookings table CHECK constraint (complex migration with table recreation)",
+          rollbackSql
+        )
+        
         // Step 8: Recreate booking_status_history table with foreign key constraint
         await db.execute(`
           CREATE TABLE booking_status_history (
@@ -1091,6 +1425,7 @@ async function migrateExistingTables(
         await db.execute(`CREATE INDEX IF NOT EXISTS idx_status_history_booking_id ON booking_status_history(booking_id)`)
         await db.execute(`CREATE INDEX IF NOT EXISTS idx_status_history_created_at ON booking_status_history(created_at)`)
         console.log("✓ Recreated booking_status_history table with foreign key constraint")
+        }
       }
       
       const bookingColumns = await db.execute(`

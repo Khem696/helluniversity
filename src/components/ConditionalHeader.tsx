@@ -17,18 +17,19 @@ export function ConditionalHeader() {
   useEffect(() => {
     // Set data attribute on html for CSS targeting (backup)
     const html = document.documentElement
-    // Hide main header on all admin pages and booking management pages
-    if (pathname?.startsWith("/admin") || pathname?.startsWith("/booking/response") || pathname?.startsWith("/booking/deposit")) {
+    // Hide main header on all admin pages, booking management pages, and event pages
+    if (pathname?.startsWith("/admin") || pathname?.startsWith("/booking/response") || pathname?.startsWith("/booking/deposit") || pathname?.startsWith("/events/")) {
       html.setAttribute("data-no-header", "true")
     } else {
       html.removeAttribute("data-no-header")
     }
   }, [pathname])
   
-  // Hide main website header on all admin pages and booking management pages
+  // Hide main website header on all admin pages, booking management pages, and event pages
   // Admin pages have their own layout with separate header
   // Booking response and deposit pages should be standalone without header
-  if (pathname?.startsWith("/admin") || pathname?.startsWith("/booking/response") || pathname?.startsWith("/booking/deposit")) {
+  // Event pages have their own back button and don't need header
+  if (pathname?.startsWith("/admin") || pathname?.startsWith("/booking/response") || pathname?.startsWith("/booking/deposit") || pathname?.startsWith("/events/")) {
     return null
   }
   

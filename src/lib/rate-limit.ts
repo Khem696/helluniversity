@@ -148,18 +148,15 @@ export async function checkRateLimit(
       })
 
       if (retryUpdateResult.rowsAffected && retryUpdateResult.rowsAffected > 0) {
-        // Successfully incremented - use transaction for atomic count retrieval
-        const { dbTransaction } = await import('./turso')
-        const countResult = await dbTransaction(async (tx) => {
-          const result = await tx.execute({
-            sql: `
-              SELECT count 
-              FROM rate_limits 
-              WHERE identifier = ? AND endpoint = ? AND window_start = ?
-            `,
-            args: [identifier, endpoint, windowStart],
-          })
-          return result
+        // Successfully incremented - use simple query for count retrieval (read-only, no transaction needed)
+        // IMPROVED: Removed unnecessary transaction overhead for read-only operation
+        const countResult = await db.execute({
+          sql: `
+            SELECT count 
+            FROM rate_limits 
+            WHERE identifier = ? AND endpoint = ? AND window_start = ?
+          `,
+          args: [identifier, endpoint, windowStart],
         })
         
         const newCount = countResult.rows.length > 0 ? (countResult.rows[0] as any).count : limit
@@ -218,7 +215,7 @@ export async function checkRateLimit(
   } catch (error) {
     console.error("Rate limit check error:", error)
     
-    // Track rate limit bypass (error occurred, request allowed)
+    // Track rate limit bypass (error occurred)
     try {
       const { trackRateLimitBypass } = await import('./monitoring')
       trackRateLimitBypass(endpoint, identifier)
@@ -226,8 +223,23 @@ export async function checkRateLimit(
       // Ignore monitoring errors
     }
     
-    // On error, allow the request (fail open)
-    // In production, you might want to fail closed instead
+    // IMPROVED: Fail-closed in production by default, fail-open in development
+    // Can be overridden with RATE_LIMIT_FAIL_CLOSED environment variable
+    const FAIL_CLOSED_ON_ERROR = process.env.RATE_LIMIT_FAIL_CLOSED === 'true' || 
+                                  (process.env.RATE_LIMIT_FAIL_CLOSED !== 'false' && 
+                                   process.env.NODE_ENV === 'production')
+    
+    if (FAIL_CLOSED_ON_ERROR) {
+      // Fail closed: reject request when rate limiting fails
+      return {
+        success: false,
+        limit,
+        remaining: 0,
+        reset: windowStart + windowSeconds,
+      }
+    }
+    
+    // Fail open: allow request when rate limiting fails (development only)
     return {
       success: true,
       limit,

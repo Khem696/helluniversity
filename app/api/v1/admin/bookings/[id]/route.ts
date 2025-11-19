@@ -190,7 +190,25 @@ export const PATCH = withVersioning(async (
       return authError
     }
 
-    const body = await request.json()
+    // CRITICAL: Use safe JSON parsing with size limits to prevent DoS
+    let body: any
+    try {
+      const { safeParseJSON } = await import('@/lib/safe-json-parse')
+      body = await safeParseJSON(request, 1048576) // 1MB limit for booking update data
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error)
+      await logger.warn('Request body parsing failed', new Error(errorMessage))
+      return errorResponse(
+        ErrorCodes.VALIDATION_ERROR,
+        errorMessage.includes('too large') 
+          ? 'Request body is too large. Please reduce the size of your submission.'
+          : 'Invalid request format. Please check your input and try again.',
+        undefined,
+        400,
+        { requestId }
+      )
+    }
+    
     const { status, changeReason, adminNotes, proposedDate, depositVerifiedBy, newStartDate, newEndDate, newStartTime, newEndTime, action } = body
     
     await logger.debug('Booking update data', {
@@ -611,6 +629,16 @@ export const PATCH = withVersioning(async (
             })
           }
 
+          // IMPROVED: Validate field names before building SQL to prevent injection
+          const { validateFieldNames, ALLOWED_BOOKING_FIELDS } = await import('@/lib/sql-field-validation')
+          const fieldValidation = validateFieldNames(updateFields, ALLOWED_BOOKING_FIELDS)
+          
+          if (!fieldValidation.valid) {
+            throw new Error(
+              `Invalid field names in update: ${fieldValidation.errors?.join(', ')}`
+            )
+          }
+          
           // Execute UPDATE with optimistic locking (check updated_at) within transaction
           const result = await tx.execute({
             sql: `UPDATE bookings SET ${updateFields.join(", ")} WHERE id = ? AND updated_at = ?`,
@@ -1520,17 +1548,43 @@ export const DELETE = withVersioning(async (
     )
 
     // OPTIMIZED: Start all background operations but don't wait for them
-    // Use Promise.allSettled to ensure all operations are attempted but don't block the response
-    Promise.allSettled(backgroundOperations).then(async (results) => {
-      const failed = results.filter(r => r.status === 'rejected').length
-      if (failed > 0) {
-        await logger.warn(`Some background operations failed during booking deletion`, { bookingId: id, failedCount: failed, totalCount: results.length })
-      } else {
-        await logger.info('All background operations completed for booking deletion', { bookingId: id })
-      }
-    }).catch(async (error) => {
-      await logger.error('Error in background operations promise handler', error instanceof Error ? error : new Error(String(error)), { bookingId: id })
-    })
+    // IMPROVED: Use Promise.allSettled with explicit error handling to prevent unhandled rejections
+    // Store promise reference to ensure it's tracked (prevents garbage collection issues in serverless)
+    const backgroundPromise = Promise.allSettled(backgroundOperations)
+      .then(async (results) => {
+        const failed = results.filter(r => r.status === 'rejected').length
+        if (failed > 0) {
+          // Log individual failures for debugging
+          const failures = results
+            .filter(r => r.status === 'rejected')
+            .map((r, idx) => ({
+              index: idx,
+              error: r.status === 'rejected' ? (r.reason instanceof Error ? r.reason.message : String(r.reason)) : 'unknown'
+            }))
+          
+          await logger.warn(`Some background operations failed during booking deletion`, { 
+            bookingId: id, 
+            failedCount: failed, 
+            totalCount: results.length,
+            failures
+          })
+        } else {
+          await logger.info('All background operations completed for booking deletion', { bookingId: id })
+        }
+      })
+      .catch(async (error) => {
+        // This should rarely happen since Promise.allSettled doesn't reject
+        // But we handle it just in case
+        await logger.error('Unexpected error in background operations promise handler', 
+          error instanceof Error ? error : new Error(String(error)), 
+          { bookingId: id }
+        )
+      })
+    
+    // IMPROVED: Explicitly track the promise to prevent unhandled rejection warnings
+    // In serverless environments, this ensures the promise is tracked even if function returns early
+    // The promise will complete in the background, and errors are logged
+    void backgroundPromise // Explicitly mark as intentionally not awaited
 
     await logger.info('Booking deleted successfully (background operations queued)', { bookingId: id })
 

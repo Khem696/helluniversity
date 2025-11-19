@@ -4,6 +4,7 @@ import Link from "next/link"
 import { useRef, useState, useEffect, useCallback } from "react"
 import { Calendar as CalendarIcon, Menu, X, AlertCircle, RefreshCw, Clock, Loader2 } from "lucide-react"
 import { toast } from "sonner"
+import { trackBookingFormStart, trackBookingFormSubmit, trackBookingFormError, trackBookingFormFieldInteraction, trackBookingFormCompletionAttempt } from "@/lib/analytics"
 import { Dialog, DialogTrigger, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -296,6 +297,8 @@ export function Header() {
     if (error) {
       setError(null)
     }
+    // Track field interaction for funnel analysis
+    trackBookingFormFieldInteraction(field)
   }
 
   const handleStartDateChange = (date: Date | undefined) => {
@@ -409,6 +412,8 @@ export function Header() {
       setRetryCount(0)
       // Force reCAPTCHA to re-render by incrementing key
       recaptchaKeyRef.current += 1
+      // Track booking form start
+      trackBookingFormStart()
     } else {
       // Modal closed - only clear on successful submission
       // Form data persists in localStorage
@@ -452,6 +457,19 @@ export function Header() {
       })
       return
     }
+    
+    // Track form completion attempt (funnel step 3) - before validation
+    const eventType = formData.eventType === "Other" ? formData.otherEventType : formData.eventType
+    const hasAllRequiredFields = !!(
+      formData.name &&
+      formData.email &&
+      formData.phone &&
+      formData.eventType &&
+      startDate &&
+      formData.startTime &&
+      formData.endTime
+    )
+    trackBookingFormCompletionAttempt(eventType || 'unknown', hasAllRequiredFields)
     
     // Validate required fields
     if (!startDate) {
@@ -715,13 +733,43 @@ export function Header() {
       if (!data.success) {
         // Extract error message, prioritizing specific validation errors
         const errorMsg = getErrorMessage(data.error, "Failed to submit booking")
+        // Track booking error with funnel step
+        trackBookingFormError(data.error?.code || 'unknown_error', 3) // Step 3 = completion attempt
         throw new Error(errorMsg)
       }
       
       // Success - clear form data and localStorage
+      // Track successful booking submission with enhanced data
+      const eventType = formData.eventType === "Other" ? formData.otherEventType : formData.eventType
+      trackBookingFormSubmit(eventType, {
+        participants: formData.participants,
+        dateRange: formData.dateRange,
+        organizationType: formData.organizationType,
+      })
+      
+      // Check email status from response
+      const emailStatus = data.data?.emailStatus
+      const emailsQueued = emailStatus?.queued || false
+      const allEmailsSent = emailStatus?.adminSent && emailStatus?.userSent
+      
+      // Determine success message based on email status
+      let successDescription = "Thank you for your reservation request! We'll be in touch soon."
+      if (emailsQueued && !allEmailsSent) {
+        // Emails were queued for retry - booking exists but emails will be sent later
+        successDescription = "Your booking has been confirmed. Confirmation emails are being processed and will be sent shortly."
+      } else if (!allEmailsSent && emailStatus) {
+        // Some emails failed but were queued
+        successDescription = "Your booking has been confirmed. Some confirmation emails are being retried and will be sent shortly."
+      }
+      
+      // Store booking reference number for user reference
+      if (data.data?.referenceNumber && typeof window !== "undefined") {
+        sessionStorage.setItem('lastBookingReference', data.data.referenceNumber)
+      }
+      
       toast.success("Reservation submitted successfully!", {
-        description: "Thank you for your reservation request! We'll be in touch soon.",
-        duration: 5000,
+        description: successDescription,
+        duration: 7000, // Longer duration to show email status message
         className: "bg-white border border-gray-300 rounded-lg shadow-lg font-comfortaa",
         style: {
           backgroundColor: "#ffffff",
@@ -735,6 +783,28 @@ export function Header() {
           fontSize: "clamp(0.875rem, 2vw, 1rem)",
         },
       })
+      
+      // Optionally show booking reference number
+      if (data.data?.referenceNumber) {
+        setTimeout(() => {
+          toast.info(`Booking Reference: ${data.data.referenceNumber}`, {
+            description: "Please save this reference number for your records.",
+            duration: 10000,
+            className: "bg-blue-50 border border-blue-200 rounded-lg shadow-lg font-comfortaa",
+          })
+        }, 2000) // Show after success toast
+      }
+      
+      // If emails were queued, show additional info
+      if (emailsQueued) {
+        setTimeout(() => {
+          toast.info("Email Status", {
+            description: "Confirmation emails are being processed and will be sent shortly.",
+            duration: 5000,
+            className: "bg-blue-50 border border-blue-200 rounded-lg shadow-lg font-comfortaa",
+          })
+        }, 4000) // Show after reference number toast
+      }
       
       setFormData({
         name: "",
@@ -770,6 +840,12 @@ export function Header() {
     } catch (error: any) {
       console.error("Booking submission error:", error)
       
+      // Track booking error with funnel step
+      const errorTypeForTracking = error.name === "AbortError" ? "timeout" : 
+        error.message?.includes("email") ? "email_error" :
+        error.message?.includes("network") ? "network_error" : "unknown_error"
+      trackBookingFormError(errorTypeForTracking, 3) // Step 3 = completion attempt
+      
       let errorMessage = "Failed to submit booking. Please try again."
       let errorType: FormError["type"] = "network"
       let retryable = true
@@ -780,10 +856,18 @@ export function Header() {
         retryable = true
       } else if (error.message) {
         errorMessage = error.message
-        // Check for email-related errors
-        if (error.message.includes("email") || error.message.includes("confirmation")) {
+        // Check for database vs email errors
+        if (error.message.includes("Failed to save booking to database") || error.message.includes("database")) {
+          // Database failed - booking was NOT saved, user must retry
+          errorType = "server" // Use "server" type (database errors are server-side)
+          errorMessage = "Failed to save your booking. Please try again. Your form data has been preserved."
+          retryable = true
+        } else if (error.message.includes("email") || error.message.includes("confirmation")) {
+          // Email error - check if booking was saved
+          // With new approach, if booking exists, emails are queued, so this shouldn't happen
+          // But handle gracefully for backward compatibility
           errorType = "server"
-          errorMessage = "Failed to send confirmation emails. Your form data has been saved. Please verify CAPTCHA again below and try submitting once more."
+          errorMessage = "Failed to send confirmation emails. Please try again."
           retryable = true
         } else if (error.message.includes("network") || error.message.includes("fetch")) {
           errorType = "network"

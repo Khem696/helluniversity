@@ -30,7 +30,24 @@ export async function POST(
     }
 
     try {
-      const body = await request.json()
+      // CRITICAL: Use safe JSON parsing with size limits to prevent DoS
+      let body: any
+      try {
+        const { safeParseJSON } = await import('@/lib/safe-json-parse')
+        body = await safeParseJSON(request, 102400) // 100KB limit for validation data
+      } catch (parseError) {
+        const errorMessage = parseError instanceof Error ? parseError.message : String(parseError)
+        await logger.warn('Request body parsing failed', new Error(errorMessage))
+        return errorResponse(
+          ErrorCodes.VALIDATION_ERROR,
+          errorMessage.includes('too large') 
+            ? 'Request body is too large. Please reduce the size of your submission.'
+            : 'Invalid request format. Please check your input and try again.',
+          undefined,
+          400,
+          { requestId }
+        )
+      }
       const { action, targetStatus } = body
 
       if (!action || !targetStatus) {

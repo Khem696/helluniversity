@@ -42,7 +42,27 @@ export const POST = withVersioning(async (request: Request) => {
     
     await logger.info('reCAPTCHA verification request received')
     
-    const { token } = await request.json()
+    // CRITICAL: Use safe JSON parsing with size limits to prevent DoS
+    // reCAPTCHA tokens are typically small, but we still need a limit
+    let body: any
+    try {
+      const { safeParseJSON } = await import('@/lib/safe-json-parse')
+      body = await safeParseJSON(request, 10240) // 10KB limit for reCAPTCHA token
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error)
+      await logger.warn('Request body parsing failed', new Error(errorMessage))
+      return errorResponse(
+        ErrorCodes.VALIDATION_ERROR,
+        errorMessage.includes('too large') 
+          ? 'Request body is too large. Please check your reCAPTCHA token.'
+          : 'Invalid request format. Please check your input and try again.',
+        undefined,
+        400,
+        { requestId }
+      )
+    }
+    
+    const { token } = body
 
     if (!token) {
       await logger.warn('reCAPTCHA verification rejected: missing token')

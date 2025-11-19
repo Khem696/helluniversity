@@ -1,6 +1,11 @@
-import { Facebook, Twitter, Instagram, Search, MapPin, Mail } from "lucide-react";
+"use client"
+
+import { Facebook, Twitter, Instagram, Search, MapPin, Mail, Navigation, Clock } from "lucide-react";
 import { ImageWithFallback } from "./figma/ImageWithFallback";
 import { withBasePath } from "@/lib/utils";
+import Link from "next/link";
+import { trackInternalLinkClick } from "@/lib/analytics";
+import { GoogleMapsEmbed } from "./GoogleMapsEmbed";
 
 export function ContactPage() {
   return (
@@ -10,7 +15,7 @@ export function ContactPage() {
           <div className="w-[clamp(18rem,90vw,44rem)] lg:w-[clamp(18rem,46vw,48rem)] mx-auto -translate-y-[clamp(0rem,2vw,1rem)] lg:translate-y-0">
             <ImageWithFallback
               src={withBasePath('/assets/artwork/artwork_contact.png')}
-              alt="Contact artwork"
+              alt="Contact Hell University cultural hub in Mae Taeng, Chiang Mai, Thailand - Book event spaces and arrange cultural activities"
               className="w-full h-auto object-cover"
               width={1600}
               height={900}
@@ -28,24 +33,58 @@ export function ContactPage() {
               CONTACT
             </h1>
 
-              {/* Location Link */}
+              {/* Location & Directions */}
+              <div className="mb-4 space-y-2">
+                <div>
+                  <a 
+                    href="https://maps.app.goo.gl/gnW3rP7SsAdhd2ft9?g_st=ipc" 
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-flex items-center gap-2 text-white/70 hover:text-[#87CEEB] transition-colors text-[clamp(0.95rem,1vw,1.125rem)]"
+                  >
+                    <MapPin size={20} className="flex-shrink-0" />
+                    <span>Mae Taeng, Chiang Mai, Thailand</span>
+                  </a>
+                </div>
+                <div>
+                  <a 
+                    href="https://www.google.com/maps/dir/?api=1&destination=19.1200,98.9417" 
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-flex items-center gap-2 text-[#87CEEB] hover:text-[#5B9AB8] transition-colors text-[clamp(0.875rem,0.9vw,1rem)] font-medium"
+                  >
+                    <Navigation size={18} className="flex-shrink-0" />
+                    <span>Get Directions</span>
+                  </a>
+                </div>
+              </div>
+
+              {/* Business Hours */}
               <div className="mb-4">
-                <a 
-                  href="https://maps.app.goo.gl/gnW3rP7SsAdhd2ft9?g_st=ipc" 
-                  target="_blank" 
-                  rel="noopener noreferrer"
-                  className="inline-flex items-center gap-2 text-white/70 hover:text-[#87CEEB] transition-colors text-[clamp(0.95rem,1vw,1.125rem)]"
-                >
-                  <MapPin size={20} className="flex-shrink-0" />
-                  <span>Location</span>
-                </a>
+                <div className="flex items-start gap-2 text-white/70 text-[clamp(0.875rem,0.9vw,1rem)]">
+                  <Clock size={18} className="flex-shrink-0 mt-0.5" />
+                  <div>
+                    <p className="font-medium mb-1">Opening Hours</p>
+                    <p className="font-light">Monday - Sunday: 9:00 AM - 9:00 PM</p>
+                  </div>
+                </div>
+              </div>
+
+              {/* Google Maps Embed */}
+              <div className="mb-[clamp(1.5rem,3vw,2.5rem)]">
+                <GoogleMapsEmbed
+                  latitude="19.1200"
+                  longitude="98.9417"
+                  height="250px"
+                  className="rounded-lg shadow-lg"
+                />
               </div>
 
               {/* QR Code */}
               <div className="mb-[clamp(1.5rem,3vw,2.5rem)]">
                 <ImageWithFallback
                   src={withBasePath('/assets/qrcode/location.jpg')}
-                  alt="Location QR Code"
+                  alt="Location QR Code for Hell University cultural hub in Mae Taeng, Chiang Mai, Thailand - Scan to get directions"
                   className="w-full max-w-[150px] md:max-w-[180px] lg:max-w-[200px] h-auto object-cover rounded"
                   width={200}
                   height={200}
@@ -89,6 +128,36 @@ export function ContactPage() {
                 {/* <p className="text-white/70 font-light text-[clamp(0.95rem,1vw,1.125rem)]">
                 123-456-7890
               </p> */}
+            </div>
+            
+            {/* Internal Links Section */}
+            <div className="mt-8 pt-6 border-t border-white/20">
+              <p className="text-white/70 font-comfortaa text-[clamp(0.875rem,0.9vw,1rem)] mb-3">
+                Learn more about Hell University:
+              </p>
+              <nav className="flex flex-col gap-2" aria-label="Related pages">
+                <Link 
+                  href="/about" 
+                  className="text-white/70 hover:text-[#87CEEB] transition-colors text-[clamp(0.875rem,0.9vw,1rem)] font-light underline"
+                  onClick={() => trackInternalLinkClick('About Hell University', '/about', 'contact')}
+                >
+                  About Hell University
+                </Link>
+                <Link 
+                  href="/studio-gallery" 
+                  className="text-white/70 hover:text-[#87CEEB] transition-colors text-[clamp(0.875rem,0.9vw,1rem)] font-light underline"
+                  onClick={() => trackInternalLinkClick('Studio & Gallery', '/studio-gallery', 'contact')}
+                >
+                  Studio & Gallery
+                </Link>
+                <Link 
+                  href="/" 
+                  className="text-white/70 hover:text-[#87CEEB] transition-colors text-[clamp(0.875rem,0.9vw,1rem)] font-light underline"
+                  onClick={() => trackInternalLinkClick('View Events', '/', 'contact')}
+                >
+                  View Events
+                </Link>
+              </nav>
             </div>
           </div>
         </div>

@@ -285,8 +285,11 @@ export async function listBookings(options?: {
 }): Promise<{ bookings: Booking[]; total: number }> {
   const db = getTursoClient()
 
-  const limit = options?.limit || 50
-  const offset = options?.offset || 0
+  // CRITICAL: Validate and clamp limit/offset to prevent DoS
+  // Limit: 1-1000 (default: 50)
+  // Offset: 0-1000000 (default: 0, prevents negative or extremely large offsets)
+  const limit = Math.max(1, Math.min(1000, options?.limit || 50))
+  const offset = Math.max(0, Math.min(1000000, options?.offset || 0))
 
   // Build WHERE clause
   const conditions: string[] = []
@@ -362,9 +365,18 @@ export async function listBookings(options?: {
 
   // Optimize ORDER BY based on available filters and user preferences to leverage composite indexes
   // Default: created_at DESC (uses idx_bookings_created_at)
-  const sortBy = options?.sortBy || "created_at"
-  const sortOrder = options?.sortOrder || "DESC"
+  // CRITICAL: Validate sortBy and sortOrder to prevent SQL injection
+  const ALLOWED_SORT_FIELDS = ["created_at", "start_date", "name", "updated_at"] as const
+  const ALLOWED_SORT_ORDERS = ["ASC", "DESC"] as const
   
+  const sortBy = (options?.sortBy && ALLOWED_SORT_FIELDS.includes(options.sortBy as any))
+    ? options.sortBy
+    : "created_at"
+  const sortOrder = (options?.sortOrder && ALLOWED_SORT_ORDERS.includes(options.sortOrder as any))
+    ? options.sortOrder
+    : "DESC"
+  
+  // Safe: sortBy and sortOrder are validated against whitelist
   let orderByClause = `ORDER BY ${sortBy} ${sortOrder}`
   
   // Add secondary sort for consistency when sorting by non-unique fields
@@ -607,6 +619,15 @@ async function calculateReservationEndTimestamp(
     }
   }
 
+  // DEFENSIVE: Validate that endTimestamp is not before startDate
+  // This provides an additional safety check even though validation exists elsewhere
+  // Note: For single-day bookings, endTimestamp might equal startDate (which is valid)
+  if (endTimestamp !== null && endTimestamp < startDate) {
+    console.warn(`Invalid timestamp range: endTimestamp (${endTimestamp}, ${new Date(endTimestamp * 1000).toISOString()}) < startDate (${startDate}, ${new Date(startDate * 1000).toISOString()})`)
+    // Return null to indicate invalid range - caller should handle this
+    return null
+  }
+
   return endTimestamp
 }
 
@@ -636,9 +657,10 @@ export async function autoUpdateFinishedBookings(): Promise<{
   // Optimized: Uses idx_bookings_status_start_date for status filtering
   // Note: SQLite can use the index for IN clause with multiple statuses
   // Include deposit_evidence_url for cleanup when cancelling/finishing bookings
-  // CRITICAL: Skip bookings updated in last 5 minutes to avoid conflicts with admin actions
+  // CRITICAL: Skip bookings updated in last 15 minutes to avoid conflicts with admin actions
   // This gives admin actions time to complete before cron processes the booking
-  const SKIP_RECENTLY_UPDATED_SECONDS = 5 * 60 // 5 minutes
+  // Increased from 5 to 15 minutes to handle slow email sending and long admin operations
+  const SKIP_RECENTLY_UPDATED_SECONDS = 15 * 60 // 15 minutes
   const skipThreshold = now - SKIP_RECENTLY_UPDATED_SECONDS
   
   const result = await db.execute({
@@ -1096,13 +1118,16 @@ export async function updateBookingStatus(
 
     // Check for overlaps when setting status to confirmed (from paid_deposit)
     // This prevents creating overlapping confirmed bookings
+    // CRITICAL: Use locked overlap check within transaction to prevent race conditions
     if (finalStatus === "confirmed" && oldStatus !== "confirmed") {
-        const overlapCheck = await checkBookingOverlap(
+        const { checkBookingOverlapWithLock } = await import("./booking-validations")
+        const overlapCheck = await checkBookingOverlapWithLock(
           bookingId,
-        currentBooking.start_date,
-        currentBooking.end_date || null,
+          currentBooking.start_date,
+          currentBooking.end_date || null,
           currentBooking.start_time,
-          currentBooking.end_time
+          currentBooking.end_time,
+          db // Pass transaction object for locked check
         )
         
         if (overlapCheck.overlaps) {
@@ -1394,6 +1419,16 @@ export async function updateBookingStatus(
     // This prevents race conditions when multiple admins act simultaneously
     // CRITICAL: Use updated_at (snake_case) since currentBooking is a raw database row (from line 1010), not a formatted Booking object
     const originalUpdatedAt = currentBooking.updated_at
+    
+    // IMPROVED: Validate field names before building SQL to prevent injection
+    const { validateFieldNames, ALLOWED_BOOKING_FIELDS } = await import('./sql-field-validation')
+    const fieldValidation = validateFieldNames(updateFields, ALLOWED_BOOKING_FIELDS)
+    
+    if (!fieldValidation.valid) {
+      throw new Error(
+        `Invalid field names in update: ${fieldValidation.errors?.join(', ')}`
+      )
+    }
     
     // Update with version check (optimistic locking)
     const updateResult = await db.execute({
@@ -1692,7 +1727,7 @@ export async function submitUserResponse(
     message?: string
   }
 ): Promise<Booking> {
-  return await dbTransaction(async (db) => {
+  const transactionResult = await dbTransaction(async (db) => {
     // CRITICAL: Use Bangkok time for consistency with business logic
     const { getBangkokTime } = await import('./timezone')
     const now = getBangkokTime()
@@ -1959,23 +1994,52 @@ export async function submitUserResponse(
 
     const updatedBooking = formatBooking(result.rows[0] as any)
     
-    // Invalidate cache for this booking
-    await invalidateCache(CacheKeys.booking(bookingId))
+    // Don't invalidate cache inside transaction - move outside after commit
+    // Cache invalidation can be slow and shouldn't block transaction commit
     
-    // Invalidate token cache if token exists
+    // Store cache keys to invalidate after transaction commits
+    const cacheKeysToInvalidate: string[] = [CacheKeys.booking(bookingId)]
+    
     if (currentBooking.response_token) {
-      await invalidateCache(CacheKeys.bookingByToken(currentBooking.response_token))
+      cacheKeysToInvalidate.push(CacheKeys.bookingByToken(currentBooking.response_token))
     }
     
     // If new token was generated, invalidate old token cache
     if (responseToken && currentBooking.response_token && responseToken !== currentBooking.response_token) {
-      await invalidateCache(CacheKeys.bookingByToken(currentBooking.response_token))
+      cacheKeysToInvalidate.push(CacheKeys.bookingByToken(currentBooking.response_token))
+    }
+    
+    // Return both booking and cache keys
+    return {
+      booking: updatedBooking,
+      cacheKeys: cacheKeysToInvalidate,
+      oldToken: currentBooking.response_token,
+      newToken: responseToken
+    }
+  })
+  
+  // IMPROVED: Invalidate cache AFTER transaction commits successfully
+  // This prevents cache invalidation from blocking or delaying transaction commit
+  try {
+    const { invalidateCache } = await import('./cache')
+    
+    // Invalidate booking cache
+    if (transactionResult.cacheKeys.length > 0) {
+      await invalidateCache(transactionResult.cacheKeys[0])
+    }
+    
+    // Invalidate token caches
+    for (let i = 1; i < transactionResult.cacheKeys.length; i++) {
+      await invalidateCache(transactionResult.cacheKeys[i])
     }
     
     // Invalidate list caches (bookings list may have changed)
     await invalidateCache('bookings:list')
-    
-    return updatedBooking
-  })
+  } catch (cacheError) {
+    // Don't fail if cache invalidation fails - it's non-critical
+    console.warn('Cache invalidation failed after user response submission', cacheError)
+  }
+  
+  return transactionResult.booking
 }
 

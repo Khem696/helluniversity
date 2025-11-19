@@ -15,6 +15,8 @@ import {
   CarouselPrevious,
   type CarouselApi,
 } from "./ui/carousel";
+import { ImageGalleryStructuredData } from "./ImageGalleryStructuredData";
+import { trackImageGalleryView } from "@/lib/analytics";
 
 // Lazy load AISpaceGenerator component for better performance
 const AISpaceGenerator = lazy(() => import("./AISpaceGenerator").then(module => ({ default: module.AISpaceGenerator })));
@@ -145,6 +147,16 @@ export function StudioGalleryPage() {
     [artworkImages, buildingImages],
   );
 
+  // Combine all images for ImageGallery structured data
+  const allGalleryImages = useMemo(
+    () => [
+      ...artworkImages.map(url => ({ url, title: 'Artwork', description: 'Studio artwork from Hell University' })),
+      ...buildingImages.map(url => ({ url, title: 'Building', description: 'Studio building photos from Hell University' })),
+      ...galleryImages.map(url => ({ url, title: 'Gallery', description: 'Gallery exhibition photos from Hell University' })),
+    ],
+    [artworkImages, buildingImages, galleryImages],
+  );
+
   const [current, setCurrent] = useState<Indices>({ a: 0, b: 1, c: 0 });
   const [nextSet, setNextSet] = useState<Indices | null>(null);
   const [showNext, setShowNext] = useState(false);
@@ -265,6 +277,8 @@ export function StudioGalleryPage() {
     const idx = allImages.indexOf(src);
     setViewerIndex(idx >= 0 ? idx : 0);
     setViewerOpen(true);
+    // Track gallery view
+    trackImageGalleryView("studio", allImages.length);
   };
 
   const openViewerForGalleryImage = (idx?: number) => {
@@ -272,6 +286,8 @@ export function StudioGalleryPage() {
     setViewerMode("gallery");
     setViewerIndex(typeof idx === "number" ? idx : galleryCurrent);
     setViewerOpen(true);
+    // Track gallery view
+    trackImageGalleryView("gallery", galleryImages.length);
   };
 
   useEffect(() => {
@@ -344,6 +360,9 @@ export function StudioGalleryPage() {
 
   return (
     <div className="min-h-vp lg:h-screen lg:overflow-y-auto lg:overflow-x-hidden bg-[#7a2d28]">
+      {/* ImageGallery Structured Data for SEO */}
+      <ImageGalleryStructuredData images={allGalleryImages} />
+      
       {/* Section wrapper: limits background layers to the Studio/Gallery area only */}
       <section className="relative overflow-hidden pb-0">
         {/* Equal top spacer matching header height (Tailwind scale) */}
@@ -660,10 +679,12 @@ export function StudioGalleryPage() {
                     <div className="flex items-center justify-center w-full h-full bg-black">
                       <img
                         src={src}
-                        alt={viewerMode === "studio" ? "Studio image" : "Gallery image"}
+                        alt={viewerMode === "studio" ? `Studio artwork and building photos at Hell University cultural hub in Mae Taeng, Chiang Mai, Thailand. Event space available for booking.` : `Gallery exhibition photos at Hell University cultural hub in Mae Taeng, Chiang Mai, Thailand. Cultural events and art displays.`}
                         className="object-contain w-auto h-auto"
                         style={{ maxWidth: 'calc(100vw - 6rem)', maxHeight: 'calc(100vh - 6rem)' }}
                         loading={i === viewerIndex ? "eager" : "lazy"}
+                        decoding="async"
+                        fetchPriority={i === viewerIndex ? "high" : "auto"}
                       />
                     </div>
                   </CarouselItem>

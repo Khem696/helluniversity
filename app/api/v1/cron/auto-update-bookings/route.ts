@@ -12,8 +12,11 @@
  * Auto-Update Bookings Cron Job
  * 
  * This endpoint is called by Vercel cron jobs to automatically:
- * - Cancel pending/pending_deposit bookings with past start dates
+ * - Cancel pending/pending_deposit/paid_deposit bookings with past start dates
  * - Mark confirmed bookings as finished when past end date
+ * 
+ * Note: Bookings updated in the last 15 minutes are skipped to avoid conflicts
+ * with admin actions and slow email sending operations.
  * 
  * This endpoint should be called periodically (e.g., every hour)
  */

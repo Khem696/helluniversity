@@ -28,7 +28,9 @@ export const GET = withVersioning(async (request: Request) => {
     
     const { searchParams } = new URL(request.url)
     const category = searchParams.get("category")
-    const limit = parseInt(searchParams.get("limit") || "100")
+    // CRITICAL: Validate and clamp limit to prevent DoS
+    const rawLimit = parseInt(searchParams.get("limit") || "100")
+    const limit = isNaN(rawLimit) ? 100 : Math.max(1, Math.min(1000, rawLimit))
 
     if (!category) {
       await logger.warn('Get images rejected: missing category parameter')

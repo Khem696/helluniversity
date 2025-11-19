@@ -6,6 +6,7 @@ import { Upload, Check, AlertCircle, X, XCircle } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Label } from "@/components/ui/label"
 import { toast } from "sonner"
+import { API_PATHS } from "@/lib/api-config"
 
 interface BookingData {
   id: string
@@ -92,9 +93,12 @@ export default function DepositUploadPage() {
       return
     }
 
-    // Validate file size (max 10MB)
-    if (file.size > 10 * 1024 * 1024) {
-      toast.error("File size must be less than 10MB")
+    // Validate file size (configurable via environment variable, default 20MB)
+    // Note: This is a client-side check. Backend also validates.
+    const maxFileSize = parseInt(process.env.NEXT_PUBLIC_MAX_IMAGE_FILE_SIZE || '20971520', 10) // 20MB default
+    if (file.size > maxFileSize) {
+      const maxSizeMB = Math.round(maxFileSize / 1024 / 1024)
+      toast.error(`File size must be less than ${maxSizeMB}MB`)
       return
     }
 
@@ -501,7 +505,7 @@ export default function DepositUploadPage() {
                         <span className="font-semibold">Click to upload</span> or drag and drop
                       </p>
                       <p className="text-xs text-gray-500 font-comfortaa">
-                        PNG, JPG, WEBP up to 10MB
+                        PNG, JPG, WEBP up to {Math.round((parseInt(process.env.NEXT_PUBLIC_MAX_IMAGE_FILE_SIZE || '20971520', 10) / 1024 / 1024))}MB
                       </p>
                     </div>
                   )}

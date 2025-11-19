@@ -50,6 +50,23 @@ export const POST = withVersioning(async (request: Request) => {
       return forbiddenResponse("Access denied: Must be from authorized Google Workspace domain", { requestId })
     }
     
+    // CRITICAL: Validate FormData size before parsing to prevent DoS
+    const { validateFormDataSize } = await import('@/lib/formdata-validation')
+    const formDataSizeCheck = await validateFormDataSize(request) // Uses MAX_FORMDATA_SIZE env var (default: 20MB)
+    if (!formDataSizeCheck.valid) {
+      await logger.warn('Admin image upload rejected: FormData too large', { 
+        error: formDataSizeCheck.error,
+        size: formDataSizeCheck.size 
+      })
+      return errorResponse(
+        ErrorCodes.VALIDATION_ERROR,
+        formDataSizeCheck.error || "Request body is too large. Please reduce the file size and try again.",
+        undefined,
+        413, // 413 Payload Too Large
+        { requestId }
+      )
+    }
+    
     const formData = await request.formData()
     const file = formData.get("file") as File | null
     const title = formData.get("title") as string | null
@@ -109,68 +126,96 @@ export const POST = withVersioning(async (request: Request) => {
     })
 
     // Save metadata to database
-    const db = getTursoClient()
-    const imageId = randomUUID()
-    const now = Math.floor(Date.now() / 1000)
+    // CRITICAL: Wrap in try-catch to cleanup blob if database insert fails
+    try {
+      const db = getTursoClient()
+      const imageId = randomUUID()
+      const now = Math.floor(Date.now() / 1000)
 
-    // Get max display_order for this category if not provided
-    let finalDisplayOrder = displayOrder ? parseInt(displayOrder) : null
-    if (finalDisplayOrder === null && category) {
-      const maxResult = await db.execute({
-        sql: `SELECT COALESCE(MAX(display_order), -1) + 1 as next_order FROM images WHERE category = ?`,
-        args: [category],
+      // Get max display_order for this category if not provided
+      let finalDisplayOrder = displayOrder ? parseInt(displayOrder) : null
+      if (finalDisplayOrder === null && category) {
+        const maxResult = await db.execute({
+          sql: `SELECT COALESCE(MAX(display_order), -1) + 1 as next_order FROM images WHERE category = ?`,
+          args: [category],
+        })
+        finalDisplayOrder = (maxResult.rows[0] as any).next_order
+      } else if (finalDisplayOrder === null) {
+        finalDisplayOrder = 0
+      }
+
+      await db.execute({
+        sql: `
+          INSERT INTO images (
+            id, blob_url, title, event_info, category, display_order, format, 
+            width, height, file_size, original_filename, 
+            created_at, updated_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `,
+        args: [
+          imageId,
+          processed.url,
+          title || null,
+          eventInfo || null,
+          category || null,
+          finalDisplayOrder,
+          processed.format,
+          processed.width,
+          processed.height,
+          processed.fileSize,
+          file.name,
+          now,
+          now,
+        ],
       })
-      finalDisplayOrder = (maxResult.rows[0] as any).next_order
-    } else if (finalDisplayOrder === null) {
-      finalDisplayOrder = 0
-    }
+      
+      await logger.info('Image metadata saved to database', { imageId, category: category || undefined })
 
-    await db.execute({
-      sql: `
-        INSERT INTO images (
-          id, blob_url, title, event_info, category, display_order, format, 
-          width, height, file_size, original_filename, 
-          created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-      `,
-      args: [
-        imageId,
-        processed.url,
-        title || null,
-        eventInfo || null,
-        category || null,
-        finalDisplayOrder,
-        processed.format,
-        processed.width,
-        processed.height,
-        processed.fileSize,
-        file.name,
-        now,
-        now,
-      ],
-    })
-    
-    await logger.info('Image metadata saved to database', { imageId, category: category || undefined })
-
-    return successResponse(
-      {
-        image: {
-          id: imageId,
-          url: processed.url,
-          pathname: processed.pathname,
-          title: title || null,
-          event_info: eventInfo || null,
-          category: category || null,
-          display_order: finalDisplayOrder,
-          width: processed.width,
-          height: processed.height,
-          file_size: processed.fileSize,
-          format: processed.format,
-          created_at: now,
+      return successResponse(
+        {
+          image: {
+            id: imageId,
+            url: processed.url,
+            pathname: processed.pathname,
+            title: title || null,
+            event_info: eventInfo || null,
+            category: category || null,
+            display_order: finalDisplayOrder,
+            width: processed.width,
+            height: processed.height,
+            file_size: processed.fileSize,
+            format: processed.format,
+            created_at: now,
+          },
         },
-      },
-      { requestId }
-    )
+        { requestId }
+      )
+    } catch (dbError) {
+      // CRITICAL: Cleanup orphaned blob if database insert failed
+      // The blob was uploaded successfully but database insert failed, leaving it orphaned
+      try {
+        const { deleteImage } = await import("@/lib/blob")
+        await deleteImage(processed.url)
+        await logger.info('Cleaned up orphaned image blob after database insert failure', {
+          blobUrl: processed.url
+        })
+      } catch (cleanupError) {
+        // If cleanup fails, queue it for background cleanup
+        await logger.error('Failed to cleanup orphaned image blob, queueing for background cleanup', cleanupError instanceof Error ? cleanupError : new Error(String(cleanupError)), {
+          blobUrl: processed.url
+        })
+        try {
+          const { enqueueJob } = await import("@/lib/job-queue")
+          await enqueueJob("cleanup-orphaned-blob", { blobUrl: processed.url }, { priority: 1 })
+          await logger.info('Queued orphaned blob cleanup job for failed image upload', { blobUrl: processed.url })
+        } catch (queueError) {
+          await logger.error("Failed to queue orphaned blob cleanup", queueError instanceof Error ? queueError : new Error(String(queueError)), { blobUrl: processed.url })
+        }
+      }
+      
+      // Re-throw the database error (will be caught by withErrorHandling)
+      throw dbError
+    }
   }, { endpoint: getRequestPath(request) })
 })
 
@@ -202,12 +247,28 @@ export const GET = withVersioning(async (request: Request) => {
     }
     
     const { searchParams } = new URL(request.url)
-    const limit = parseInt(searchParams.get("limit") || "50")
-    const offset = parseInt(searchParams.get("offset") || "0")
+    // CRITICAL: Validate and clamp limit/offset to prevent DoS
+    const rawLimit = parseInt(searchParams.get("limit") || "50")
+    const rawOffset = parseInt(searchParams.get("offset") || "0")
+    const limit = isNaN(rawLimit) ? 50 : Math.max(1, Math.min(1000, rawLimit))
+    const offset = isNaN(rawOffset) ? 0 : Math.max(0, Math.min(1000000, rawOffset))
+    
     const category = searchParams.get("category") || null
     const title = searchParams.get("title") || undefined
-    const sortBy = (searchParams.get("sortBy") as "created_at" | "updated_at" | "display_order" | "title") || undefined
-    const sortOrder = (searchParams.get("sortOrder") as "ASC" | "DESC") || undefined
+    
+    // CRITICAL: Validate sortBy and sortOrder to prevent SQL injection
+    const ALLOWED_SORT_FIELDS = ["created_at", "updated_at", "display_order", "title"] as const
+    const ALLOWED_SORT_ORDERS = ["ASC", "DESC"] as const
+    
+    const rawSortBy = searchParams.get("sortBy")
+    const sortBy = (rawSortBy && ALLOWED_SORT_FIELDS.includes(rawSortBy as any))
+      ? (rawSortBy as typeof ALLOWED_SORT_FIELDS[number])
+      : undefined
+    
+    const rawSortOrder = searchParams.get("sortOrder")
+    const sortOrder = (rawSortOrder && ALLOWED_SORT_ORDERS.includes(rawSortOrder as any))
+      ? (rawSortOrder as typeof ALLOWED_SORT_ORDERS[number])
+      : undefined
     
     await logger.debug('List images parameters', { 
       limit, 
@@ -258,14 +319,15 @@ export const GET = withVersioning(async (request: Request) => {
 
     // Optimize ORDER BY based on user preferences
     // Default: Sort by category, then display_order, then created_at (uses idx_images_category_order)
+    // CRITICAL: sortBy and sortOrder are already validated above
     let orderByClause = ""
     if (sortBy) {
-      const order = sortOrder || "DESC"
+      const order = sortOrder || "DESC" // sortOrder is validated, safe to use
       if (sortBy === "title") {
         // Title sorting (alphabetical)
         orderByClause = `ORDER BY i.title ${order}, i.created_at DESC`
       } else if (sortBy === "created_at" || sortBy === "updated_at") {
-        // Timestamp sorting
+        // Timestamp sorting - sortBy is validated, safe to use
         orderByClause = `ORDER BY i.${sortBy} ${order}`
       } else if (sortBy === "display_order") {
         // Display order sorting - if category filter, uses idx_images_category_order
@@ -275,7 +337,7 @@ export const GET = withVersioning(async (request: Request) => {
           orderByClause = `ORDER BY i.category ASC, i.display_order ${order}, i.created_at DESC`
         }
       } else {
-        // Fallback to default
+        // Fallback to default (should not happen due to validation, but safe fallback)
         orderByClause = `ORDER BY i.category ASC, i.display_order ASC, i.created_at DESC`
       }
     } else {

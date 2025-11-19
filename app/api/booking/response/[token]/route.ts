@@ -121,7 +121,25 @@ export async function POST(
     
     await logger.info('User response request received', { tokenPrefix: token.substring(0, 8) + '...' })
     
-    const body = await request.json()
+    // CRITICAL: Use safe JSON parsing with size limits to prevent DoS
+    let body: any
+    try {
+      const { safeParseJSON } = await import('@/lib/safe-json-parse')
+      body = await safeParseJSON(request, 512000) // 500KB limit for user response data
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error)
+      await logger.warn('Request body parsing failed', new Error(errorMessage))
+      return errorResponse(
+        ErrorCodes.VALIDATION_ERROR,
+        errorMessage.includes('too large') 
+          ? 'Request body is too large. Please reduce the size of your submission.'
+          : 'Invalid request format. Please check your input and try again.',
+        undefined,
+        400,
+        { requestId }
+      )
+    }
+    
     let { response, proposedDate, proposedEndDate, proposedStartTime, proposedEndTime, message } = body
     
     // Extract date part from ISO strings if needed (frontend sends ISO strings)
@@ -471,6 +489,41 @@ export async function POST(
           { requestId }
         )
       }
+    }
+
+    // CRITICAL: Re-validate token before database update
+    // This prevents token expiration during long validation/processing operations
+    // Re-fetch booking to get latest token expiration
+    const { getBookingById } = await import("@/lib/bookings")
+    const latestBooking = await getBookingById(booking.id)
+    
+    if (!latestBooking) {
+      await logger.error('Booking not found before user response submission', new Error('Booking not found'), { bookingId: booking.id })
+      return errorResponse(
+        ErrorCodes.NOT_FOUND,
+        "Booking not found. Please refresh and try again.",
+        undefined,
+        404,
+        { requestId }
+      )
+    }
+    
+    try {
+      const { revalidateTokenBeforeOperation } = await import("@/lib/token-validation")
+      revalidateTokenBeforeOperation(latestBooking, "user_response", false) // false = use standard grace period
+      await logger.info('Token re-validated before user response submission', { bookingId: booking.id })
+    } catch (tokenError) {
+      await logger.warn('Token expired during user response operation', {
+        bookingId: booking.id,
+        error: tokenError instanceof Error ? tokenError.message : String(tokenError)
+      })
+      return errorResponse(
+        ErrorCodes.TOKEN_EXPIRED,
+        "Your session expired during the submission process. Please refresh and try again, or contact support for a new link.",
+        undefined,
+        410, // 410 Gone
+        { requestId }
+      )
     }
 
     // Submit user response

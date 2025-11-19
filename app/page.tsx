@@ -1,37 +1,37 @@
 import { Hero } from "@/components/Hero"
 import { EventSliders } from "@/components/EventSliders"
-import { Metadata } from 'next'
-import { withBasePath } from '@/lib/utils'
+import { generateMetadata as generateSEOMetadata, getBaseUrl } from '@/lib/seo-utils'
 
-export const metadata: Metadata = {
+export const metadata = generateSEOMetadata({
   title: 'Home',
-  description: 'Hell University - A Cultural House for Creative Expression. Promoting cultural activities and community engagement through art, music, and creativity.',
-  openGraph: {
-    title: 'Hell University - A Cultural House for Creative Expression',
-    description: 'Promoting cultural activities and community engagement through art, music, and creativity.',
-    url: process.env.NODE_ENV === 'production' ? 'https://khem696.github.io/helluniversity' : 'http://localhost:3000',
-    siteName: 'Hell University',
-    images: [
-      {
-        url: withBasePath('/og-image.jpg'),
-        width: 1200,
-        height: 630,
-        alt: 'Hell University - Cultural House',
-      },
-    ],
-    locale: 'en_US',
-    type: 'website',
-  },
-  twitter: {
-    card: 'summary_large_image',
-    title: 'Hell University - A Cultural House for Creative Expression',
-    description: 'Promoting cultural activities and community engagement through art, music, and creativity.',
-    images: [withBasePath('/og-image.jpg')],
-  },
-  alternates: {
-    canonical: process.env.NODE_ENV === 'production' ? 'https://khem696.github.io/helluniversity' : 'http://localhost:3000',
-  },
-}
+  description: 'Hell University - A Cultural Hub in Mae Taeng, Chiang Mai, Thailand. Book event spaces, arrange cultural activities, and host creative workshops. Perfect venue for booking events, activities, and cultural gatherings in Northern Thailand.',
+  keywords: [
+    'cultural hub',
+    'event booking',
+    'book event space',
+    'arrange activities',
+    'event venue booking',
+    'cultural activities booking',
+    'Mae Taeng',
+    'Chiang Mai',
+    'Thailand',
+    'event space rental',
+    'book cultural events',
+    'activity arrangement',
+    'creative space booking',
+    'studio gallery',
+    'art community',
+    'cultural engagement',
+    'art workshops',
+    'creative events',
+    'art exhibitions',
+    'community events',
+    'venue booking',
+    'event arrangement',
+  ],
+  url: getBaseUrl(),
+  type: 'website',
+})
 
 export default function Home() {
   return (

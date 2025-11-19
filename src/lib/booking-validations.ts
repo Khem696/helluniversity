@@ -199,6 +199,198 @@ export function isCheckInAllowed(
 }
 
 /**
+ * Check if bookings overlap in time (within a transaction for locking)
+ * This version performs the overlap check within a transaction to prevent race conditions.
+ * Use this when you need to ensure no other bookings are confirmed between check and save.
+ */
+export async function checkBookingOverlapWithLock(
+  bookingId: string | null, // null for new bookings
+  startDate: number,
+  endDate: number | null,
+  startTime: string | null,
+  endTime: string | null,
+  tx: any // Transaction object
+): Promise<{ overlaps: boolean; overlappingBookings?: any[] }> {
+  // Calculate actual start and end timestamps (reuse existing logic)
+  const startTimestamp = calculateStartTimestamp(startDate, startTime)
+  
+  let endTimestamp: number
+  if (endDate) {
+    // Multiple day booking
+    if (endTime) {
+      const parsed = parseTimeString(endTime)
+      if (parsed) {
+        try {
+          const utcDate = new Date(endDate * 1000)
+          const tzDate = new TZDate(utcDate.getTime(), BANGKOK_TIMEZONE)
+          const year = tzDate.getFullYear()
+          const month = tzDate.getMonth()
+          const day = tzDate.getDate()
+          const tzDateWithTime = new TZDate(year, month, day, parsed.hour24, parsed.minutes, 0, BANGKOK_TIMEZONE)
+          endTimestamp = Math.floor(tzDateWithTime.getTime() / 1000)
+        } catch (error) {
+          endTimestamp = endDate
+        }
+      } else {
+        endTimestamp = endDate
+      }
+    } else {
+      try {
+        const utcDate = new Date(endDate * 1000)
+        const tzDate = new TZDate(utcDate.getTime(), BANGKOK_TIMEZONE)
+        const year = tzDate.getFullYear()
+        const month = tzDate.getMonth()
+        const day = tzDate.getDate()
+        const tzDateEndOfDay = new TZDate(year, month, day, 23, 59, 59, BANGKOK_TIMEZONE)
+        endTimestamp = Math.floor(tzDateEndOfDay.getTime() / 1000)
+      } catch (error) {
+        endTimestamp = endDate
+      }
+    }
+  } else {
+    // Single day booking
+    if (endTime) {
+      const parsed = parseTimeString(endTime)
+      if (parsed) {
+        try {
+          const utcDate = new Date(startDate * 1000)
+          const tzDate = new TZDate(utcDate.getTime(), BANGKOK_TIMEZONE)
+          const year = tzDate.getFullYear()
+          const month = tzDate.getMonth()
+          const day = tzDate.getDate()
+          const tzDateWithTime = new TZDate(year, month, day, parsed.hour24, parsed.minutes, 0, BANGKOK_TIMEZONE)
+          endTimestamp = Math.floor(tzDateWithTime.getTime() / 1000)
+        } catch (error) {
+          endTimestamp = startTimestamp
+        }
+      } else {
+        endTimestamp = startTimestamp
+      }
+    } else {
+      endTimestamp = startTimestamp
+    }
+  }
+
+  // CRITICAL: Validate that end timestamp is after start timestamp
+  // This prevents invalid bookings with end time before or equal to start time
+  if (endTimestamp <= startTimestamp) {
+    throw new Error(
+      `Invalid booking time range: end time (${new Date(endTimestamp * 1000).toISOString()}) must be after start time (${new Date(startTimestamp * 1000).toISOString()})`
+    )
+  }
+
+  const { getBangkokTime } = await import("./timezone")
+  const bangkokNow = getBangkokTime()
+  const isNewBookingInPast = endTimestamp < bangkokNow
+  
+  // Query within transaction - this ensures we see the latest state
+  // Note: SQLite doesn't support SELECT FOR UPDATE, but transactions provide isolation
+  const query = bookingId
+    ? `
+      SELECT id, name, email, reference_number, start_date, end_date, start_time, end_time, status
+      FROM bookings
+      WHERE id != ?
+        AND status = 'confirmed'
+      ORDER BY start_date ASC
+    `
+    : `
+      SELECT id, name, email, reference_number, start_date, end_date, start_time, end_time, status
+      FROM bookings
+      WHERE status = 'confirmed'
+      ORDER BY start_date ASC
+    `
+
+  const args = bookingId ? [bookingId] : []
+  const result = await tx.execute({ sql: query, args })
+
+  // Check each booking for actual time overlap (reuse existing logic)
+  const overlappingBookings: any[] = []
+  
+  for (const booking of result.rows) {
+    const existingBooking = booking as any
+    
+    const existingStartTimestamp = calculateStartTimestamp(
+      existingBooking.start_date,
+      existingBooking.start_time
+    )
+    
+    let existingEndTimestamp: number
+    if (existingBooking.end_date) {
+      if (existingBooking.end_time) {
+        const parsed = parseTimeString(existingBooking.end_time)
+        if (parsed) {
+          try {
+            const utcDate = new Date(existingBooking.end_date * 1000)
+            const tzDate = new TZDate(utcDate.getTime(), BANGKOK_TIMEZONE)
+            const year = tzDate.getFullYear()
+            const month = tzDate.getMonth()
+            const day = tzDate.getDate()
+            const tzDateWithTime = new TZDate(year, month, day, parsed.hour24, parsed.minutes, 0, BANGKOK_TIMEZONE)
+            existingEndTimestamp = Math.floor(tzDateWithTime.getTime() / 1000)
+          } catch (error) {
+            existingEndTimestamp = existingBooking.end_date
+          }
+        } else {
+          existingEndTimestamp = existingBooking.end_date
+        }
+      } else {
+        try {
+          const utcDate = new Date(existingBooking.end_date * 1000)
+          const tzDate = new TZDate(utcDate.getTime(), BANGKOK_TIMEZONE)
+          const year = tzDate.getFullYear()
+          const month = tzDate.getMonth()
+          const day = tzDate.getDate()
+          const tzDateEndOfDay = new TZDate(year, month, day, 23, 59, 59, BANGKOK_TIMEZONE)
+          existingEndTimestamp = Math.floor(tzDateEndOfDay.getTime() / 1000)
+        } catch (error) {
+          existingEndTimestamp = existingBooking.end_date
+        }
+      }
+    } else {
+      if (existingBooking.end_time) {
+        const parsed = parseTimeString(existingBooking.end_time)
+        if (parsed) {
+          try {
+            const utcDate = new Date(existingBooking.start_date * 1000)
+            const tzDate = new TZDate(utcDate.getTime(), BANGKOK_TIMEZONE)
+            const year = tzDate.getFullYear()
+            const month = tzDate.getMonth()
+            const day = tzDate.getDate()
+            const tzDateWithTime = new TZDate(year, month, day, parsed.hour24, parsed.minutes, 0, BANGKOK_TIMEZONE)
+            existingEndTimestamp = Math.floor(tzDateWithTime.getTime() / 1000)
+          } catch (error) {
+            existingEndTimestamp = existingStartTimestamp
+          }
+        } else {
+          existingEndTimestamp = existingStartTimestamp
+        }
+      } else {
+        existingEndTimestamp = existingStartTimestamp
+      }
+    }
+    
+    if (!isNewBookingInPast && existingEndTimestamp < bangkokNow) {
+      continue
+    }
+    
+    const overlaps = startTimestamp <= existingEndTimestamp && endTimestamp >= existingStartTimestamp
+    
+    if (overlaps) {
+      overlappingBookings.push(existingBooking)
+    }
+  }
+
+  if (overlappingBookings.length > 0) {
+    return {
+      overlaps: true,
+      overlappingBookings,
+    }
+  }
+
+  return { overlaps: false }
+}
+
+/**
  * Check if bookings overlap in time
  */
 export async function checkBookingOverlap(
@@ -274,6 +466,14 @@ export async function checkBookingOverlap(
         endTimestamp = startTimestamp
       }
     }
+
+  // CRITICAL: Validate that end timestamp is after start timestamp
+  // This prevents invalid bookings with end time before or equal to start time
+  if (endTimestamp <= startTimestamp) {
+    throw new Error(
+      `Invalid booking time range: end time (${new Date(endTimestamp * 1000).toISOString()}) must be after start time (${new Date(startTimestamp * 1000).toISOString()})`
+    )
+  }
 
   // Find overlapping bookings that occupy time on the calendar:
   // Only confirmed bookings block the calendar (they have verified deposits and confirmed dates)
