@@ -50,8 +50,25 @@ export const POST = withVersioning(async (request: Request) => {
       await logger.warn('Admin create event rejected: authentication failed')
       return authError
     }
-    
-    const body = await request.json()
+
+    // CRITICAL: Use safe JSON parsing with size limits to prevent DoS
+    let body: any
+    try {
+      const { safeParseJSON } = await import('@/lib/safe-json-parse')
+      body = await safeParseJSON(request, 512000) // 500KB limit for event creation data
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error)
+      await logger.warn('Request body parsing failed', new Error(errorMessage))
+      return errorResponse(
+        ErrorCodes.VALIDATION_ERROR,
+        errorMessage.includes('too large') 
+          ? 'Request body is too large. Please reduce the size of your submission.'
+          : 'Invalid request format. Please check your input and try again.',
+        undefined,
+        400,
+        { requestId }
+      )
+    }
     const { title, description, image_id, event_date, start_date, end_date } = body
     
     await logger.debug('Event creation data', {
@@ -162,15 +179,31 @@ export const GET = withVersioning(async (request: Request) => {
     }
     
     const { searchParams } = new URL(request.url)
-    const limit = parseInt(searchParams.get("limit") || "50")
-    const offset = parseInt(searchParams.get("offset") || "0")
+    // CRITICAL: Validate and clamp limit/offset to prevent DoS
+    const rawLimit = parseInt(searchParams.get("limit") || "50")
+    const rawOffset = parseInt(searchParams.get("offset") || "0")
+    const limit = isNaN(rawLimit) ? 50 : Math.max(1, Math.min(1000, rawLimit))
+    const offset = isNaN(rawOffset) ? 0 : Math.max(0, Math.min(1000000, rawOffset))
+    
     const upcoming = searchParams.get("upcoming") === "true"
     const title = searchParams.get("title") || undefined
     const eventDate = searchParams.get("eventDate") || undefined
     const eventDateFrom = searchParams.get("eventDateFrom") || undefined
     const eventDateTo = searchParams.get("eventDateTo") || undefined
-    const sortBy = (searchParams.get("sortBy") as "created_at" | "updated_at" | "start_date" | "end_date" | "event_date" | "title") || undefined
-    const sortOrder = (searchParams.get("sortOrder") as "ASC" | "DESC") || undefined
+    
+    // CRITICAL: Validate sortBy and sortOrder to prevent SQL injection
+    const ALLOWED_SORT_FIELDS = ["created_at", "updated_at", "start_date", "end_date", "event_date", "title"] as const
+    const ALLOWED_SORT_ORDERS = ["ASC", "DESC"] as const
+    
+    const rawSortBy = searchParams.get("sortBy")
+    const sortBy = (rawSortBy && ALLOWED_SORT_FIELDS.includes(rawSortBy as any))
+      ? (rawSortBy as typeof ALLOWED_SORT_FIELDS[number])
+      : undefined
+    
+    const rawSortOrder = searchParams.get("sortOrder")
+    const sortOrder = (rawSortOrder && ALLOWED_SORT_ORDERS.includes(rawSortOrder as any))
+      ? (rawSortOrder as typeof ALLOWED_SORT_ORDERS[number])
+      : undefined
     
     await logger.debug('List events parameters', { 
       limit, 
@@ -251,21 +284,22 @@ export const GET = withVersioning(async (request: Request) => {
     // Get events
     // Optimize ORDER BY based on user preferences to leverage composite indexes
     // Default: Sort by date (COALESCE) then created_at DESC
+    // CRITICAL: sortBy and sortOrder are already validated above
     let orderByClause = ""
     if (sortBy) {
       // User-specified sort field
-      const order = sortOrder || "DESC"
+      const order = sortOrder || "DESC" // sortOrder is validated, safe to use
       if (sortBy === "title") {
         // Uses idx_events_title for alphabetical sorting
         orderByClause = `ORDER BY e.title ${order}, e.created_at DESC`
       } else if (sortBy === "created_at" || sortBy === "updated_at") {
-        // Uses idx_events_created_at or idx_events_updated_at
+        // Uses idx_events_created_at or idx_events_updated_at - sortBy is validated, safe to use
         orderByClause = `ORDER BY e.${sortBy} ${order}`
       } else if (sortBy === "start_date" || sortBy === "end_date" || sortBy === "event_date") {
-        // Uses individual date indexes
+        // Uses individual date indexes - sortBy is validated, safe to use
         orderByClause = `ORDER BY e.${sortBy} ${order}, e.created_at DESC`
       } else {
-        // Fallback to default date sorting
+        // Fallback to default date sorting (should not happen due to validation, but safe fallback)
         orderByClause = `ORDER BY COALESCE(e.end_date, e.event_date, e.start_date) ASC, e.created_at DESC`
       }
     } else {

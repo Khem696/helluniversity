@@ -53,8 +53,11 @@ export const GET = withVersioning(async (request: Request) => {
       | "cancelled"
       | "finished"
       | null
-    const limit = parseInt(searchParams.get("limit") || "50")
-    const offset = parseInt(searchParams.get("offset") || "0")
+    // CRITICAL: Validate and clamp limit/offset to prevent DoS
+    const rawLimit = parseInt(searchParams.get("limit") || "50")
+    const rawOffset = parseInt(searchParams.get("offset") || "0")
+    const limit = isNaN(rawLimit) ? 50 : Math.max(1, Math.min(1000, rawLimit))
+    const offset = isNaN(rawOffset) ? 0 : Math.max(0, Math.min(1000000, rawOffset))
     const email = searchParams.get("email") || undefined
     const referenceNumber = searchParams.get("referenceNumber") || undefined
     const name = searchParams.get("name") || undefined

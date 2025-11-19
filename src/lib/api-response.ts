@@ -7,6 +7,7 @@
 
 import { NextResponse } from 'next/server'
 import { randomUUID } from 'crypto'
+import { withSecurityHeaders } from './security-headers'
 
 export interface ApiResponse<T = any> {
   success: boolean
@@ -88,13 +89,16 @@ export function successResponse<T>(
     { status: 200 }
   )
   
+  // Add security headers
+  const securedResponse = withSecurityHeaders(response)
+  
   // Add API version headers if version is detected
   if (meta?.apiVersion) {
     const { addVersionHeaders } = require('./api-versioning')
-    return addVersionHeaders(response, meta.apiVersion)
+    return addVersionHeaders(securedResponse, meta.apiVersion)
   }
   
-  return response
+  return securedResponse
 }
 
 /**
@@ -110,7 +114,7 @@ export function errorResponse(
   // Use requestId from meta if provided, otherwise generate new one
   const requestId = meta?.requestId || randomUUID()
   
-  return NextResponse.json(
+  const response = NextResponse.json(
     {
       success: false,
       error: {
@@ -126,6 +130,9 @@ export function errorResponse(
     },
     { status: statusCode }
   )
+  
+  // Add security headers
+  return withSecurityHeaders(response)
 }
 
 /**
@@ -280,6 +287,45 @@ export function rateLimitResponse(
 }
 
 /**
+ * Sanitize error message for production
+ * Removes sensitive information and internal details
+ */
+function sanitizeErrorMessage(message: string, isProduction: boolean): string {
+  if (!isProduction) {
+    return message // Return full message in development
+  }
+  
+  // Remove sensitive patterns
+  let sanitized = message
+  
+  // Remove database column names
+  sanitized = sanitized.replace(/no such column:?\s*['"]?(\w+)['"]?/gi, 'Database schema error')
+  
+  // Remove SQL error details
+  sanitized = sanitized.replace(/SQLITE_ERROR:?\s*/gi, 'Database error: ')
+  
+  // Remove file paths
+  sanitized = sanitized.replace(/\/[^\s]+/g, '[path]')
+  
+  // Remove stack traces
+  sanitized = sanitized.split('\n')[0] // Only keep first line
+  
+  // Remove internal IDs (UUIDs, etc.)
+  sanitized = sanitized.replace(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi, '[id]')
+  
+  // Genericize common internal errors
+  if (sanitized.includes('ENOENT') || sanitized.includes('ENOTFOUND')) {
+    return 'Resource not found'
+  }
+  
+  if (sanitized.includes('ECONNREFUSED') || sanitized.includes('ETIMEDOUT')) {
+    return 'Service temporarily unavailable'
+  }
+  
+  return sanitized || 'An unexpected error occurred'
+}
+
+/**
  * Create internal server error response
  */
 export function internalErrorResponse(
@@ -287,16 +333,19 @@ export function internalErrorResponse(
   error?: Error,
   meta?: Record<string, any>
 ): NextResponse<ApiResponse> {
+  const isProduction = process.env.NODE_ENV === 'production'
+  const sanitizedMessage = error 
+    ? sanitizeErrorMessage(error.message, isProduction)
+    : sanitizeErrorMessage(message, isProduction)
+  
   return errorResponse(
     ErrorCodes.INTERNAL_ERROR,
-    message,
-    process.env.NODE_ENV === 'development' && error
-      ? {
-          name: error.name,
-          message: error.message,
-          stack: error.stack,
-        }
-      : undefined,
+    sanitizedMessage,
+    isProduction ? undefined : (error ? {
+      name: error.name,
+      message: error.message,
+      stack: error.stack,
+    } : undefined),
     500,
     meta
   )
@@ -313,27 +362,31 @@ export async function withErrorHandling<T>(
     return await handler()
   } catch (error) {
     const { logError } = await import('./logger')
+    const errorObj = error instanceof Error ? error : new Error(String(error))
     await logError(
       'API handler error',
       context,
-      error instanceof Error ? error : new Error(String(error))
+      errorObj
     )
 
     if (error instanceof Error) {
+      const isProduction = process.env.NODE_ENV === 'production'
+      const sanitizedMessage = sanitizeErrorMessage(error.message, isProduction)
+      
       // Check for known error types
       if (error.message.includes('not found')) {
         return notFoundResponse('Resource', context)
       }
       if (error.message.includes('unauthorized') || error.message.includes('Unauthorized')) {
-        return unauthorizedResponse(error.message, context)
+        return unauthorizedResponse(sanitizedMessage, context)
       }
       if (error.message.includes('forbidden') || error.message.includes('Forbidden')) {
-        return forbiddenResponse(error.message, context)
+        return forbiddenResponse(sanitizedMessage, context)
       }
       if (error.message.includes('rate limit')) {
         return errorResponse(
           ErrorCodes.RATE_LIMIT_EXCEEDED,
-          error.message,
+          sanitizedMessage,
           undefined,
           429,
           context
@@ -348,7 +401,7 @@ export async function withErrorHandling<T>(
           error.message.includes('required') ||
           error.message.includes('Proposed date') ||
           error.message.includes('proposed date')) {
-        return validationErrorResponse([error.message], context)
+        return validationErrorResponse([sanitizedMessage], context)
       }
     }
 

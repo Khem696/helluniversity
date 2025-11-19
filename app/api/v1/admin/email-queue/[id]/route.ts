@@ -178,14 +178,19 @@ export const PATCH = withVersioning(async (
       return authError
     }
 
+    // CRITICAL: Use safe JSON parsing with size limits to prevent DoS
     let body: { action?: string } = {}
     try {
-      body = await request.json()
-    } catch (jsonError) {
-      await logger.warn('Invalid request body', { emailId: id })
+      const { safeParseJSON } = await import('@/lib/safe-json-parse')
+      body = await safeParseJSON(request, 10240) // 10KB limit for email queue action data
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error)
+      await logger.warn('Request body parsing failed', new Error(errorMessage))
       return errorResponse(
         ErrorCodes.VALIDATION_ERROR,
-        "Invalid request body",
+        errorMessage.includes('too large') 
+          ? 'Request body is too large. Please reduce the size of your submission.'
+          : 'Invalid request format. Please check your input and try again.',
         undefined,
         400,
         { requestId }

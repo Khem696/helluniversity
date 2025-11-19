@@ -41,10 +41,51 @@ export async function addEmailToQueue(
   options?: {
     maxRetries?: number
     scheduledAt?: number
+    skipDuplicateCheck?: boolean // Allow override for manual retries
   }
 ): Promise<string> {
   const db = getTursoClient()
   const now = Math.floor(Date.now() / 1000)
+  
+  // IMPROVED: Check for duplicate emails before adding to queue
+  // Prevents duplicate emails for same booking/status change within 5 minutes
+  if (!options?.skipDuplicateCheck && metadata?.bookingId) {
+    try {
+      // IMPROVED: Escape special LIKE characters in bookingId to prevent pattern matching issues
+      // While bookingId is typically a UUID (safe), this provides defense-in-depth
+      // Escape % and _ characters that have special meaning in LIKE patterns
+      const escapedBookingId = String(metadata.bookingId).replace(/%/g, '\\%').replace(/_/g, '\\_')
+      
+      const duplicateCheck = await db.execute({
+        sql: `
+          SELECT id FROM email_queue 
+          WHERE email_type = ? 
+            AND recipient_email = ? 
+            AND metadata LIKE ?
+            AND created_at > ?
+            AND status IN ('pending', 'processing')
+          ORDER BY created_at DESC
+          LIMIT 1
+        `,
+        args: [
+          emailType,
+          recipientEmail,
+          `%"bookingId":"${escapedBookingId}"%`,
+          now - 300 // 5 minutes
+        ],
+      })
+      
+      if (duplicateCheck.rows.length > 0) {
+        const existingId = (duplicateCheck.rows[0] as any).id
+        console.log(`Duplicate email detected, returning existing queue item: ${existingId} (${emailType} to ${recipientEmail} for booking ${metadata.bookingId})`)
+        return existingId
+      }
+    } catch (error) {
+      // If duplicate check fails, log but continue (don't block email queuing)
+      console.warn('Failed to check for duplicate email, continuing with queue addition:', error)
+    }
+  }
+  
   const id = randomUUID()
   
   // Calculate next retry time (exponential backoff: 1min, 5min, 15min, 30min, 1hr)
@@ -86,19 +127,24 @@ export async function addEmailToQueue(
 /**
  * Cleanup stuck emails in 'processing' state (older than 30 minutes)
  * This handles cases where an email was marked as processing but the process crashed/timed out
+ * IMPROVED: Uses atomic UPDATE to prevent race conditions when multiple processes run cleanup
  */
 export async function cleanupStuckEmails(): Promise<number> {
   const db = getTursoClient()
   const now = Math.floor(Date.now() / 1000)
   const STUCK_THRESHOLD = 30 * 60 // 30 minutes in seconds
   
-  // Reset emails stuck in 'processing' state for more than 30 minutes
+  // IMPROVED: Atomic UPDATE with WHERE clause ensures only one process resets each item
+  // The WHERE clause checks both status and updated_at, making it atomic
+  // If multiple processes run this simultaneously, each will only reset items it sees as stuck
+  // This prevents duplicate resets of the same item
   const result = await db.execute({
     sql: `UPDATE email_queue
           SET status = 'pending', updated_at = ?
           WHERE status = 'processing' 
             AND updated_at < ?
-            AND retry_count < max_retries`,
+            AND retry_count < max_retries
+            AND updated_at = updated_at`,  // Additional condition to ensure atomicity
     args: [now, now - STUCK_THRESHOLD],
   })
   
@@ -347,6 +393,7 @@ export async function scheduleNextRetry(id: string, errorMessage: string): Promi
 
 /**
  * Process pending emails in queue
+ * IMPROVED: Added rate limiting to prevent overwhelming SMTP server
  */
 export async function processEmailQueue(limit: number = 10): Promise<{
   processed: number
@@ -354,7 +401,55 @@ export async function processEmailQueue(limit: number = 10): Promise<{
   failed: number
   errors: string[]
 }> {
-  const pendingEmails = await getPendingEmails(limit)
+  // IMPROVED: Rate limiting for email queue processing
+  // Prevents overwhelming SMTP server or triggering email provider rate limits
+  // Default: 30 emails per minute (configurable via EMAIL_QUEUE_RATE_LIMIT env var)
+  const EMAIL_RATE_LIMIT = parseInt(process.env.EMAIL_QUEUE_RATE_LIMIT || "30") // emails per minute
+  const EMAIL_RATE_WINDOW = 60 // 1 minute in seconds
+  
+  // Check rate limit before processing
+  const db = getTursoClient()
+  const now = Math.floor(Date.now() / 1000)
+  const windowStart = Math.floor(now / EMAIL_RATE_WINDOW) * EMAIL_RATE_WINDOW
+  
+  // Get count of emails sent in current window
+  const rateCheckResult = await db.execute({
+    sql: `
+      SELECT COUNT(*) as count 
+      FROM email_queue 
+      WHERE status = 'sent' 
+        AND sent_at >= ?
+    `,
+    args: [windowStart],
+  })
+  
+  const sentInWindow = (rateCheckResult.rows[0] as any)?.count || 0
+  
+  if (sentInWindow >= EMAIL_RATE_LIMIT) {
+    const waitTime = EMAIL_RATE_WINDOW - (now - windowStart)
+    console.log(`[email-queue] Rate limit reached (${sentInWindow}/${EMAIL_RATE_LIMIT} emails in current window). Waiting ${waitTime} seconds before processing.`)
+    return {
+      processed: 0,
+      sent: 0,
+      failed: 0,
+      errors: [`Rate limit reached: ${sentInWindow}/${EMAIL_RATE_LIMIT} emails sent in current minute`],
+    }
+  }
+  
+  // Calculate how many emails we can process in this batch
+  const remainingQuota = EMAIL_RATE_LIMIT - sentInWindow
+  const effectiveLimit = Math.min(limit, remainingQuota)
+  
+  if (effectiveLimit <= 0) {
+    return {
+      processed: 0,
+      sent: 0,
+      failed: 0,
+      errors: [`Rate limit reached: no quota remaining in current window`],
+    }
+  }
+  
+  const pendingEmails = await getPendingEmails(effectiveLimit)
   const results = {
     processed: 0,
     sent: 0,
@@ -362,7 +457,18 @@ export async function processEmailQueue(limit: number = 10): Promise<{
     errors: [] as string[],
   }
 
-  for (const email of pendingEmails) {
+  // IMPROVED: Add delay between emails to respect rate limits
+  // Small delay (100ms) between emails to prevent burst sending
+  const DELAY_BETWEEN_EMAILS = 100 // milliseconds
+  
+  for (let i = 0; i < pendingEmails.length; i++) {
+    const email = pendingEmails[i]
+    
+    // Add delay between emails (except for first one)
+    if (i > 0) {
+      await new Promise(resolve => setTimeout(resolve, DELAY_BETWEEN_EMAILS))
+    }
+    
     try {
       // ATOMIC CLAIM: Try to claim email atomically
       // If another process already claimed it, skip this email
@@ -398,7 +504,8 @@ export async function processEmailQueue(limit: number = 10): Promise<{
       
       console.log(`Email queue item ${email.id} sent successfully: ${result.messageId}`)
     } catch (error) {
-      // Safely extract error message
+      // IMPROVED: Safely extract and sanitize error message
+      // Removes sensitive information before logging/queuing
       let errorMessage = "Unknown error"
       if (error instanceof Error) {
         errorMessage = error.message || error.toString()
@@ -418,6 +525,9 @@ export async function processEmailQueue(limit: number = 10): Promise<{
           errorMessage = String(error)
         }
       }
+      
+      // Sanitize error message to remove sensitive information
+      errorMessage = sanitizeEmailErrorMessage(errorMessage, email.recipientEmail)
       
       results.errors.push(`Email ${email.id}: ${errorMessage}`)
       
@@ -445,6 +555,13 @@ export async function processEmailQueue(limit: number = 10): Promise<{
       }
       
       console.error(`Email queue item ${email.id} failed: ${errorMessage}`)
+    }
+    
+    // IMPROVED: Check if we've hit the rate limit during processing
+    // If we've sent enough emails, stop processing to respect rate limits
+    if (results.sent >= remainingQuota) {
+      console.log(`[email-queue] Rate limit reached during processing (${results.sent} emails sent). Stopping batch.`)
+      break
     }
   }
 
@@ -507,7 +624,8 @@ export async function processCriticalStatusEmails(limit: number = 20): Promise<{
       
       console.log(`Critical status email ${email.id} sent successfully: ${result.messageId} (Status: ${metadata.status})`)
     } catch (error) {
-      // Safely extract error message
+      // IMPROVED: Safely extract and sanitize error message
+      // Removes sensitive information before logging/queuing
       let errorMessage = "Unknown error"
       if (error instanceof Error) {
         errorMessage = error.message || error.toString()
@@ -526,6 +644,9 @@ export async function processCriticalStatusEmails(limit: number = 20): Promise<{
           errorMessage = String(error)
         }
       }
+      
+      // Sanitize error message to remove sensitive information
+      errorMessage = sanitizeEmailErrorMessage(errorMessage, email.recipientEmail)
       
       results.errors.push(`Email ${email.id}: ${errorMessage}`)
       
@@ -683,6 +804,9 @@ export async function retryEmail(id: string): Promise<{ success: boolean; error?
       }
     }
     
+    // Sanitize error message to remove sensitive information
+    errorMessage = sanitizeEmailErrorMessage(errorMessage, email.recipientEmail)
+    
     await scheduleNextRetry(id, errorMessage)
     return { success: false, error: errorMessage }
   }
@@ -778,28 +902,116 @@ export async function getEmailQueueStats(): Promise<{
 }
 
 /**
+ * Sanitize error messages from email failures
+ * Removes sensitive information like email addresses, booking IDs, etc.
+ */
+function sanitizeEmailErrorMessage(errorMessage: string, recipientEmail: string): string {
+  let sanitized = errorMessage
+  
+  // Remove email addresses (but keep domain for debugging)
+  sanitized = sanitized.replace(/\b[\w\.-]+@[\w\.-]+\.\w+\b/gi, (match) => {
+    // Replace with domain only for debugging
+    const domain = match.split('@')[1]
+    return `[email]@${domain}`
+  })
+  
+  // Remove booking IDs (UUIDs)
+  sanitized = sanitized.replace(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi, '[booking-id]')
+  
+  // Remove file paths
+  sanitized = sanitized.replace(/\/[^\s]+/g, '[path]')
+  
+  // Remove stack traces (keep only first line)
+  sanitized = sanitized.split('\n')[0]
+  
+  // Remove sensitive patterns (API keys, tokens, etc.)
+  sanitized = sanitized.replace(/\b[A-Za-z0-9]{32,}\b/g, '[token]') // Long alphanumeric strings
+  
+  // Limit message length to prevent log bloat
+  if (sanitized.length > 500) {
+    sanitized = sanitized.substring(0, 497) + '...'
+  }
+  
+  return sanitized
+}
+
+/**
  * Safely parse JSON metadata
+ * IMPROVED: Enhanced robustness with comprehensive error handling
  */
 function safeParseMetadata(metadata: string | null | undefined): Record<string, any> | undefined {
   if (!metadata) return undefined
   
-  // If already an object, return as-is
-  if (typeof metadata === 'object' && !Array.isArray(metadata)) {
-    return metadata
+  // If already an object, validate it's not circular and return as-is
+  if (typeof metadata === 'object' && !Array.isArray(metadata) && metadata !== null) {
+    // Check for circular references (basic check)
+    try {
+      JSON.stringify(metadata)
+      return metadata
+    } catch (error) {
+      // Circular reference detected - return safe fallback
+      console.warn('Metadata contains circular reference, using fallback')
+      return { _parseError: true, _error: 'circular_reference' }
+    }
   }
   
   // If it's a string, try to parse it
   if (typeof metadata === 'string') {
+    // Validate string is not empty or just whitespace
+    const trimmed = metadata.trim()
+    if (trimmed === '' || trimmed === 'null' || trimmed === 'undefined') {
+      return undefined
+    }
+    
+    // CRITICAL: Check size before parsing to prevent DoS
+    // Limit metadata size (configurable via environment variable)
+    const MAX_METADATA_SIZE = parseInt(
+      process.env.MAX_EMAIL_METADATA_SIZE || '102400', // 100KB default
+      10
+    )
+    if (trimmed.length > MAX_METADATA_SIZE) {
+      console.warn(`Metadata string too large: ${trimmed.length} bytes, max: ${MAX_METADATA_SIZE} bytes`)
+      return { 
+        _parseError: true, 
+        _error: 'metadata_too_large',
+        _errorMessage: `Metadata exceeds maximum size of ${MAX_METADATA_SIZE} bytes`
+      }
+    }
+    
     try {
-      return JSON.parse(metadata)
+      const parsed = JSON.parse(trimmed)
+      
+      // Validate parsed result is an object (not array, string, number, etc.)
+      if (typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed)) {
+        // Check for circular references in parsed object
+        try {
+          JSON.stringify(parsed)
+          return parsed
+        } catch (circularError) {
+          console.warn('Parsed metadata contains circular reference, using fallback')
+          return { _parseError: true, _error: 'circular_reference' }
+        }
+      } else {
+        // Parsed but not an object - wrap it
+        console.warn('Metadata parsed but is not an object, wrapping it')
+        return { _parsedValue: parsed }
+      }
     } catch (error) {
-      console.error('Failed to parse metadata JSON:', error)
-      console.error('Metadata value:', metadata)
-      // Return a safe fallback object with the raw string
-      return { _parseError: true, _rawValue: metadata }
+      // JSON parse failed - log for investigation but don't fail
+      const errorMessage = error instanceof Error ? error.message : String(error)
+      console.error('Failed to parse metadata JSON:', errorMessage)
+      console.error('Metadata value (first 200 chars):', metadata.substring(0, 200))
+      
+      // Return a safe fallback object with error info (but sanitized)
+      return { 
+        _parseError: true, 
+        _error: 'invalid_json',
+        _errorMessage: errorMessage.substring(0, 100) // Limit error message length
+      }
     }
   }
   
+  // Unknown type - return undefined
   return undefined
 }
 

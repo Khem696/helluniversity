@@ -25,6 +25,23 @@ export async function POST(request: Request) {
     
     await logger.info('Deposit upload request received')
     
+    // CRITICAL: Validate FormData size before parsing to prevent DoS
+    const { validateFormDataSize } = await import('@/lib/formdata-validation')
+    const formDataSizeCheck = await validateFormDataSize(request) // Uses MAX_FORMDATA_SIZE env var (default: 20MB)
+    if (!formDataSizeCheck.valid) {
+      await logger.warn('Deposit upload rejected: FormData too large', { 
+        error: formDataSizeCheck.error,
+        size: formDataSizeCheck.size 
+      })
+      return errorResponse(
+        ErrorCodes.VALIDATION_ERROR,
+        formDataSizeCheck.error || "Request body is too large. Please reduce the file size and try again.",
+        undefined,
+        413, // 413 Payload Too Large
+        { requestId }
+      )
+    }
+    
     const formData = await request.formData()
     const token = formData.get("token") as string | null
     const file = formData.get("file") as File | null
@@ -254,6 +271,54 @@ export async function POST(request: Request) {
       )
     }
 
+    // CRITICAL: Re-validate token before database update
+    // This prevents token expiration during long image processing operations
+    // Use extended grace period (15 min) for deposit uploads since image processing can take time
+    try {
+      const { revalidateTokenBeforeOperation } = await import("@/lib/token-validation")
+      revalidateTokenBeforeOperation(recheckBooking, "deposit_upload", true) // true = use extended grace period
+      await logger.info('Token re-validated before database update', { bookingId: booking.id })
+    } catch (tokenError) {
+      // CRITICAL: Cleanup orphaned blob if token validation failed
+      // The blob was uploaded successfully but token validation failed
+      try {
+        const { deleteImage } = await import("@/lib/blob")
+        await deleteImage(processed.url)
+        await logger.info('Cleaned up orphaned deposit blob after token validation failure', {
+          bookingId: booking.id,
+          blobUrl: processed.url
+        })
+      } catch (cleanupError) {
+        // If cleanup fails, queue it for background cleanup
+        await logger.error('Failed to cleanup orphaned deposit blob after token failure, queueing for background cleanup', cleanupError instanceof Error ? cleanupError : new Error(String(cleanupError)), {
+          bookingId: booking.id,
+          blobUrl: processed.url
+        })
+        try {
+          const { enqueueJob } = await import("@/lib/job-queue")
+          await enqueueJob("cleanup-orphaned-blob", { blobUrl: processed.url }, { priority: 1 })
+          await logger.info('Queued orphaned blob cleanup job for token validation failure', { blobUrl: processed.url })
+        } catch (queueError) {
+          await logger.error("Failed to queue orphaned blob cleanup", queueError instanceof Error ? queueError : new Error(String(queueError)), { blobUrl: processed.url })
+        }
+      }
+      
+      await logger.warn('Token expired during deposit upload operation', {
+        bookingId: booking.id,
+        error: tokenError instanceof Error ? tokenError.message : String(tokenError),
+        depositUrl: processed.url // Blob was uploaded successfully (now cleaned up)
+      })
+      return errorResponse(
+        ErrorCodes.TOKEN_EXPIRED,
+        "Your session expired during the upload process. Please try again.",
+        {
+          error: "Token expired during operation"
+        },
+        410, // 410 Gone
+        { requestId }
+      )
+    }
+
     // Get old status and updatedAt from re-checked booking (for optimistic locking)
     const oldStatus = recheckBooking.status
     const originalUpdatedAt = recheckBooking.updatedAt
@@ -302,6 +367,30 @@ export async function POST(request: Request) {
         { requestId }
       )
     } catch (updateError) {
+      // CRITICAL: Cleanup orphaned blob if database update failed
+      // The blob was uploaded successfully but booking update failed, leaving it orphaned
+      try {
+        const { deleteImage } = await import("@/lib/blob")
+        await deleteImage(processed.url)
+        await logger.info('Cleaned up orphaned deposit blob after database update failure', {
+          bookingId: booking.id,
+          blobUrl: processed.url
+        })
+      } catch (cleanupError) {
+        // If cleanup fails, queue it for background cleanup
+        await logger.error('Failed to cleanup orphaned deposit blob, queueing for background cleanup', cleanupError instanceof Error ? cleanupError : new Error(String(cleanupError)), {
+          bookingId: booking.id,
+          blobUrl: processed.url
+        })
+        try {
+          const { enqueueJob } = await import("@/lib/job-queue")
+          await enqueueJob("cleanup-orphaned-blob", { blobUrl: processed.url }, { priority: 1 })
+          await logger.info('Queued orphaned blob cleanup job for failed deposit upload', { blobUrl: processed.url })
+        } catch (queueError) {
+          await logger.error("Failed to queue orphaned blob cleanup", queueError instanceof Error ? queueError : new Error(String(queueError)), { blobUrl: processed.url })
+        }
+      }
+      
       // Check if error is due to optimistic locking conflict
       const errorMessage = updateError instanceof Error ? updateError.message : "Failed to update booking"
       
@@ -309,7 +398,7 @@ export async function POST(request: Request) {
       await logger.error('Deposit upload failed: database update error', updateError instanceof Error ? updateError : new Error(String(updateError)), {
         bookingId: booking.id,
         errorMessage,
-        depositUrl: processed.url, // Blob was uploaded successfully
+        depositUrl: processed.url, // Blob was uploaded successfully (now cleaned up)
       })
       
       if (errorMessage.includes("modified by another process") || errorMessage.includes("Invalid status transition")) {
@@ -341,9 +430,8 @@ export async function POST(request: Request) {
         })
         return errorResponse(
           ErrorCodes.INTERNAL_ERROR,
-          "Database schema error. Please contact administrator. The deposit image was uploaded successfully but the booking could not be updated.",
+          "Database schema error. Please contact administrator. The deposit image upload was rolled back.",
           {
-            depositUrl: processed.url,
             error: "Database column missing. Please reinitialize the database.",
           },
           500,
@@ -352,7 +440,7 @@ export async function POST(request: Request) {
       }
       
       // Re-throw other errors with more context
-      throw new Error(`Failed to update booking after deposit upload: ${errorMessage}. Deposit image was uploaded successfully to: ${processed.url}`)
+      throw new Error(`Failed to update booking after deposit upload: ${errorMessage}. Deposit image upload was rolled back.`)
     }
   }, { endpoint: '/api/booking/deposit' })
 }

@@ -747,9 +747,29 @@ export function Header() {
         organizationType: formData.organizationType,
       })
       
+      // Check email status from response
+      const emailStatus = data.data?.emailStatus
+      const emailsQueued = emailStatus?.queued || false
+      const allEmailsSent = emailStatus?.adminSent && emailStatus?.userSent
+      
+      // Determine success message based on email status
+      let successDescription = "Thank you for your reservation request! We'll be in touch soon."
+      if (emailsQueued && !allEmailsSent) {
+        // Emails were queued for retry - booking exists but emails will be sent later
+        successDescription = "Your booking has been confirmed. Confirmation emails are being processed and will be sent shortly."
+      } else if (!allEmailsSent && emailStatus) {
+        // Some emails failed but were queued
+        successDescription = "Your booking has been confirmed. Some confirmation emails are being retried and will be sent shortly."
+      }
+      
+      // Store booking reference number for user reference
+      if (data.data?.referenceNumber && typeof window !== "undefined") {
+        sessionStorage.setItem('lastBookingReference', data.data.referenceNumber)
+      }
+      
       toast.success("Reservation submitted successfully!", {
-        description: "Thank you for your reservation request! We'll be in touch soon.",
-        duration: 5000,
+        description: successDescription,
+        duration: 7000, // Longer duration to show email status message
         className: "bg-white border border-gray-300 rounded-lg shadow-lg font-comfortaa",
         style: {
           backgroundColor: "#ffffff",
@@ -763,6 +783,28 @@ export function Header() {
           fontSize: "clamp(0.875rem, 2vw, 1rem)",
         },
       })
+      
+      // Optionally show booking reference number
+      if (data.data?.referenceNumber) {
+        setTimeout(() => {
+          toast.info(`Booking Reference: ${data.data.referenceNumber}`, {
+            description: "Please save this reference number for your records.",
+            duration: 10000,
+            className: "bg-blue-50 border border-blue-200 rounded-lg shadow-lg font-comfortaa",
+          })
+        }, 2000) // Show after success toast
+      }
+      
+      // If emails were queued, show additional info
+      if (emailsQueued) {
+        setTimeout(() => {
+          toast.info("Email Status", {
+            description: "Confirmation emails are being processed and will be sent shortly.",
+            duration: 5000,
+            className: "bg-blue-50 border border-blue-200 rounded-lg shadow-lg font-comfortaa",
+          })
+        }, 4000) // Show after reference number toast
+      }
       
       setFormData({
         name: "",
@@ -814,10 +856,18 @@ export function Header() {
         retryable = true
       } else if (error.message) {
         errorMessage = error.message
-        // Check for email-related errors
-        if (error.message.includes("email") || error.message.includes("confirmation")) {
+        // Check for database vs email errors
+        if (error.message.includes("Failed to save booking to database") || error.message.includes("database")) {
+          // Database failed - booking was NOT saved, user must retry
+          errorType = "server" // Use "server" type (database errors are server-side)
+          errorMessage = "Failed to save your booking. Please try again. Your form data has been preserved."
+          retryable = true
+        } else if (error.message.includes("email") || error.message.includes("confirmation")) {
+          // Email error - check if booking was saved
+          // With new approach, if booking exists, emails are queued, so this shouldn't happen
+          // But handle gracefully for backward compatibility
           errorType = "server"
-          errorMessage = "Failed to send confirmation emails. Your form data has been saved. Please verify CAPTCHA again below and try submitting once more."
+          errorMessage = "Failed to send confirmation emails. Please try again."
           retryable = true
         } else if (error.message.includes("network") || error.message.includes("fetch")) {
           errorType = "network"

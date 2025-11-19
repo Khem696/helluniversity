@@ -189,7 +189,25 @@ export async function PATCH(
       return authError
     }
 
-    const body = await request.json()
+    // CRITICAL: Use safe JSON parsing with size limits to prevent DoS
+    let body: any
+    try {
+      const { safeParseJSON } = await import('@/lib/safe-json-parse')
+      body = await safeParseJSON(request, 1048576) // 1MB limit for booking update data
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error)
+      await logger.warn('Request body parsing failed', new Error(errorMessage))
+      return errorResponse(
+        ErrorCodes.VALIDATION_ERROR,
+        errorMessage.includes('too large') 
+          ? 'Request body is too large. Please reduce the size of your submission.'
+          : 'Invalid request format. Please check your input and try again.',
+        undefined,
+        400,
+        { requestId }
+      )
+    }
+    
     const { status, changeReason, adminNotes, proposedDate, depositVerifiedBy, newStartDate, newEndDate, newStartTime, newEndTime, action } = body
     
     await logger.debug('Booking update data', {
@@ -502,32 +520,8 @@ export async function PATCH(
         )
       }
 
-      // 2. Re-check overlaps (catch any bookings that became confirmed)
-      await logger.info('Performing final overlap check before updating booking dates')
-      const finalOverlapCheck = await checkBookingOverlap(
-        id, // Exclude current booking
-        checkStartDate,
-        checkEndDate,
-        checkStartTime,
-        checkEndTime
-      )
-
-      if (finalOverlapCheck.overlaps) {
-        const overlappingNames = finalOverlapCheck.overlappingBookings
-          ?.map((b: any) => b.name || "Unknown")
-          .join(", ") || "existing booking"
-        await logger.warn('Final overlap check detected conflict - date became unavailable', {
-          bookingId: id,
-          overlappingNames
-        })
-        return errorResponse(
-          ErrorCodes.BOOKING_OVERLAP,
-          `The selected date and time is no longer available. It overlaps with a recently confirmed booking (${overlappingNames}). Please refresh and choose a different date.`,
-          { overlappingBookings: finalOverlapCheck.overlappingBookings },
-          409,
-          { requestId }
-        )
-      }
+      // Note: Final overlap check is now performed WITHIN the transaction below
+      // This prevents race conditions by ensuring the check and update are atomic
 
       // Update booking dates in a transaction with optimistic locking
       const { dbTransaction } = await import("@/lib/turso")
@@ -579,6 +573,39 @@ export async function PATCH(
             updateArgs.push(newEndTime || null)
           }
 
+          // CRITICAL: Final overlap check WITHIN transaction to prevent race conditions
+          // This ensures no other booking can be confirmed between check and update
+          // Only check if dates are actually changing
+          if (newStartDate || newEndDate !== undefined || newStartTime !== undefined || newEndTime !== undefined) {
+            const { checkBookingOverlapWithLock } = await import("@/lib/booking-validations")
+            const effectiveStartDate = newStartDate 
+              ? (typeof newStartDate === 'string' ? createBangkokTimestamp(newStartDate) : newStartDate)
+              : checkStartDate
+            const effectiveEndDate = newEndDate !== undefined
+              ? (newEndDate === null ? null : (typeof newEndDate === 'string' ? createBangkokTimestamp(newEndDate) : newEndDate))
+              : checkEndDate
+            const effectiveStartTime = newStartTime !== undefined ? newStartTime : checkStartTime
+            const effectiveEndTime = newEndTime !== undefined ? newEndTime : checkEndTime
+            
+            const overlapCheck = await checkBookingOverlapWithLock(
+              id, // Exclude current booking
+              effectiveStartDate,
+              effectiveEndDate,
+              effectiveStartTime,
+              effectiveEndTime,
+              tx
+            )
+            
+            if (overlapCheck.overlaps) {
+              const overlappingNames = overlapCheck.overlappingBookings
+                ?.map((b: any) => b.name || "Unknown")
+                .join(", ") || "existing booking"
+              throw new Error(
+                `The selected date and time is no longer available. It overlaps with a recently confirmed booking (${overlappingNames}). Please refresh and choose a different date.`
+              )
+            }
+          }
+
           // UPDATE TOKEN EXPIRATION if booking date changes and booking has a token
           // Token expiration should match booking start date/time
           // Only update if booking status allows tokens (pending/pending_deposit)
@@ -610,6 +637,16 @@ export async function PATCH(
             })
           }
 
+          // IMPROVED: Validate field names before building SQL to prevent injection
+          const { validateFieldNames, ALLOWED_BOOKING_FIELDS } = await import('@/lib/sql-field-validation')
+          const fieldValidation = validateFieldNames(updateFields, ALLOWED_BOOKING_FIELDS)
+          
+          if (!fieldValidation.valid) {
+            throw new Error(
+              `Invalid field names in update: ${fieldValidation.errors?.join(', ')}`
+            )
+          }
+          
           // Execute UPDATE with optimistic locking (check updated_at) within transaction
           const result = await tx.execute({
             sql: `UPDATE bookings SET ${updateFields.join(", ")} WHERE id = ? AND updated_at = ?`,
@@ -905,6 +942,36 @@ export async function PATCH(
       }
     }
 
+    // CRITICAL: Verify blob exists before restoring to paid_deposit or confirmed with deposit evidence
+    // This prevents restoring bookings with invalid/missing deposit evidence URLs
+    if ((status === "paid_deposit" || status === "confirmed") && 
+        currentBooking.status === "cancelled" && 
+        currentBooking.depositEvidenceUrl) {
+      const { verifyBlobExists } = await import("@/lib/blob")
+      const blobExists = await verifyBlobExists(currentBooking.depositEvidenceUrl)
+      
+      if (!blobExists) {
+        await logger.warn('Archive restoration blocked: deposit evidence blob does not exist', {
+          bookingId: id,
+          blobUrl: currentBooking.depositEvidenceUrl,
+          targetStatus: status
+        })
+        return errorResponse(
+          ErrorCodes.VALIDATION_ERROR,
+          `Cannot restore booking: deposit evidence file is missing or invalid. The deposit evidence URL exists in the database but the file is no longer available in blob storage. Please clear the deposit evidence URL or contact support.`,
+          { blobUrl: currentBooking.depositEvidenceUrl },
+          400,
+          { requestId }
+        )
+      }
+      
+      await logger.info('Deposit evidence blob verified before restoration', {
+        bookingId: id,
+        blobUrl: currentBooking.depositEvidenceUrl,
+        targetStatus: status
+      })
+    }
+
     // Set depositVerifiedBy when explicitly verifying deposit (status is confirmed or paid_deposit)
     // Check if depositVerifiedBy is provided (not undefined, not null, and not empty string)
     const shouldVerifyDeposit = (status === "confirmed" || status === "paid_deposit") && 
@@ -1173,6 +1240,37 @@ export async function PATCH(
           { requestId }
         )
       }
+    }
+    
+    // IMPROVED: Re-fetch booking right before status update to get latest updated_at for optimistic locking
+    // This prevents race conditions where booking was modified between initial fetch and status update
+    const recheckBookingForStatus = await getBookingById(id)
+    if (!recheckBookingForStatus) {
+      await logger.warn('Status update rejected: booking not found during re-check', { bookingId: id })
+      return notFoundResponse('Booking', { requestId })
+    }
+    
+    // Check if booking was modified by another process (optimistic locking)
+    if (recheckBookingForStatus.updatedAt !== currentBooking.updatedAt) {
+      await logger.warn('Status update rejected: booking was modified by another process', {
+        bookingId: id,
+        originalUpdatedAt: currentBooking.updatedAt,
+        currentUpdatedAt: recheckBookingForStatus.updatedAt
+      })
+      // Track monitoring metric
+      try {
+        const { trackOptimisticLockConflict } = await import('@/lib/monitoring')
+        trackOptimisticLockConflict('booking', id, { requestId, action: 'status_change' })
+      } catch {
+        // Ignore monitoring errors
+      }
+      return errorResponse(
+        ErrorCodes.CONFLICT,
+        "Booking was modified by another process. Please refresh the page and try again.",
+        undefined,
+        409,
+        { requestId }
+      )
     }
     
     let updatedBooking
@@ -1519,17 +1617,43 @@ export async function DELETE(
     )
 
     // OPTIMIZED: Start all background operations but don't wait for them
-    // Use Promise.allSettled to ensure all operations are attempted but don't block the response
-    Promise.allSettled(backgroundOperations).then(async (results) => {
-      const failed = results.filter(r => r.status === 'rejected').length
-      if (failed > 0) {
-        await logger.warn(`Some background operations failed during booking deletion`, { bookingId: id, failedCount: failed, totalCount: results.length })
-      } else {
-        await logger.info('All background operations completed for booking deletion', { bookingId: id })
-      }
-    }).catch(async (error) => {
-      await logger.error('Error in background operations promise handler', error instanceof Error ? error : new Error(String(error)), { bookingId: id })
-    })
+    // IMPROVED: Use Promise.allSettled with explicit error handling to prevent unhandled rejections
+    // Store promise reference to ensure it's tracked (prevents garbage collection issues in serverless)
+    const backgroundPromise = Promise.allSettled(backgroundOperations)
+      .then(async (results) => {
+        const failed = results.filter(r => r.status === 'rejected').length
+        if (failed > 0) {
+          // Log individual failures for debugging
+          const failures = results
+            .filter(r => r.status === 'rejected')
+            .map((r, idx) => ({
+              index: idx,
+              error: r.status === 'rejected' ? (r.reason instanceof Error ? r.reason.message : String(r.reason)) : 'unknown'
+            }))
+          
+          await logger.warn(`Some background operations failed during booking deletion`, { 
+            bookingId: id, 
+            failedCount: failed, 
+            totalCount: results.length,
+            failures
+          })
+        } else {
+          await logger.info('All background operations completed for booking deletion', { bookingId: id })
+        }
+      })
+      .catch(async (error) => {
+        // This should rarely happen since Promise.allSettled doesn't reject
+        // But we handle it just in case
+        await logger.error('Unexpected error in background operations promise handler', 
+          error instanceof Error ? error : new Error(String(error)), 
+          { bookingId: id }
+        )
+      })
+    
+    // IMPROVED: Explicitly track the promise to prevent unhandled rejection warnings
+    // In serverless environments, this ensures the promise is tracked even if function returns early
+    // The promise will complete in the background, and errors are logged
+    void backgroundPromise // Explicitly mark as intentionally not awaited
 
     await logger.info('Booking deleted successfully (background operations queued)', { bookingId: id })
 

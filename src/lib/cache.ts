@@ -8,7 +8,11 @@
 interface CacheEntry<T> {
   value: T
   expiresAt: number
+  version: number // Cache version for invalidation
 }
+
+// Global cache version - increments on major invalidations
+let globalCacheVersion = 1
 
 class SimpleCache {
   private cache: Map<string, CacheEntry<any>> = new Map()
@@ -30,18 +34,25 @@ class SimpleCache {
       return undefined
     }
 
+    // Check cache version - if global version is newer, entry is stale
+    if (entry.version < globalCacheVersion) {
+      this.cache.delete(key)
+      return undefined
+    }
+
     return entry.value as T
   }
 
   /**
    * Set value in cache
    */
-  set<T>(key: string, value: T, ttl?: number): void {
+  set<T>(key: string, value: T, ttl?: number, version?: number): void {
     const expiresAt = Date.now() + (ttl || this.defaultTTL) * 1000
     
     this.cache.set(key, {
       value,
       expiresAt,
+      version: version || globalCacheVersion,
     })
   }
 
@@ -115,11 +126,24 @@ class SimpleCache {
 // Singleton cache instance
 const cache = new SimpleCache()
 
+// Store interval ID for cleanup
+let cleanupInterval: NodeJS.Timeout | null = null
+
 // Clean expired entries every 5 minutes
 if (typeof setInterval !== 'undefined') {
-  setInterval(() => {
+  cleanupInterval = setInterval(() => {
     cache.clean()
   }, 5 * 60 * 1000)
+}
+
+/**
+ * Cleanup cache interval (call on application shutdown)
+ */
+export function cleanupCacheInterval(): void {
+  if (cleanupInterval) {
+    clearInterval(cleanupInterval)
+    cleanupInterval = null
+  }
 }
 
 /**
@@ -132,8 +156,8 @@ export function getCached<T>(key: string): T | undefined {
 /**
  * Set cached value
  */
-export function setCached<T>(key: string, value: T, ttl?: number): void {
-  cache.set(key, value, ttl)
+export function setCached<T>(key: string, value: T, ttl?: number, version?: number): void {
+  cache.set(key, value, ttl, version)
 }
 
 /**
@@ -146,9 +170,16 @@ export function deleteCached(key: string): void {
 /**
  * Invalidate cache entries matching pattern
  * Includes retry logic for robustness (though in-memory cache rarely fails)
+ * IMPROVED: Also increments global cache version for version-based invalidation
  */
 export async function invalidateCache(pattern: string, retries: number = 3): Promise<void> {
   let lastError: Error | null = null
+  
+  // Increment global cache version for major invalidations (like 'bookings:list')
+  // This ensures all related cache entries become stale
+  if (pattern === 'bookings:list' || pattern.includes('booking')) {
+    globalCacheVersion++
+  }
   
   for (let attempt = 0; attempt < retries; attempt++) {
     try {

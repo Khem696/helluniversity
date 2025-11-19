@@ -55,7 +55,25 @@ export const PATCH = withVersioning(async (
       return authError
     }
 
-    const body = await request.json()
+    // CRITICAL: Use safe JSON parsing with size limits to prevent DoS
+    let body: any
+    try {
+      const { safeParseJSON } = await import('@/lib/safe-json-parse')
+      body = await safeParseJSON(request, 102400) // 100KB limit for image metadata
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error)
+      await logger.warn('Request body parsing failed', new Error(errorMessage))
+      return errorResponse(
+        ErrorCodes.VALIDATION_ERROR,
+        errorMessage.includes('too large') 
+          ? 'Request body is too large. Please reduce the size of your submission.'
+          : 'Invalid request format. Please check your input and try again.',
+        undefined,
+        400,
+        { requestId }
+      )
+    }
+    
     const { category, display_order, title, event_info, ai_selected, ai_order } = body
     
     await logger.debug('Image update data', {
@@ -116,6 +134,20 @@ export const PATCH = withVersioning(async (
     }
 
     args.push(id)
+
+    // IMPROVED: Validate field names before building SQL to prevent injection
+    const { validateFieldNames, ALLOWED_IMAGE_FIELDS } = await import('@/lib/sql-field-validation')
+    const fieldValidation = validateFieldNames(updates, ALLOWED_IMAGE_FIELDS)
+    
+    if (!fieldValidation.valid) {
+      return errorResponse(
+        ErrorCodes.VALIDATION_ERROR,
+        `Invalid field names in update: ${fieldValidation.errors?.join(', ')}`,
+        undefined,
+        400,
+        { requestId }
+      )
+    }
 
     await db.execute({
       sql: `UPDATE images SET ${updates.join(", ")} WHERE id = ?`,

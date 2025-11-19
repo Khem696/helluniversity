@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server"
-import { sendReservationEmails, verifyEmailConfig } from "@/lib/email"
-import { createBooking } from "@/lib/bookings"
+import { verifyEmailConfig } from "@/lib/email"
+import { createBookingWithEmailStatus } from "@/lib/booking-email-status"
 import { checkRateLimit, getRateLimitIdentifier } from "@/lib/rate-limit"
 import { checkBookingOverlap } from "@/lib/booking-validations"
 import { validateBookingData } from "@/lib/input-validation"
@@ -79,7 +79,25 @@ export async function POST(request: Request): Promise<NextResponse> {
       )
     }
     
-    const body = await request.json()
+    // CRITICAL: Use safe JSON parsing with size limits to prevent DoS
+    let body: any
+    try {
+      const { safeParseJSON } = await import('@/lib/safe-json-parse')
+      body = await safeParseJSON(request, 1048576) // 1MB limit for booking data
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error)
+      await logger.warn('Request body parsing failed', new Error(errorMessage))
+      return errorResponse(
+        ErrorCodes.VALIDATION_ERROR,
+        errorMessage.includes('too large') 
+          ? 'Request body is too large. Please reduce the size of your submission.'
+          : 'Invalid request format. Please check your input and try again.',
+        undefined,
+        400,
+        { requestId }
+      )
+    }
+    
     const { token, ...bookingData } = body
 
     // Check rate limit (using middleware)
@@ -323,39 +341,17 @@ export async function POST(request: Request): Promise<NextResponse> {
       await logger.warn('Booking overlap detected', { overlappingNames })
       return errorResponse(
         ErrorCodes.BOOKING_OVERLAP,
-        `The selected date and time overlaps with an existing checked-in booking (${overlappingNames}). Please choose a different date or time.`,
+        `The selected date and time overlaps with an existing confirmed booking (${overlappingNames}). Please choose a different date or time.`,
         { overlappingBookings: overlapCheck.overlappingBookings },
         409,
         { requestId }
       )
     }
     
-    // FINAL OVERLAP CHECK: Re-check right before saving to prevent race conditions
-    // This ensures we catch any bookings that became checked-in between initial check and save
-    await logger.info('Performing final overlap check before saving booking')
-    const finalOverlapCheck = await checkBookingOverlap(
-      null, // New booking
-      startDateTimestamp, // Pass date timestamp (without time) - checkBookingOverlap will add time
-      sanitizedData.endDate ? createBangkokTimestamp(sanitizedData.endDate, null) : null,
-      sanitizedData.startTime || null,
-      sanitizedData.endTime || null
-    )
+    // Note: Final overlap check is now performed WITHIN the transaction in createBookingWithEmailStatus
+    // This prevents race conditions by ensuring the check and save are atomic
     
-    if (finalOverlapCheck.overlaps) {
-      const overlappingNames = finalOverlapCheck.overlappingBookings
-        ?.map((b: any) => b.name || "Unknown")
-        .join(", ") || "existing booking"
-      await logger.warn('Final overlap check detected conflict - booking became unavailable', { overlappingNames })
-      return errorResponse(
-        ErrorCodes.BOOKING_OVERLAP,
-        `The selected date and time is no longer available. It overlaps with a recently checked-in booking (${overlappingNames}). Please refresh the calendar and choose a different date or time.`,
-        { overlappingBookings: finalOverlapCheck.overlappingBookings },
-        409,
-        { requestId }
-      )
-    }
-    
-    // Prepare booking data for email (before creating booking)
+    // Prepare booking data for creation
     const bookingDataForCreation = {
       name: sanitizedData.name,
       email: sanitizedData.email,
@@ -374,11 +370,6 @@ export async function POST(request: Request): Promise<NextResponse> {
       specialRequests: sanitizedData.specialRequests,
     }
     
-    // CRITICAL: Generate reference number BEFORE sending admin email
-    // This ensures we have a reference to include in the email subject
-    const { randomUUID } = await import('crypto')
-    const tempBookingId = randomUUID()
-    
     // Generate reference number (same logic as createBooking)
     // IMPROVED: Increased capacity from 60M to 2.2B combinations
     // Format: HU-XXXXXX (3 chars timestamp + 3 chars random)
@@ -392,105 +383,65 @@ export async function POST(request: Request): Promise<NextResponse> {
     }
     const tempReferenceNumber = generateBookingReference()
     
-    // CRITICAL: Send BOTH emails FIRST - booking will NOT be saved if either fails
-    let emailStatus: { adminSent: boolean; userSent: boolean; errors: string[] } | undefined = undefined
-    try {
-      await logger.info('Attempting to send both admin and user emails before saving booking')
-      emailStatus = await sendReservationEmails({
-        name: sanitizedData.name,
-        email: sanitizedData.email,
-        phone: sanitizedData.phone,
-        participants: sanitizedData.participants,
-        eventType: sanitizedData.eventType,
-        otherEventType: sanitizedData.otherEventType,
-        dateRange: !!sanitizedData.endDate,
-        startDate: sanitizedData.startDate,
-        endDate: sanitizedData.endDate || null,
-        startTime: sanitizedData.startTime,
-        endTime: sanitizedData.endTime,
-        organizationType: bookingData.organizationType as "Tailor Event" | "Space Only" | "" || "",
-        introduction: sanitizedData.introduction,
-        biography: sanitizedData.biography,
-        specialRequests: sanitizedData.specialRequests,
-      }, tempReferenceNumber) // Use reference number for email subject
-      
-      // CRITICAL: BOTH emails must succeed - if either fails, do NOT save booking
-      if (!emailStatus.adminSent || !emailStatus.userSent) {
-        await logger.error('CRITICAL: Email sending failed - booking will NOT be saved', 
-          new Error(`Admin: ${emailStatus.adminSent}, User: ${emailStatus.userSent}, Errors: ${emailStatus.errors.join('; ')}`)
-        )
-        return errorResponse(
-          ErrorCodes.EMAIL_ERROR,
-          'Failed to send booking confirmation emails. Please try again later. Your booking was not saved.',
-          emailStatus.errors.join('; ') || 'Email sending failed',
-          500,
-          { requestId }
-        )
-      }
-      
-      await logger.info('Both admin and user emails sent successfully, proceeding to save booking')
-    } catch (emailError) {
-      await logger.error('CRITICAL: Email sending failed with exception - booking will NOT be saved', emailError instanceof Error ? emailError : new Error(String(emailError)))
-      return errorResponse(
-        ErrorCodes.EMAIL_ERROR,
-        'Failed to send booking confirmation emails. Please try again later. Your booking was not saved.',
-        emailError instanceof Error ? emailError.message : 'Email sending failed',
-        500,
-        { requestId }
-      )
-    }
+    // TRANSACTIONAL: Save booking first, then send emails
+    // If database saves but emails fail → emails queued for retry (booking exists)
+    // If database fails → no emails sent (transaction rollback)
+    await logger.info('Creating booking with transactional email sending', {
+      referenceNumber: tempReferenceNumber
+    })
     
-    // Only save booking to database AFTER both emails succeed
-    let savedBooking: { id: string; referenceNumber: string } | undefined = undefined
-    try {
-      savedBooking = await createBooking(bookingDataForCreation, tempReferenceNumber)
-      await logger.info('Booking created successfully', { 
-        bookingId: savedBooking.id, 
-        referenceNumber: savedBooking.referenceNumber 
-      })
+    const bookingResult = await createBookingWithEmailStatus(
+      bookingDataForCreation,
+      tempReferenceNumber,
+      requestId
+    )
+    
+    // Check result
+    if (!bookingResult.success) {
+      await logger.error(
+        'Booking creation failed',
+        bookingResult.error ? new Error(bookingResult.error) : undefined,
+        {
+          error: bookingResult.error,
+          emailErrors: bookingResult.emailStatus?.errors
+        }
+      )
       
-      // Verify reference number matches (should be same since generated with same logic)
-      if (savedBooking.referenceNumber !== tempReferenceNumber) {
-        await logger.warn('Reference number mismatch', { 
-          temp: tempReferenceNumber, 
-          saved: savedBooking.referenceNumber 
-        })
-      }
-    } catch (dbError) {
-      await logger.error('CRITICAL: Failed to save booking after both emails succeeded', dbError instanceof Error ? dbError : new Error(String(dbError)))
-      // Both emails were sent but booking failed to save - this is a critical error
-      // Both admin and user received emails but booking won't exist - need to handle this
+      // Database failed - return error (no emails sent)
       return errorResponse(
         ErrorCodes.DATABASE_ERROR,
-        'Booking confirmation emails were sent but failed to save booking. Please contact support with your booking details.',
-        dbError instanceof Error ? dbError.message : 'Database error',
+        bookingResult.error || 'Failed to create booking',
+        undefined,
         500,
         { requestId }
       )
     }
     
-    // Both emails succeeded and booking was saved - return success
-    try {
-      await logger.info('Booking created successfully - both emails sent and booking saved', { 
-        bookingId: savedBooking.id,
-        referenceNumber: savedBooking.referenceNumber
-      })
-    } catch (logError) {
-      // Log error but don't fail the request - booking was successful
-      console.error('Failed to log success message:', logError)
+    // Success - booking exists (emails may be queued for retry)
+    await logger.info('Booking created successfully with transactional emails', {
+      bookingId: bookingResult.bookingId,
+      referenceNumber: bookingResult.referenceNumber,
+      emailStatus: bookingResult.emailStatus
+    })
+    
+    // Determine success message based on email status
+    let successMessage = 'Booking created successfully. Confirmation emails have been sent.'
+    if (bookingResult.emailStatus?.queued) {
+      if (!bookingResult.emailStatus.adminSent || !bookingResult.emailStatus.userSent) {
+        successMessage = 'Booking created successfully. Confirmation emails are being processed and will be sent shortly.'
+      }
     }
     
-    // Return success response - ensure this is the last operation
-    const response = successResponse(
+    // Return success response with email status
+    return successResponse(
       {
-        bookingId: savedBooking.id,
-        referenceNumber: savedBooking.referenceNumber,
-        message: 'Booking created successfully. Confirmation emails have been sent.',
+        bookingId: bookingResult.bookingId,
+        referenceNumber: bookingResult.referenceNumber,
+        message: successMessage,
+        emailStatus: bookingResult.emailStatus,
       },
       { requestId }
     )
-    
-    return response
   }, { endpoint: '/api/booking' })
 }
 

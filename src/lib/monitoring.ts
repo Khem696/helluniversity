@@ -325,11 +325,24 @@ export function cleanupOldMetrics(): void {
   }
 }
 
+// Store interval ID for cleanup
+let metricsCleanupInterval: NodeJS.Timeout | null = null
+
 // Initialize cleanup interval
 if (typeof setInterval !== 'undefined') {
-  setInterval(() => {
+  metricsCleanupInterval = setInterval(() => {
     cleanupOldMetrics()
   }, METRICS_CLEANUP_INTERVAL)
+}
+
+/**
+ * Cleanup metrics interval (call on application shutdown)
+ */
+export function cleanupMetricsInterval(): void {
+  if (metricsCleanupInterval) {
+    clearInterval(metricsCleanupInterval)
+    metricsCleanupInterval = null
+  }
 }
 
 

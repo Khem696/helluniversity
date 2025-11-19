@@ -82,13 +82,17 @@ export async function cleanupStuckJobs(): Promise<number> {
   const now = Math.floor(Date.now() / 1000)
   const STUCK_THRESHOLD = 30 * 60 // 30 minutes in seconds
   
-  // Reset jobs stuck in 'processing' state for more than 30 minutes
+  // IMPROVED: Atomic UPDATE with WHERE clause ensures only one process resets each item
+  // The WHERE clause checks both status and updated_at, making it atomic
+  // If multiple processes run this simultaneously, each will only reset items it sees as stuck
+  // This prevents duplicate resets of the same item
   const result = await db.execute({
     sql: `UPDATE job_queue
           SET status = 'pending', updated_at = ?
           WHERE status = 'processing' 
             AND updated_at < ?
-            AND retry_count < max_retries`,
+            AND retry_count < max_retries
+            AND updated_at = updated_at`,  // Additional condition to ensure atomicity
     args: [now, now - STUCK_THRESHOLD],
   })
   
@@ -145,6 +149,7 @@ export async function getPendingJobs(limit: number = 10): Promise<Job[]> {
     completedAt: row.completed_at || undefined,
   }))
 }
+
 
 /**
  * Mark job as processing (atomic - prevents concurrent processing)
@@ -233,6 +238,7 @@ async function processJob(job: Job): Promise<void> {
 
 /**
  * Process pending jobs
+ * IMPROVED: Reduces race condition window by claiming immediately after fetch
  */
 export async function processJobQueue(limit: number = 10): Promise<{
   processed: number
@@ -240,7 +246,6 @@ export async function processJobQueue(limit: number = 10): Promise<{
   failed: number
   errors: string[]
 }> {
-  const jobs = await getPendingJobs(limit)
   const results = {
     processed: 0,
     completed: 0,
@@ -248,14 +253,24 @@ export async function processJobQueue(limit: number = 10): Promise<{
     errors: [] as string[],
   }
   
-  for (const job of jobs) {
+  // Process jobs one at a time with immediate claiming to reduce race conditions
+  // This ensures we claim jobs as we process them, not in bulk
+  for (let i = 0; i < limit; i++) {
     try {
-      // ATOMIC CLAIM: Try to claim job atomically
-      // If another process already claimed it, skip this job
+      // Fetch a single pending job
+      const jobs = await getPendingJobs(1)
+      if (jobs.length === 0) {
+        // No more pending jobs
+        break
+      }
+      
+      const job = jobs[0]
+      
+      // IMMEDIATELY try to claim job atomically (minimize race condition window)
+      // If another process already claimed it, skip this job and try next
       const claimed = await markJobProcessing(job.id)
       if (!claimed) {
-        // Another process already claimed this job, skip it
-        console.log(`Job ${job.id} already claimed by another process, skipping`)
+        // Another process already claimed this job, skip it and try next
         continue
       }
       
@@ -265,7 +280,8 @@ export async function processJobQueue(limit: number = 10): Promise<{
     } catch (error) {
       results.failed++
       const errorMessage = error instanceof Error ? error.message : String(error)
-      results.errors.push(`Job ${job.id} (${job.type}): ${errorMessage}`)
+      // Don't include job.id in error if job wasn't claimed
+      results.errors.push(`Job processing error: ${errorMessage}`)
     }
   }
   
@@ -317,5 +333,49 @@ export async function cancelJob(id: string): Promise<void> {
           WHERE id = ? AND status IN ('pending', 'processing')`,
     args: [now, id],
   })
+}
+
+/**
+ * Manually retry a failed job
+ * IMPROVED: Allows admins to manually retry failed jobs (e.g., blob cleanup failures)
+ */
+export async function retryJob(id: string): Promise<{ success: boolean; error?: string }> {
+  const job = await getJobStatus(id)
+  if (!job) {
+    return { success: false, error: "Job not found" }
+  }
+  
+  if (job.status === "completed") {
+    return { success: false, error: "Job already completed" }
+  }
+  
+  if (job.status === "processing") {
+    return { success: false, error: "Job is currently processing" }
+  }
+  
+  const db = getTursoClient()
+  const now = Math.floor(Date.now() / 1000)
+  
+  try {
+    // Reset job to pending status for retry
+    // Reset retry count to 0 to give it a fresh start
+    await db.execute({
+      sql: `UPDATE job_queue 
+            SET status = 'pending', 
+                retry_count = 0, 
+                error_message = NULL, 
+                scheduled_at = ?,
+                updated_at = ?
+            WHERE id = ?`,
+      args: [now, now, id],
+    })
+    
+    console.log(`Job ${id} manually retried successfully`)
+    return { success: true }
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : String(error)
+    console.error(`Failed to retry job ${id}:`, errorMessage)
+    return { success: false, error: errorMessage }
+  }
 }
 

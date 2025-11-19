@@ -61,8 +61,17 @@ export const GET = withVersioning(async (request: Request) => {
     const { searchParams } = new URL(request.url)
     const status = searchParams.get("status") as any
     const emailType = searchParams.get("emailType") as any
-    const limit = searchParams.get("limit") ? parseInt(searchParams.get("limit")!) : undefined
-    const offset = searchParams.get("offset") ? parseInt(searchParams.get("offset")!) : undefined
+    // CRITICAL: Validate and clamp limit/offset to prevent DoS
+    const rawLimit = searchParams.get("limit")
+    const rawOffset = searchParams.get("offset")
+    const limit = rawLimit ? (() => {
+      const parsed = parseInt(rawLimit)
+      return isNaN(parsed) ? undefined : Math.max(1, Math.min(1000, parsed))
+    })() : undefined
+    const offset = rawOffset ? (() => {
+      const parsed = parseInt(rawOffset)
+      return isNaN(parsed) ? undefined : Math.max(0, Math.min(1000000, parsed))
+    })() : undefined
     const statsOnly = searchParams.get("statsOnly") === "true"
     
     await logger.debug('Email queue GET parameters', { status, emailType, limit, offset, statsOnly })
@@ -121,7 +130,18 @@ export const POST = withVersioning(async (request: Request) => {
       return authError
     }
 
-    const body = await request.json().catch(() => ({}))
+    // CRITICAL: Use safe JSON parsing with size limits to prevent DoS
+    let body: any
+    try {
+      const { safeParseJSON } = await import('@/lib/safe-json-parse')
+      body = await safeParseJSON(request, 102400) // 100KB limit for email queue config
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error)
+      await logger.warn('Request body parsing failed', new Error(errorMessage))
+      // For email queue, default to empty object if parsing fails (backward compatibility)
+      body = {}
+    }
+    
     const { action, limit, daysOld } = body
     
     await logger.debug('Email queue POST parameters', { action, limit, daysOld })

@@ -68,6 +68,25 @@ export async function imageExists(url: string): Promise<boolean> {
 }
 
 /**
+ * Verify if a blob URL exists in Blob Storage
+ * Used for verifying deposit evidence URLs before archive restoration
+ */
+export async function verifyBlobExists(blobUrl: string): Promise<boolean> {
+  try {
+    if (!blobUrl || typeof blobUrl !== 'string' || blobUrl.trim() === '') {
+      return false
+    }
+    
+    // Use HEAD request to check if blob exists without downloading
+    await head(blobUrl)
+    return true
+  } catch (error) {
+    // Blob doesn't exist or URL is invalid
+    return false
+  }
+}
+
+/**
  * List images in Blob Storage (with pagination)
  */
 export async function listImages(options?: {

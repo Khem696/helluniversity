@@ -112,7 +112,25 @@ export async function PATCH(
       return authError
     }
     
-    const body = await request.json()
+    // CRITICAL: Use safe JSON parsing with size limits to prevent DoS
+    let body: any
+    try {
+      const { safeParseJSON } = await import('@/lib/safe-json-parse')
+      body = await safeParseJSON(request, 512000) // 500KB limit for event update data
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error)
+      await logger.warn('Request body parsing failed', new Error(errorMessage))
+      return errorResponse(
+        ErrorCodes.VALIDATION_ERROR,
+        errorMessage.includes('too large') 
+          ? 'Request body is too large. Please reduce the size of your submission.'
+          : 'Invalid request format. Please check your input and try again.',
+        undefined,
+        400,
+        { requestId }
+      )
+    }
+    
     const { title, description, image_id, event_date, start_date, end_date } = body
     
     await logger.debug('Event update data', {
@@ -206,6 +224,20 @@ export async function PATCH(
     updates.push("updated_at = ?")
     args.push(now)
     args.push(id) // For WHERE clause
+
+    // IMPROVED: Validate field names before building SQL to prevent injection
+    const { validateFieldNames, ALLOWED_EVENT_FIELDS } = await import('@/lib/sql-field-validation')
+    const fieldValidation = validateFieldNames(updates, ALLOWED_EVENT_FIELDS)
+    
+    if (!fieldValidation.valid) {
+      return errorResponse(
+        ErrorCodes.VALIDATION_ERROR,
+        `Invalid field names in update: ${fieldValidation.errors?.join(', ')}`,
+        undefined,
+        400,
+        { requestId }
+      )
+    }
 
     await db.execute({
       sql: `UPDATE events SET ${updates.join(", ")} WHERE id = ?`,
