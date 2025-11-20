@@ -35,6 +35,14 @@ export interface Booking {
   deposit_verified_at: number | null
   deposit_verified_by: string | null
   deposit_verified_from_other_channel?: boolean
+  fee_amount: number | null
+  fee_amount_original: number | null
+  fee_currency: string | null
+  fee_conversion_rate: number | null
+  fee_rate_date: number | null
+  fee_recorded_at: number | null
+  fee_recorded_by: string | null
+  fee_notes: string | null
   created_at: number
   updated_at: number
 }

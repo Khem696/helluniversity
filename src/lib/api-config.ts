@@ -37,18 +37,6 @@ export function getApiPath(path: string): string {
 }
 
 /**
- * Get API path without version (for legacy endpoints if needed)
- * @param path - API path without /api prefix
- * @returns Full API path without version (e.g., '/api/booking')
- */
-export function getLegacyApiPath(path: string): string {
-  const cleanPath = path.startsWith('/') ? path.slice(1) : path
-  const withoutApiPrefix = cleanPath.startsWith('api/') ? cleanPath.slice(4) : cleanPath
-  
-  return `${API_BASE}/${withoutApiPrefix}`
-}
-
-/**
  * Pre-configured API paths for common endpoints
  * Use these constants for consistency across the application
  */
@@ -66,6 +54,9 @@ export const API_PATHS = {
   adminBookingReminders: getApiPath('admin/bookings/reminders'),
   adminBookingDigest: getApiPath('admin/bookings/digest'),
   adminBookingAutoUpdate: getApiPath('admin/bookings/auto-update'),
+  adminBookingFee: (id: string) => getApiPath(`admin/bookings/${id}/fee`),
+  adminBookingFeeHistory: (id: string) => getApiPath(`admin/bookings/${id}/fee/history`),
+  adminBookingExport: getApiPath('admin/bookings/export'),
   
   // Admin Deposit APIs
   adminDepositImage: (bookingId: string) => getApiPath(`admin/deposit/${bookingId}/image`),
@@ -98,6 +89,7 @@ export const API_PATHS = {
   adminMigrateImages: getApiPath('admin/migrate-images'),
   adminCleanupOrphanedImages: getApiPath('admin/cleanup-orphaned-images'),
   adminCleanupOrphanedDeposits: getApiPath('admin/cleanup-orphaned-deposits'),
+  adminJobQueueRetry: (id: string) => getApiPath(`admin/job-queue/${id}/retry`),
   
   // Public APIs
   events: getApiPath('events'),

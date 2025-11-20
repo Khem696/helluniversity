@@ -1096,5 +1096,77 @@ export async function validateProposedDates(
   return { valid: true }
 }
 
-
+/**
+ * Validate fee data
+ * Fee can only be recorded/updated when status is "confirmed" or "finished"
+ */
+export function validateFee(
+  feeAmountOriginal: number | null | undefined,
+  feeCurrency: string | null | undefined,
+  feeConversionRate: number | null | undefined,
+  feeAmount: number | null | undefined,
+  status: string
+): { valid: boolean; reason?: string } {
+  // Fee can only be set for confirmed or finished bookings
+  if (feeAmountOriginal !== null && feeAmountOriginal !== undefined) {
+    if (status !== "confirmed" && status !== "finished") {
+      return {
+        valid: false,
+        reason: "Fee can only be recorded for confirmed or finished bookings"
+      }
+    }
+    
+    // Validate amounts are non-negative
+    if (feeAmountOriginal < 0) {
+      return {
+        valid: false,
+        reason: "Original fee amount cannot be negative"
+      }
+    }
+    
+    if (feeAmount !== null && feeAmount !== undefined && feeAmount < 0) {
+      return {
+        valid: false,
+        reason: "Base fee amount (THB) cannot be negative"
+      }
+    }
+    
+    // If currency is provided and not THB, validate conversion
+    if (feeCurrency && feeCurrency.toUpperCase() !== "THB") {
+      // If both amounts and rate are provided, validate they match
+      if (feeAmount !== null && feeAmount !== undefined && 
+          feeConversionRate !== null && feeConversionRate !== undefined) {
+        const calculatedAmount = feeAmountOriginal * feeConversionRate
+        const difference = Math.abs(calculatedAmount - feeAmount)
+        // Allow small rounding differences (0.01)
+        if (difference > 0.01) {
+          return {
+            valid: false,
+            reason: `Fee amounts don't match: ${feeAmountOriginal} × ${feeConversionRate} = ${calculatedAmount.toFixed(2)}, but base amount is ${feeAmount}`
+          }
+        }
+      }
+      
+      // Validate conversion rate is reasonable (between 0.01 and 10000)
+      if (feeConversionRate !== null && feeConversionRate !== undefined) {
+        if (feeConversionRate < 0.01 || feeConversionRate > 10000) {
+          return {
+            valid: false,
+            reason: "Conversion rate must be between 0.01 and 10000"
+          }
+        }
+      }
+      
+      // If currency is not THB, either rate or base amount must be provided
+      if (feeConversionRate === null && feeAmount === null) {
+        return {
+          valid: false,
+          reason: "Either conversion rate or base amount (THB) must be provided for non-THB currency"
+        }
+      }
+    }
+  }
+  
+  return { valid: true }
+}
 

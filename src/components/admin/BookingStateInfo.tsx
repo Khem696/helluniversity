@@ -23,6 +23,10 @@ interface Booking {
   deposit_evidence_url: string | null
   deposit_verified_at: number | null
   deposit_verified_by: string | null
+  fee_amount?: number | null
+  fee_amount_original?: number | null
+  fee_currency?: string | null
+  fee_conversion_rate?: number | null
 }
 
 interface BookingStateInfoProps {
@@ -145,6 +149,41 @@ export function BookingStateInfo({ booking }: BookingStateInfoProps) {
           </AlertDescription>
         </Alert>
       )}
+
+      {/* Fee Information */}
+      {(booking.status === "confirmed" || booking.status === "finished") && (() => {
+        // Handle both snake_case (from API) and camelCase (from formatBooking)
+        const feeAmount = (booking as any).fee_amount ?? (booking as any).feeAmount
+        const feeAmountOriginal = (booking as any).fee_amount_original ?? (booking as any).feeAmountOriginal
+        const feeCurrency = (booking as any).fee_currency ?? (booking as any).feeCurrency
+        const hasFee = feeAmount != null && feeAmount !== undefined && Number(feeAmount) > 0
+        
+        return (
+          <Alert variant="default" className={hasFee ? "bg-green-50 border-green-200 text-green-800" : "bg-yellow-50 border-yellow-200 text-yellow-800"}>
+            <CheckCircle2 className="h-4 w-4" />
+            <AlertTitle>Fee Status</AlertTitle>
+            <AlertDescription>
+              {hasFee ? (
+                <div>
+                  <div className="font-medium">
+                    Fee Recorded: {Number(feeAmount).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} THB
+                    {feeCurrency && feeCurrency.toUpperCase() !== "THB" && feeAmountOriginal && (
+                      <span className="text-sm font-normal">
+                        {" "}({Number(feeAmountOriginal).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} {feeCurrency})
+                      </span>
+                    )}
+                  </div>
+                </div>
+              ) : (
+                <div>
+                  <div className="font-medium">Fee not recorded yet</div>
+                  <div className="text-sm mt-1">Click "Record Fee" to add fee information</div>
+                </div>
+              )}
+            </AlertDescription>
+          </Alert>
+        )
+      })()}
     </div>
   )
 }

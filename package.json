@@ -91,6 +91,7 @@
     "tailwindcss-animate": "^1.0.7",
     "typescript": "^5.9.3",
     "vaul": "^1.1.2",
+    "xlsx": "^0.18.5",
     "zod": "^4.1.12"
   },
   "devDependencies": {
@@ -100,6 +101,7 @@
     "@types/nodemailer": "^7.0.3",
     "@types/react": "^19.2.2",
     "@types/react-dom": "^19.2.2",
+    "@types/xlsx": "^0.0.35",
     "eslint": "^9.39.1",
     "eslint-config-next": "^16.0.1"
   },

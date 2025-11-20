@@ -174,7 +174,7 @@ export default function BookingResponsePage() {
     setError(null)
 
     try {
-      const responseData = await fetch(`/api/v1/booking/response/${token}`, {
+      const responseData = await fetch(API_PATHS.bookingResponse(token), {
         method: "POST",
         headers: {
           "Content-Type": "application/json",

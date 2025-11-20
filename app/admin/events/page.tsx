@@ -42,6 +42,7 @@ import { TZDate } from '@date-fns/tz'
 import { useInfiniteAdminData } from "@/hooks/useInfiniteAdminData"
 import { API_PATHS, buildApiUrl } from "@/lib/api-config"
 import { useInfiniteScroll } from "@/hooks/useInfiniteScroll"
+import { GenericDeleteConfirmationDialog } from "@/components/admin/GenericDeleteConfirmationDialog"
 import {
   DndContext,
   closestCenter,
@@ -162,6 +163,7 @@ function SortablePhotoItem({
 export default function EventsPage() {
   const { data: session, status } = useSession()
   const [saving, setSaving] = useState(false)
+  const [deleting, setDeleting] = useState(false)
   
   // Initialize drag and drop sensors
   const sensors = useSensors(
@@ -190,7 +192,16 @@ export default function EventsPage() {
   const [uploadProgress, setUploadProgress] = useState<{ uploaded: number; total: number }>({ uploaded: 0, total: 0 })
   const createFormRef = React.useRef<HTMLFormElement>(null)
   const [titleFilter, setTitleFilter] = useState("")
+  const [debouncedTitleFilter, setDebouncedTitleFilter] = useState("")
   const [upcomingFilter, setUpcomingFilter] = useState(false)
+  
+  // Debounce title search input (500ms delay)
+  React.useEffect(() => {
+    const timer = setTimeout(() => {
+      setDebouncedTitleFilter(titleFilter)
+    }, 500)
+    return () => clearTimeout(timer)
+  }, [titleFilter])
   const [eventDateFilter, setEventDateFilter] = useState("")
   const [eventDateFrom, setEventDateFrom] = useState("")
   const [eventDateTo, setEventDateTo] = useState("")
@@ -200,13 +211,14 @@ export default function EventsPage() {
   const [pageSize, setPageSize] = useState(25)
   
   // Build base endpoint with filters (without limit/offset for infinite scroll)
+  // Use debounced title filter to prevent refetch on every keystroke
   const baseEndpoint = React.useMemo(() => {
     const params = new URLSearchParams()
     if (upcomingFilter) {
       params.append("upcoming", "true")
     }
-    if (titleFilter) {
-      params.append("title", titleFilter)
+    if (debouncedTitleFilter) {
+      params.append("title", debouncedTitleFilter)
     }
     if (useDateRange) {
       if (eventDateFrom) {
@@ -221,7 +233,7 @@ export default function EventsPage() {
     params.append("sortBy", sortBy)
     params.append("sortOrder", sortOrder)
     return buildApiUrl(API_PATHS.adminEvents, Object.fromEntries(params))
-  }, [upcomingFilter, titleFilter, eventDateFilter, eventDateFrom, eventDateTo, useDateRange, sortBy, sortOrder])
+  }, [upcomingFilter, debouncedTitleFilter, eventDateFilter, eventDateFrom, eventDateTo, useDateRange, sortBy, sortOrder])
   
   // Use infinite scroll hook for events
   const {
@@ -270,7 +282,7 @@ export default function EventsPage() {
   // Fetch event details with in-event photos
   const fetchEventDetails = async (eventId: string) => {
     try {
-      const response = await fetch(`/api/v1/admin/events/${eventId}`)
+      const response = await fetch(API_PATHS.adminEvent(eventId))
       const json = await response.json()
       if (json.success) {
         // API returns { success: true, data: { event: {...} } }
@@ -683,7 +695,7 @@ export default function EventsPage() {
       // Optimistically update UI first
       updateItem(editingEvent.id, updates as Partial<Event>)
       
-      const response = await fetch(`/api/v1/admin/events/${editingEvent.id}`, {
+      const response = await fetch(API_PATHS.adminEvent(editingEvent.id), {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(updates),
@@ -718,9 +730,15 @@ export default function EventsPage() {
     }
   }
 
-  // Handle event delete
+  // Handle event delete - open confirmation dialog
+  const handleDeleteClick = (eventId: string) => {
+    setDeleteConfirm(eventId)
+  }
+
+  // Confirm event delete - actually perform the deletion
   const handleDelete = async (eventId: string) => {
     try {
+      setDeleting(true)
       // Optimistically remove from list
       removeItem(eventId)
       
@@ -743,6 +761,8 @@ export default function EventsPage() {
       fetchEvents()
       toast.error("Failed to delete event")
       console.error(error)
+    } finally {
+      setDeleting(false)
     }
   }
 
@@ -766,7 +786,9 @@ export default function EventsPage() {
     }
   }
 
-  if (status === "loading" || loading) {
+  // Only show full-page loading on initial load (when there's no data yet)
+  // When refetching with existing data, show content with a subtle loading indicator
+  if (status === "loading" || (loading && events.length === 0)) {
     return (
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 sm:py-8 lg:py-12">
         <div className="flex items-center justify-center h-64">
@@ -965,13 +987,31 @@ export default function EventsPage() {
               <Label htmlFor="title-search" className="text-sm font-medium text-gray-700 mb-1 block">
                 Search by Title
               </Label>
-              <Input
-                id="title-search"
-                placeholder="Enter event title..."
-                value={titleFilter}
-                onChange={(e) => setTitleFilter(e.target.value)}
-                className="w-full"
-              />
+              <div className="relative">
+                <Input
+                  id="title-search"
+                  placeholder="Search title (contains)..."
+                  value={titleFilter}
+                  onChange={(e) => setTitleFilter(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") {
+                      e.preventDefault()
+                    }
+                  }}
+                  className="w-full pr-8"
+                />
+                {titleFilter && (
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    className="absolute right-1 top-1/2 -translate-y-1/2 h-6 w-6 p-0 hover:bg-gray-100"
+                    onClick={() => setTitleFilter("")}
+                  >
+                    <X className="h-4 w-4" />
+                  </Button>
+                )}
+              </div>
             </div>
             <div className="flex-1">
               <Label htmlFor="event-date-search" className="text-sm font-medium text-gray-700 mb-1 block">
@@ -1041,7 +1081,44 @@ export default function EventsPage() {
             </div>
           )}
         </div>
+        {(upcomingFilter || debouncedTitleFilter || eventDateFilter || eventDateFrom || eventDateTo) && (
+          <div className="flex justify-end mt-2">
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={() => {
+                setUpcomingFilter(false)
+                setTitleFilter("")
+                setEventDateFilter("")
+                setEventDateFrom("")
+                setEventDateTo("")
+                setUseDateRange(false)
+              }}
+              className="text-xs"
+            >
+              <X className="w-3 h-3 mr-1" />
+              Clear All Filters
+            </Button>
+          </div>
+        )}
       </div>
+      
+      {/* Results Count */}
+      {!loading && (
+        <div className="mb-4 text-sm text-gray-600">
+          {total > 0 ? (
+            <>
+              Showing <span className="font-medium">{events.length}</span> of <span className="font-medium">{total}</span> event{total !== 1 ? 's' : ''}
+              {(upcomingFilter || debouncedTitleFilter || eventDateFilter || eventDateFrom || eventDateTo) && (
+                <span className="ml-2 text-gray-500">(filtered)</span>
+              )}
+            </>
+          ) : (
+            <span>No events found</span>
+          )}
+        </div>
+      )}
 
       {/* Events List - Table View */}
       {events.length === 0 ? (
@@ -1154,7 +1231,7 @@ export default function EventsPage() {
                           <Button
                             size="sm"
                             variant="destructive"
-                            onClick={() => setDeleteConfirm(event.id)}
+                            onClick={() => handleDeleteClick(event.id)}
                           >
                             <Trash2 className="w-4 h-4 mr-1" />
                             Delete
@@ -1277,7 +1354,7 @@ export default function EventsPage() {
                     <Button
                       size="sm"
                       variant="destructive"
-                      onClick={() => setDeleteConfirm(event.id)}
+                      onClick={() => handleDeleteClick(event.id)}
                     >
                       <Trash2 className="w-4 h-4 mr-1" />
                       Delete
@@ -1687,33 +1764,50 @@ export default function EventsPage() {
         </DialogContent>
       </Dialog>
 
-      {/* Delete Confirmation */}
-      {deleteConfirm && (
-        <Dialog open={!!deleteConfirm} onOpenChange={() => setDeleteConfirm(null)}>
-          <DialogContent>
-            <DialogHeader>
-              <DialogTitle>Confirm Delete</DialogTitle>
-              <DialogDescription>
-                Are you sure you want to delete this event? This action cannot be undone.
-              </DialogDescription>
-            </DialogHeader>
-            <div className="flex justify-end gap-2">
-              <Button
-                variant="outline"
-                onClick={() => setDeleteConfirm(null)}
-              >
-                Cancel
-              </Button>
-              <Button
-                variant="destructive"
-                onClick={() => handleDelete(deleteConfirm)}
-              >
-                Delete
-              </Button>
+      {/* Delete Confirmation Dialog */}
+      <GenericDeleteConfirmationDialog
+        open={!!deleteConfirm}
+        onOpenChange={(open) => {
+          if (!open) setDeleteConfirm(null)
+        }}
+        title="Delete Event"
+        description="Are you sure you want to delete this event? This action cannot be undone."
+        itemName={deleteConfirm ? (() => {
+          const event = events.find(e => e.id === deleteConfirm)
+          return event ? event.title : `Event ID: ${deleteConfirm}`
+        })() : undefined}
+        itemDetails={deleteConfirm ? (() => {
+          const event = events.find(e => e.id === deleteConfirm)
+          return event ? (
+            <div className="space-y-1 text-xs">
+              {event.description && (
+                <div>
+                  <span className="font-medium">Description:</span> {event.description.substring(0, 100)}{event.description.length > 100 ? "..." : ""}
+                </div>
+              )}
+              {event.start_date && (
+                <div>
+                  <span className="font-medium">Start Date:</span> {format(new Date(event.start_date * 1000), "MMM dd, yyyy")}
+                </div>
+              )}
+              {event.end_date && (
+                <div>
+                  <span className="font-medium">End Date:</span> {format(new Date(event.end_date * 1000), "MMM dd, yyyy")}
+                </div>
+              )}
             </div>
-          </DialogContent>
-        </Dialog>
-      )}
+          ) : undefined
+        })() : undefined}
+        warningMessage="This event will be permanently deleted from the database. All associated images and data will be removed. This action cannot be undone."
+        onConfirm={() => {
+          if (deleteConfirm) {
+            handleDelete(deleteConfirm)
+          }
+        }}
+        onCancel={() => setDeleteConfirm(null)}
+        isLoading={deleting}
+        confirmButtonText="Delete Event"
+      />
     </div>
   )
 }

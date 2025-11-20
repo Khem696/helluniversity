@@ -97,12 +97,11 @@ export function useInfiniteAdminData<T extends { id?: string; [key: string]: any
     }
     
     try {
-      if (showLoading && !checkDialogOpen()) {
-        if (pageNumber === 0) {
-          setLoading(true)
-        } else {
-          setIsLoadingMore(true)
-        }
+      // Only show loading spinner on initial load, not when filters change
+      if (showLoading && !checkDialogOpen() && pageNumber === 0 && data.length === 0) {
+        setLoading(true)
+      } else if (pageNumber > 0) {
+        setIsLoadingMore(true)
       }
       setError(null)
       
@@ -119,7 +118,7 @@ export function useInfiniteAdminData<T extends { id?: string; [key: string]: any
         const pageTotal = json.data?.pagination?.total || json.data?.total || 0
         
         if (pageNumber === 0) {
-          // First page - replace data
+          // First page - replace data (but keep previous data visible until new data loads)
           setData(newItems)
           setTotal(pageTotal)
           setLoadedPages(1)
@@ -218,14 +217,24 @@ export function useInfiniteAdminData<T extends { id?: string; [key: string]: any
     })
   }, [])
 
-  // Reset and fetch when base endpoint changes (filters change)
+  // Fetch when base endpoint changes (filters change)
+  // Don't clear data immediately - keep previous data visible while fetching new data
+  // Initialize to empty string so first mount triggers fetch
+  const prevEndpointRef = useRef<string>("")
+  
   useEffect(() => {
-    setData([])
-    setLoadedPages(0)
-    setHasMore(true)
-    setTotal(0)
-    fetchData()
-  }, [baseEndpoint]) // Reset when endpoint changes (includes filters)
+    // Only reset if this is the initial load or if endpoint actually changed
+    const endpointChanged = prevEndpointRef.current !== baseEndpoint
+    
+    if (endpointChanged) {
+      // Reset pagination state but keep data visible until new data loads
+      setLoadedPages(0)
+      setHasMore(true)
+      // Don't clear data immediately - let fetchPage replace it
+      fetchPage(0, data.length === 0) // Only show loading if no existing data
+      prevEndpointRef.current = baseEndpoint
+    }
+  }, [baseEndpoint, fetchPage, data.length]) // Reset when endpoint changes (includes filters)
 
   // Smart polling
   useEffect(() => {

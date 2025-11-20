@@ -61,6 +61,7 @@ export const GET = withVersioning(async (request: Request) => {
     const { searchParams } = new URL(request.url)
     const status = searchParams.get("status") as any
     const emailType = searchParams.get("emailType") as any
+    const bookingReference = searchParams.get("bookingReference") || undefined
     // CRITICAL: Validate and clamp limit/offset to prevent DoS
     const rawLimit = searchParams.get("limit")
     const rawOffset = searchParams.get("offset")
@@ -74,7 +75,7 @@ export const GET = withVersioning(async (request: Request) => {
     })() : undefined
     const statsOnly = searchParams.get("statsOnly") === "true"
     
-    await logger.debug('Email queue GET parameters', { status, emailType, limit, offset, statsOnly })
+    await logger.debug('Email queue GET parameters', { status, emailType, bookingReference, limit, offset, statsOnly })
 
     if (statsOnly) {
       const stats = await getEmailQueueStats()
@@ -91,6 +92,7 @@ export const GET = withVersioning(async (request: Request) => {
     const result = await getEmailQueueItems({
       status,
       emailType,
+      bookingReference,
       limit,
       offset,
     })

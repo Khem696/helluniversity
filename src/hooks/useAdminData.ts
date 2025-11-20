@@ -233,10 +233,20 @@ export function useAdminData<T extends { id?: string; [key: string]: any }>(
 
   /**
    * Initial data fetch
+   * Keep previous data visible while fetching new data to prevent list from disappearing
    */
+  const prevEndpointRef = useRef<string>(endpoint)
   useEffect(() => {
-    fetchData()
-  }, [endpoint]) // Only refetch if endpoint changes
+    const endpointChanged = prevEndpointRef.current !== endpoint
+    if (endpointChanged) {
+      // Only show loading if there's no existing data
+      fetchData(data.length === 0)
+      prevEndpointRef.current = endpoint
+    } else if (data.length === 0) {
+      // Initial load
+      fetchData(true)
+    }
+  }, [endpoint, fetchData, data.length]) // Only refetch if endpoint changes
 
   /**
    * Smart polling with visibility detection

@@ -38,6 +38,8 @@ import { TZDate } from '@date-fns/tz'
 import { useInfiniteAdminEmails, type EmailQueueItem } from "@/hooks/useInfiniteAdminEmails"
 import { API_PATHS, buildApiUrl } from "@/lib/api-config"
 import { useInfiniteScroll } from "@/hooks/useInfiniteScroll"
+import { GenericDeleteConfirmationDialog } from "@/components/admin/GenericDeleteConfirmationDialog"
+import { SearchInputWithHistory } from "@/components/admin/SearchInputWithHistory"
 
 interface EmailQueueStats {
   pending: number
@@ -59,9 +61,23 @@ export default function EmailQueuePage() {
   const [processing, setProcessing] = useState(false)
   const [selectedEmail, setSelectedEmail] = useState<EmailQueueItem | null>(null)
   const [viewDialogOpen, setViewDialogOpen] = useState(false)
+  const [emailToDelete, setEmailToDelete] = useState<EmailQueueItem | null>(null)
+  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false)
+  const [deleting, setDeleting] = useState(false)
   const [statusFilter, setStatusFilter] = useState<string>("all")
   const [emailTypeFilter, setEmailTypeFilter] = useState<string>("all")
+  const [bookingReferenceFilter, setBookingReferenceFilter] = useState("")
+  const [debouncedBookingReferenceFilter, setDebouncedBookingReferenceFilter] = useState("")
   const [pageSize, setPageSize] = useState(25)
+  
+  // Search handlers for booking reference
+  const handleBookingReferenceSearch = (value: string) => {
+    setDebouncedBookingReferenceFilter(value)
+  }
+
+  const handleBookingReferenceDebouncedSearch = (value: string) => {
+    setDebouncedBookingReferenceFilter(value)
+  }
   
   // Build base endpoint with filters (without limit/offset for infinite scroll)
   const baseEndpoint = useMemo(() => {
@@ -72,8 +88,11 @@ export default function EmailQueuePage() {
     if (emailTypeFilter !== "all") {
       params.append("emailType", emailTypeFilter)
     }
+    if (debouncedBookingReferenceFilter) {
+      params.append("bookingReference", debouncedBookingReferenceFilter)
+    }
     return buildApiUrl(API_PATHS.adminEmailQueue, Object.fromEntries(params))
-  }, [statusFilter, emailTypeFilter])
+  }, [statusFilter, emailTypeFilter, debouncedBookingReferenceFilter])
   
   // Use infinite scroll hook for emails
   const {
@@ -119,7 +138,7 @@ export default function EmailQueuePage() {
   const handleProcessQueue = async () => {
     try {
       setProcessing(true)
-      const response = await fetch("/api/v1/admin/email-queue", {
+      const response = await fetch(API_PATHS.adminEmailQueue, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ action: "process", limit: 10 }),
@@ -194,22 +213,32 @@ export default function EmailQueuePage() {
     }
   }
 
-  // Delete email
-  const handleDeleteEmail = async (id: string) => {
-    if (!confirm("Are you sure you want to delete this email from the queue?")) {
-      return
+  // Handle delete email - open confirmation dialog
+  const handleDeleteEmail = (id: string) => {
+    const email = emails.find(e => e.id === id)
+    if (email) {
+      setEmailToDelete(email)
+      setDeleteDialogOpen(true)
     }
+  }
+
+  // Confirm delete email - actually perform the deletion
+  const confirmDeleteEmail = async () => {
+    if (!emailToDelete) return
 
     try {
+      setDeleting(true)
       // Optimistically remove from list
-      removeItem(id)
+      removeItem(emailToDelete.id)
       
-      const response = await fetch(API_PATHS.adminEmailQueueItem(id), {
+      const response = await fetch(API_PATHS.adminEmailQueueItem(emailToDelete.id), {
         method: "DELETE",
       })
       const json = await response.json()
       if (json.success) {
         toast.success("Email deleted successfully")
+        setDeleteDialogOpen(false)
+        setEmailToDelete(null)
         // Invalidate emails cache to trigger refetch
         if (typeof window !== 'undefined') {
           const event = new CustomEvent('invalidateAdminEmails')
@@ -238,7 +267,7 @@ export default function EmailQueuePage() {
     }
 
     try {
-      const response = await fetch("/api/v1/admin/email-queue", {
+      const response = await fetch(API_PATHS.adminEmailQueue, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ action: "cleanup", daysOld: 30 }),
@@ -405,6 +434,17 @@ export default function EmailQueuePage() {
             <SelectItem value="auto_update">Auto Update</SelectItem>
           </SelectContent>
         </Select>
+        <div className="w-full sm:w-64">
+          <SearchInputWithHistory
+            value={bookingReferenceFilter}
+            onChange={setBookingReferenceFilter}
+            onSearch={handleBookingReferenceSearch}
+            debouncedOnSearch={handleBookingReferenceDebouncedSearch}
+            placeholder="Search booking reference..."
+            storageKey="email-queue-search-booking-ref"
+            className="w-full"
+          />
+        </div>
       </div>
 
       {/* Emails Table */}
@@ -745,6 +785,34 @@ export default function EmailQueuePage() {
           )}
         </DialogContent>
       </Dialog>
+
+      {/* Delete Confirmation Dialog */}
+      <GenericDeleteConfirmationDialog
+        open={deleteDialogOpen}
+        onOpenChange={setDeleteDialogOpen}
+        title="Delete Email from Queue"
+        description="Are you sure you want to delete this email from the queue?"
+        itemName={emailToDelete ? `Email ID: ${emailToDelete.id}` : undefined}
+        itemDetails={emailToDelete ? (
+          <div className="space-y-1 text-xs">
+            <div><span className="font-medium">To:</span> {emailToDelete.recipientEmail}</div>
+            <div><span className="font-medium">Subject:</span> {emailToDelete.subject || "N/A"}</div>
+            <div><span className="font-medium">Status:</span> {emailToDelete.status}</div>
+            <div><span className="font-medium">Type:</span> {emailToDelete.emailType}</div>
+            {emailToDelete.createdAt && (
+              <div><span className="font-medium">Created:</span> {format(new Date(emailToDelete.createdAt * 1000), "MMM dd, yyyy 'at' h:mm a")}</div>
+            )}
+          </div>
+        ) : undefined}
+        warningMessage="This email will be permanently removed from the queue. This action cannot be undone."
+        onConfirm={confirmDeleteEmail}
+        onCancel={() => {
+          setDeleteDialogOpen(false)
+          setEmailToDelete(null)
+        }}
+        isLoading={deleting}
+        confirmButtonText="Delete Email"
+      />
     </div>
   )
 }

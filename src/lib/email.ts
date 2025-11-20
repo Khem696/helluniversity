@@ -2289,6 +2289,178 @@ Hell University Reservation System
 }
 
 /**
+ * Send admin notification when booking fee is recorded or updated
+ */
+export async function sendAdminFeeChangeNotification(
+  booking: Booking,
+  oldBooking: Booking,
+  changedBy: string
+): Promise<void> {
+  const recipientEmail = process.env.RESERVATION_EMAIL || process.env.SMTP_USER
+
+  if (!recipientEmail) {
+    throw new Error('RESERVATION_EMAIL or SMTP_USER not configured')
+  }
+
+  const formattedEventType = formatEventType(booking.eventType, booking.otherEventType)
+  const formattedDateRange = formatDateRange({
+    dateRange: booking.dateRange,
+    startDate: booking.startDate,
+    endDate: booking.endDate || undefined,
+    startTime: booking.startTime,
+    endTime: booking.endTime,
+  } as ReservationData)
+
+  const isUpdate = oldBooking.feeAmount !== null && oldBooking.feeAmount !== undefined
+  const referenceNumber = booking.referenceNumber || booking.id
+
+  // Format fee display
+  const formatFeeDisplay = (fee: Booking | null) => {
+    if (!fee || fee.feeAmount === null || fee.feeAmount === undefined) {
+      return "Not recorded"
+    }
+    const baseAmount = fee.feeAmount.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+    if (fee.feeCurrency && fee.feeCurrency.toUpperCase() !== "THB" && fee.feeAmountOriginal) {
+      const originalAmount = fee.feeAmountOriginal.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+      const rate = fee.feeConversionRate ? fee.feeConversionRate.toFixed(4) : "N/A"
+      return `${baseAmount} THB (${originalAmount} ${fee.feeCurrency}, rate: ${rate})`
+    }
+    return `${baseAmount} THB`
+  }
+
+  const oldFeeDisplay = formatFeeDisplay(oldBooking)
+  const newFeeDisplay = formatFeeDisplay(booking)
+
+  // Generate admin panel link
+  const siteUrl = process.env.NEXT_PUBLIC_SITE_URL 
+    || (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : null)
+    || 'https://huculturehub.com'
+  const adminBookingsUrl = `${siteUrl}/admin/bookings`
+
+  // HTML content
+  const htmlContent = `
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>${isUpdate ? 'Fee Updated' : 'Fee Recorded'} - ${referenceNumber}</title>
+</head>
+<body style="font-family: Arial, sans-serif; line-height: 1.6; color: #333; max-width: 600px; margin: 0 auto; padding: 20px;">
+  <div style="background-color: #f9fafb; border-radius: 8px; padding: 20px; margin-bottom: 20px;">
+    <h1 style="color: #1f2937; margin-top: 0;">${isUpdate ? '📝 Booking Fee Updated' : '💰 Booking Fee Recorded'}</h1>
+    <p style="color: #6b7280; margin-bottom: 0;">${isUpdate ? 'A booking fee has been updated.' : 'A booking fee has been recorded.'}</p>
+  </div>
+
+  <div style="background-color: #ffffff; border: 1px solid #e5e7eb; border-radius: 8px; padding: 20px; margin-bottom: 20px;">
+    <h2 style="color: #1f2937; margin-top: 0; border-bottom: 2px solid #e5e7eb; padding-bottom: 10px;">Booking Details</h2>
+    <table style="width: 100%; border-collapse: collapse;">
+      <tr>
+        <td style="padding: 8px 0; color: #6b7280; width: 150px;">Reference:</td>
+        <td style="padding: 8px 0; font-weight: bold;">${referenceNumber}</td>
+      </tr>
+      <tr>
+        <td style="padding: 8px 0; color: #6b7280;">Name:</td>
+        <td style="padding: 8px 0;">${booking.name}</td>
+      </tr>
+      <tr>
+        <td style="padding: 8px 0; color: #6b7280;">Email:</td>
+        <td style="padding: 8px 0;">${booking.email}</td>
+      </tr>
+      <tr>
+        <td style="padding: 8px 0; color: #6b7280;">Event Type:</td>
+        <td style="padding: 8px 0;">${formattedEventType}</td>
+      </tr>
+      <tr>
+        <td style="padding: 8px 0; color: #6b7280;">Date/Time:</td>
+        <td style="padding: 8px 0;">${formattedDateRange}</td>
+      </tr>
+      <tr>
+        <td style="padding: 8px 0; color: #6b7280;">Status:</td>
+        <td style="padding: 8px 0;">
+          <span style="background-color: ${booking.status === 'confirmed' ? '#d1fae5' : booking.status === 'finished' ? '#dbeafe' : '#f3f4f6'}; 
+                      color: ${booking.status === 'confirmed' ? '#065f46' : booking.status === 'finished' ? '#1e40af' : '#374151'}; 
+                      padding: 4px 8px; border-radius: 4px; font-size: 12px; font-weight: bold; text-transform: uppercase;">
+            ${booking.status}
+          </span>
+        </td>
+      </tr>
+    </table>
+  </div>
+
+  <div style="background-color: #fef3c7; border-left: 4px solid #f59e0b; padding: 20px; margin-bottom: 20px; border-radius: 4px;">
+    <h2 style="color: #92400e; margin-top: 0;">Fee Information</h2>
+    ${isUpdate ? `
+    <p style="margin: 10px 0;"><strong>Previous Fee:</strong> ${oldFeeDisplay}</p>
+    <p style="margin: 10px 0;"><strong>New Fee:</strong> ${newFeeDisplay}</p>
+    ` : `
+    <p style="margin: 10px 0;"><strong>Fee Recorded:</strong> ${newFeeDisplay}</p>
+    `}
+    ${booking.feeNotes ? `
+    <p style="margin: 10px 0;"><strong>Notes:</strong> ${booking.feeNotes}</p>
+    ` : ''}
+    <p style="margin: 10px 0; color: #92400e;"><strong>Changed by:</strong> ${changedBy}</p>
+  </div>
+
+  <div style="text-align: center; margin: 30px 0;">
+    <a href="${adminBookingsUrl}" 
+       style="display: inline-block; background-color: #3b82f6; color: #ffffff; padding: 12px 24px; text-decoration: none; border-radius: 6px; font-weight: bold;">
+      View Booking in Admin Panel
+    </a>
+  </div>
+
+  <div style="border-top: 1px solid #e5e7eb; padding-top: 20px; margin-top: 30px; color: #6b7280; font-size: 14px;">
+    <p>This is an automated notification of a booking fee ${isUpdate ? 'update' : 'recording'}.</p>
+    <p style="margin-bottom: 0;">Best regards,<br>Hell University Reservation System</p>
+  </div>
+</body>
+</html>
+  `.trim()
+
+  // Text content
+  let textContent = `${isUpdate ? 'Fee Updated' : 'Fee Recorded'} - ${referenceNumber}\n\n`
+  textContent += `Booking Details:\n`
+  textContent += `Reference: ${referenceNumber}\n`
+  textContent += `Name: ${booking.name}\n`
+  textContent += `Email: ${booking.email}\n`
+  textContent += `Event Type: ${formattedEventType}\n`
+  textContent += `Date/Time: ${formattedDateRange}\n`
+  textContent += `Status: ${booking.status}\n\n`
+  textContent += `Fee Information:\n`
+  if (isUpdate) {
+    textContent += `Previous Fee: ${oldFeeDisplay}\n`
+    textContent += `New Fee: ${newFeeDisplay}\n`
+  } else {
+    textContent += `Fee Recorded: ${newFeeDisplay}\n`
+  }
+  if (booking.feeNotes) {
+    textContent += `Notes: ${booking.feeNotes}\n`
+  }
+  textContent += `Changed by: ${changedBy}\n\n`
+  textContent += `Admin Panel: ${adminBookingsUrl}\n\n`
+  textContent += `This is an automated notification of a booking fee ${isUpdate ? 'update' : 'recording'}.\n\n`
+  textContent += `Best regards,\nHell University Reservation System`
+
+  const mailOptions: nodemailer.SendMailOptions = {
+    from: `"Hell University Reservation System" <${process.env.SMTP_USER}>`,
+    to: recipientEmail,
+    replyTo: booking.email,
+    subject: `[${referenceNumber}] ${isUpdate ? 'Fee Updated' : 'Fee Recorded'} - ${formattedEventType} - ${booking.name}`,
+    text: textContent,
+    html: htmlContent,
+  }
+
+  try {
+    const emailTransporter = await getTransporter()
+    await emailTransporter.sendMail(mailOptions)
+    console.log(`Admin fee ${isUpdate ? 'update' : 'recording'} notification sent for booking ${booking.id}`)
+  } catch (error) {
+    console.error("Failed to send admin fee change notification:", error)
+    throw error
+  }
+}
+
+/**
  * Send admin notification when user confirms check-in
  */
 export async function sendAdminCheckInNotification(booking: Booking): Promise<void> {
