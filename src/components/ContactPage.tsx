@@ -48,7 +48,7 @@ export function ContactPage() {
                 </div>
                 <div>
                   <a 
-                    href="https://www.google.com/maps/dir/?api=1&destination=19.1200,98.9417" 
+                    href="https://www.google.com/maps/dir/?api=1&destination=19.0882,98.8565" 
                     target="_blank"
                     rel="noopener noreferrer"
                     className="inline-flex items-center gap-2 text-[#87CEEB] hover:text-[#5B9AB8] transition-colors text-[clamp(0.875rem,0.9vw,1rem)] font-medium"
