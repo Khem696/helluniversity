@@ -44,6 +44,14 @@ export interface Booking extends BookingData {
   depositVerifiedAt?: number | null
   depositVerifiedBy?: string | null
   depositVerifiedFromOtherChannel?: boolean
+  feeAmount?: number | null
+  feeAmountOriginal?: number | null
+  feeCurrency?: string | null
+  feeConversionRate?: number | null
+  feeRateDate?: number | null
+  feeRecordedAt?: number | null
+  feeRecordedBy?: string | null
+  feeNotes?: string | null
   createdAt: number
   updatedAt: number
 }
@@ -55,6 +63,28 @@ export interface BookingStatusHistory {
   newStatus: string
   changedBy?: string
   changeReason?: string
+  createdAt: number
+}
+
+export interface BookingFeeHistory {
+  id: string
+  bookingId: string
+  oldFeeAmount: number | null
+  oldFeeAmountOriginal: number | null
+  oldFeeCurrency: string | null
+  oldFeeConversionRate: number | null
+  oldFeeRateDate: number | null
+  oldFeeNotes: string | null
+  newFeeAmount: number | null
+  newFeeAmountOriginal: number | null
+  newFeeCurrency: string | null
+  newFeeConversionRate: number | null
+  newFeeRateDate: number | null
+  newFeeNotes: string | null
+  changedBy: string
+  changeReason?: string | null
+  bookingStatusAtChange: string
+  isRestorationChange: boolean
   createdAt: number
 }
 
@@ -257,6 +287,19 @@ export async function getBookingById(id: string): Promise<Booking | null> {
 
   const booking = formatBooking(result.rows[0] as any)
   
+  // Debug: Log fee data from database
+  if (process.env.NODE_ENV === 'development') {
+    console.log('[getBookingById] Booking from database:', {
+      bookingId: id,
+      feeAmount: booking.feeAmount,
+      feeCurrency: booking.feeCurrency,
+      feeAmountOriginal: booking.feeAmountOriginal,
+      hasFee: !!(booking.feeAmount && Number(booking.feeAmount) > 0),
+      bookingKeys: Object.keys(booking).filter(k => k.toLowerCase().includes('fee')),
+      rawRowFeeAmount: (result.rows[0] as any).fee_amount,
+    })
+  }
+  
   // Cache the result (5 minutes TTL)
   setCached(cacheKey, booking, 300)
   
@@ -274,10 +317,10 @@ export async function listBookings(options?: {
   offset?: number
   startDateFrom?: number
   startDateTo?: number
-  email?: string
-  referenceNumber?: string // Exact match search
-  name?: string // Partial text search (LIKE)
-  phone?: string // Partial text search (LIKE)
+  email?: string // Exact match OR contains search (prioritizes exact matches)
+  referenceNumber?: string // Exact match OR contains search (prioritizes exact matches)
+  name?: string // Exact match OR contains search (prioritizes exact matches)
+  phone?: string // Exact match OR contains search (prioritizes exact matches)
   eventType?: string // Exact match filter
   sortBy?: "created_at" | "start_date" | "name" | "updated_at" // Sort field
   sortOrder?: "ASC" | "DESC" // Sort direction
@@ -306,7 +349,9 @@ export async function listBookings(options?: {
   }
 
   // Exclude archived statuses (finished, cancelled) from main list
-  if (options?.excludeArchived) {
+  // BUT: If user is searching, don't exclude archived - let search work across all statuses
+  const hasSearchParams = !!(options?.email || options?.referenceNumber || options?.name || options?.phone)
+  if (options?.excludeArchived && !hasSearchParams) {
     conditions.push("status NOT IN ('finished', 'cancelled')")
   }
 
@@ -320,16 +365,34 @@ export async function listBookings(options?: {
     args.push(options.startDateTo)
   }
 
-  // Exact match searches (use indexes)
+  // Search fields that support both exact and contains matching
+  // We'll track which fields have search terms for ORDER BY prioritization
+  const searchFields: string[] = []
+
+  // Email: exact match OR contains (case-insensitive)
   if (options?.email) {
-    conditions.push("email = ?")
-    args.push(options.email)
+    const emailLower = options.email.toLowerCase()
+    conditions.push("(LOWER(email) = ? OR LOWER(email) LIKE ?)")
+    args.push(emailLower, `%${emailLower}%`)
+    searchFields.push("email")
   }
 
+  // Reference number: exact match OR contains (case-insensitive)
   if (options?.referenceNumber) {
-    // Uses UNIQUE index on reference_number
-    conditions.push("reference_number = ?")
-    args.push(options.referenceNumber)
+    const refLower = options.referenceNumber.toLowerCase().trim()
+    if (refLower) {
+      // Search in reference_number - must have a value (not NULL or empty)
+      // Use LIKE for contains search, case-insensitive
+      conditions.push("(reference_number IS NOT NULL AND reference_number != '' AND LOWER(reference_number) LIKE ?)")
+      args.push(`%${refLower}%`)
+      searchFields.push("reference_number")
+      console.log('[listBookings] Reference number search:', { 
+        searchTerm: refLower, 
+        searchPattern: `%${refLower}%`,
+        condition: "(reference_number IS NOT NULL AND reference_number != '' AND LOWER(reference_number) LIKE ?)",
+        argsCount: args.length
+      })
+    }
   }
 
   if (options?.eventType) {
@@ -338,30 +401,98 @@ export async function listBookings(options?: {
     args.push(options.eventType)
   }
 
-  // Partial text searches (LIKE - uses indexes for prefix searches)
+  // Name: exact match OR contains (case-insensitive)
   if (options?.name) {
-    // Uses idx_bookings_name index for prefix searches (name LIKE 'value%')
-    // For better performance, prefer prefix searches over contains searches
-    conditions.push("name LIKE ?")
-    args.push(`${options.name}%`)
+    const nameLower = options.name.toLowerCase()
+    conditions.push("(LOWER(name) = ? OR LOWER(name) LIKE ?)")
+    args.push(nameLower, `%${nameLower}%`)
+    searchFields.push("name")
   }
 
+  // Phone: exact match OR contains
   if (options?.phone) {
-    // Uses idx_bookings_phone index for prefix searches (phone LIKE 'value%')
-    // For better performance, prefer prefix searches over contains searches
-    conditions.push("phone LIKE ?")
-    args.push(`${options.phone}%`)
+    conditions.push("(phone = ? OR phone LIKE ?)")
+    args.push(options.phone, `%${options.phone}%`)
+    searchFields.push("phone")
   }
 
   const whereClause =
     conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : ""
 
+  // Debug logging for search queries
+  const isSearching = !!(options?.referenceNumber || options?.email || options?.name || options?.phone)
+  if (isSearching) {
+    console.log('[listBookings] Search query:', {
+      whereClause,
+      args,
+      argsCount: args.length,
+      searchFields: {
+        referenceNumber: options?.referenceNumber,
+        email: options?.email,
+        name: options?.name,
+        phone: options?.phone,
+      },
+      excludeArchived: options?.excludeArchived,
+      isSearching,
+      statuses: options?.statuses,
+      status: options?.status,
+      willExcludeArchived: options?.excludeArchived && !isSearching,
+    })
+  }
+
   // Get total count (optimized: uses indexes for filtering)
+  // IMPORTANT: Use the same WHERE clause and args for count as for the main query
   const countResult = await db.execute({
     sql: `SELECT COUNT(*) as count FROM bookings ${whereClause}`,
     args,
   })
   const total = (countResult.rows[0] as any).count
+  
+  console.log('[listBookings] Count query result:', {
+    total,
+    whereClause,
+    argsCount: args.length,
+  })
+  
+  // Debug: Log sample reference numbers and their statuses if searching by reference
+  if (options?.referenceNumber) {
+    try {
+      const sampleResult = await db.execute({
+        sql: `SELECT reference_number, id, name, status FROM bookings WHERE reference_number IS NOT NULL LIMIT 10`,
+        args: [],
+      })
+      console.log('[listBookings] Sample reference numbers in DB:', sampleResult.rows.map((r: any) => ({
+        id: r.id,
+        reference_number: r.reference_number,
+        name: r.name,
+        status: r.status,
+      })))
+      
+      // Check what statuses the matching bookings have
+      const matchingResult = await db.execute({
+        sql: `SELECT reference_number, id, name, status FROM bookings ${whereClause} LIMIT 10`,
+        args,
+      })
+      console.log('[listBookings] Matching bookings from search query:', matchingResult.rows.map((r: any) => ({
+        id: r.id,
+        reference_number: r.reference_number,
+        name: r.name,
+        status: r.status,
+      })))
+      console.log('[listBookings] Matching bookings count:', matchingResult.rows.length)
+      
+      console.log('[listBookings] Total bookings with reference_number:', (await db.execute({
+        sql: `SELECT COUNT(*) as count FROM bookings WHERE reference_number IS NOT NULL`,
+        args: [],
+      })).rows[0]?.count)
+    } catch (err) {
+      console.error('[listBookings] Error getting sample reference numbers:', err)
+    }
+  }
+  
+  if (options?.referenceNumber || options?.email || options?.name || options?.phone) {
+    console.log('[listBookings] Search results count:', total)
+  }
 
   // Optimize ORDER BY based on available filters and user preferences to leverage composite indexes
   // Default: created_at DESC (uses idx_bookings_created_at)
@@ -377,7 +508,52 @@ export async function listBookings(options?: {
     : "DESC"
   
   // Safe: sortBy and sortOrder are validated against whitelist
-  let orderByClause = `ORDER BY ${sortBy} ${sortOrder}`
+  // Build ORDER BY with search match prioritization (exact matches first)
+  // We'll add computed columns in SELECT for exact match priority, then order by them
+  let exactMatchSelects: string[] = []
+  let exactMatchArgs: any[] = []
+  
+  if (options?.email) {
+    const emailLower = options.email.toLowerCase()
+    exactMatchSelects.push(`CASE WHEN LOWER(email) = ? THEN 0 ELSE 1 END as email_exact_match`)
+    exactMatchArgs.push(emailLower)
+  }
+  if (options?.referenceNumber) {
+    const refLower = options.referenceNumber.toLowerCase().trim()
+    if (refLower) {
+      exactMatchSelects.push(`CASE WHEN LOWER(COALESCE(reference_number, '')) = ? THEN 0 ELSE 1 END as ref_exact_match`)
+      exactMatchArgs.push(refLower)
+    }
+  }
+  if (options?.name) {
+    const nameLower = options.name.toLowerCase()
+    exactMatchSelects.push(`CASE WHEN LOWER(name) = ? THEN 0 ELSE 1 END as name_exact_match`)
+    exactMatchArgs.push(nameLower)
+  }
+  if (options?.phone) {
+    exactMatchSelects.push(`CASE WHEN phone = ? THEN 0 ELSE 1 END as phone_exact_match`)
+    exactMatchArgs.push(options.phone)
+  }
+  
+  // Build SELECT clause with exact match priority columns
+  const selectClause = exactMatchSelects.length > 0
+    ? `*, ${exactMatchSelects.join(", ")}`
+    : `*`
+  
+  // Build ORDER BY clause - prioritize exact matches
+  let orderByClause = ""
+  if (exactMatchSelects.length > 0) {
+    const priorityFields = exactMatchSelects.map(select => {
+      // Extract the alias from "CASE ... END as alias"
+      const match = select.match(/as (\w+)/)
+      return match ? match[1] : null
+    }).filter(Boolean)
+    
+    // Order by exact match priorities first (0 = exact, 1 = contains), then user's sort preference
+    orderByClause = `ORDER BY ${priorityFields.join(", ")}, ${sortBy} ${sortOrder}`
+  } else {
+    orderByClause = `ORDER BY ${sortBy} ${sortOrder}`
+  }
   
   // Add secondary sort for consistency when sorting by non-unique fields
   if (sortBy !== "created_at" && sortBy !== "updated_at") {
@@ -398,17 +574,69 @@ export async function listBookings(options?: {
   // If overlap filter is enabled, we need to fetch more bookings to check for overlaps
   // Then filter in memory and apply limit/offset
   const fetchLimit = options?.showOverlappingOnly ? (limit + offset) * 3 : limit + offset // Fetch more if filtering overlaps
+  
+  // Combine all args: exact match priority args (for SELECT CASE), search args (for WHERE), and limit
+  // IMPORTANT: SQL binds parameters in the order they appear in the SQL string
+  // Since SELECT clause comes before WHERE clause, exactMatchArgs must come before args
+  const allArgs = [...exactMatchArgs, ...args, fetchLimit]
+  
+  console.log('[listBookings] Executing SELECT query:', {
+    selectClause: selectClause.substring(0, 100) + '...',
+    whereClause,
+    orderByClause,
+    argsCount: allArgs.length,
+    argsPreview: allArgs.slice(0, 5), // Log first 5 args for debugging
+    fetchLimit,
+  })
+  
   const result = await db.execute({
     sql: `
-      SELECT * FROM bookings 
+      SELECT ${selectClause} FROM bookings 
       ${whereClause}
       ${orderByClause}
       LIMIT ? OFFSET 0
     `,
-    args: [...args, fetchLimit],
+    args: allArgs,
+  })
+  
+  console.log('[listBookings] SELECT query returned:', {
+    rowCount: result.rows.length,
+    hasRows: result.rows.length > 0,
+    firstRowKeys: result.rows[0] ? Object.keys(result.rows[0]).slice(0, 10) : null,
   })
 
+  console.log('[listBookings] Raw DB result:', {
+    rowCount: result.rows.length,
+    firstRowSample: result.rows[0] ? {
+      id: result.rows[0].id,
+      reference_number: result.rows[0].reference_number,
+      name: result.rows[0].name,
+      status: result.rows[0].status,
+      fee_amount: result.rows[0].fee_amount,
+      fee_currency: result.rows[0].fee_currency,
+      fee_amount_original: result.rows[0].fee_amount_original,
+      hasFee: !!(result.rows[0].fee_amount && Number(result.rows[0].fee_amount) > 0),
+      allFeeKeys: Object.keys(result.rows[0]).filter(k => k.toLowerCase().includes('fee')),
+    } : null,
+    rowsWithFee: result.rows.filter((r: any) => r.fee_amount && Number(r.fee_amount) > 0).length,
+  })
+  
   let bookings = result.rows.map((row: any) => formatBooking(row))
+  
+  console.log('[listBookings] After formatBooking:', {
+    bookingsCount: bookings.length,
+    firstBookingSample: bookings[0] ? {
+      id: bookings[0].id,
+      referenceNumber: bookings[0].referenceNumber,
+      name: bookings[0].name,
+      status: bookings[0].status,
+      feeAmount: bookings[0].feeAmount,
+      feeCurrency: bookings[0].feeCurrency,
+      feeAmountOriginal: bookings[0].feeAmountOriginal,
+      hasFee: !!(bookings[0].feeAmount && Number(bookings[0].feeAmount) > 0),
+    } : null,
+    bookingsWithFee: bookings.filter(b => b.feeAmount && Number(b.feeAmount) > 0).length,
+  })
 
   // Apply overlap filter if enabled
   if (options?.showOverlappingOnly) {
@@ -1530,6 +1758,257 @@ export async function getBookingStatusHistory(
 }
 
 /**
+ * Update booking fee
+ * Handles fee recording and updates with conversion rate tracking
+ */
+export async function updateBookingFee(
+  bookingId: string,
+  feeAmountOriginal: number,
+  feeCurrency: string,
+  options?: {
+    feeConversionRate?: number | null
+    feeAmount?: number | null
+    feeNotes?: string | null
+    changedBy?: string
+    changeReason?: string
+    isRestorationChange?: boolean
+  }
+): Promise<Booking> {
+  const { randomUUID } = await import('crypto')
+  const { getBangkokTime } = await import('./timezone')
+  const { validateFee } = await import('./booking-validations')
+  const { invalidateCache, CacheKeys } = await import('./cache')
+  
+  return await dbTransaction(async (db) => {
+    // Get current booking
+    const currentResult = await db.execute({
+      sql: "SELECT * FROM bookings WHERE id = ?",
+      args: [bookingId],
+    })
+
+    if (currentResult.rows.length === 0) {
+      throw new Error(`Booking with id ${bookingId} not found`)
+    }
+
+    const currentBooking = currentResult.rows[0] as any
+    
+    // Validate status allows fee recording/updating
+    const validation = validateFee(
+      feeAmountOriginal,
+      feeCurrency,
+      options?.feeConversionRate ?? null,
+      options?.feeAmount ?? null,
+      currentBooking.status
+    )
+    
+    if (!validation.valid) {
+      throw new Error(validation.reason || "Fee validation failed")
+    }
+
+    // Calculate missing values
+    let finalFeeAmount: number
+    let finalConversionRate: number | null = null
+    let finalRateDate: number | null = null
+    const now = getBangkokTime()
+    const currencyUpper = feeCurrency.toUpperCase()
+    
+    if (currencyUpper === "THB") {
+      // THB: no conversion needed
+      finalFeeAmount = feeAmountOriginal
+      finalConversionRate = null
+      finalRateDate = null
+    } else {
+      // Foreign currency: need conversion
+      if (options?.feeConversionRate !== null && options?.feeConversionRate !== undefined) {
+        // Rate provided, calculate base amount
+        finalConversionRate = options.feeConversionRate
+        finalFeeAmount = feeAmountOriginal * finalConversionRate
+        finalRateDate = now
+      } else if (options?.feeAmount !== null && options?.feeAmount !== undefined) {
+        // Base amount provided, calculate rate
+        finalFeeAmount = options.feeAmount
+        finalConversionRate = finalFeeAmount / feeAmountOriginal
+        finalRateDate = now
+      } else {
+        throw new Error("Either conversion rate or base amount (THB) must be provided for non-THB currency")
+      }
+      
+      // Validate calculated rate is reasonable
+      if (finalConversionRate < 0.01 || finalConversionRate > 10000) {
+        throw new Error("Calculated conversion rate is outside reasonable range (0.01 to 10000)")
+      }
+    }
+
+    // Store old values for history
+    const oldFeeAmount = currentBooking.fee_amount != null ? Number(currentBooking.fee_amount) : null
+    const oldFeeAmountOriginal = currentBooking.fee_amount_original != null ? Number(currentBooking.fee_amount_original) : null
+    const oldFeeCurrency = currentBooking.fee_currency || null
+    const oldFeeConversionRate = currentBooking.fee_conversion_rate != null ? Number(currentBooking.fee_conversion_rate) : null
+    const oldFeeRateDate = currentBooking.fee_rate_date || null
+    const oldFeeNotes = currentBooking.fee_notes || null
+    const isFirstRecording = oldFeeAmount === null
+
+    // Determine fee_recorded_at and fee_recorded_by
+    // If first recording, set these; if updating, keep original values
+    const feeRecordedAt = isFirstRecording ? now : (currentBooking.fee_recorded_at || now)
+    const feeRecordedBy = isFirstRecording 
+      ? (options?.changedBy || "Admin")
+      : (currentBooking.fee_recorded_by || options?.changedBy || "Admin")
+
+    // Build update fields
+    const updateFields: string[] = ["updated_at = ?"]
+    const updateArgs: any[] = [now]
+    
+    updateFields.push("fee_amount = ?")
+    updateArgs.push(finalFeeAmount)
+    
+    updateFields.push("fee_amount_original = ?")
+    updateArgs.push(feeAmountOriginal)
+    
+    updateFields.push("fee_currency = ?")
+    updateArgs.push(currencyUpper)
+    
+    if (finalConversionRate !== null) {
+      updateFields.push("fee_conversion_rate = ?")
+      updateArgs.push(finalConversionRate)
+    } else {
+      updateFields.push("fee_conversion_rate = NULL")
+    }
+    
+    if (finalRateDate !== null) {
+      updateFields.push("fee_rate_date = ?")
+      updateArgs.push(finalRateDate)
+    } else {
+      updateFields.push("fee_rate_date = NULL")
+    }
+    
+    updateFields.push("fee_recorded_at = ?")
+    updateArgs.push(feeRecordedAt)
+    
+    updateFields.push("fee_recorded_by = ?")
+    updateArgs.push(feeRecordedBy)
+    
+    if (options?.feeNotes !== undefined) {
+      updateFields.push("fee_notes = ?")
+      updateArgs.push(options.feeNotes || null)
+    }
+
+    // Validate field names
+    const { validateFieldNames, ALLOWED_BOOKING_FIELDS } = await import('./sql-field-validation')
+    const fieldValidation = validateFieldNames(updateFields, ALLOWED_BOOKING_FIELDS)
+    
+    if (!fieldValidation.valid) {
+      throw new Error(
+        `Invalid field names in update: ${fieldValidation.errors?.join(', ')}`
+      )
+    }
+
+    // Update booking
+    const originalUpdatedAt = currentBooking.updated_at
+    const updateResult = await db.execute({
+      sql: `UPDATE bookings SET ${updateFields.join(", ")} WHERE id = ? AND updated_at = ?`,
+      args: [...updateArgs, bookingId, originalUpdatedAt],
+    })
+
+    if (updateResult.rowsAffected === 0) {
+      throw new Error(
+        "Booking was modified by another process. Please refresh the page and try again."
+      )
+    }
+
+    // Record in fee history
+    const historyId = randomUUID()
+    await db.execute({
+      sql: `
+        INSERT INTO booking_fee_history (
+          id, booking_id,
+          old_fee_amount, old_fee_amount_original, old_fee_currency,
+          old_fee_conversion_rate, old_fee_rate_date, old_fee_notes,
+          new_fee_amount, new_fee_amount_original, new_fee_currency,
+          new_fee_conversion_rate, new_fee_rate_date, new_fee_notes,
+          changed_by, change_reason, booking_status_at_change, is_restoration_change, created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `,
+      args: [
+        historyId,
+        bookingId,
+        oldFeeAmount,
+        oldFeeAmountOriginal,
+        oldFeeCurrency,
+        oldFeeConversionRate,
+        oldFeeRateDate,
+        oldFeeNotes,
+        finalFeeAmount,
+        feeAmountOriginal,
+        currencyUpper,
+        finalConversionRate,
+        finalRateDate,
+        options?.feeNotes || null,
+        options?.changedBy || "Admin",
+        options?.changeReason || null,
+        currentBooking.status,
+        options?.isRestorationChange ? 1 : 0,
+        now,
+      ],
+    })
+
+    // Fetch updated booking
+    const result = await db.execute({
+      sql: "SELECT * FROM bookings WHERE id = ?",
+      args: [bookingId],
+    })
+
+    const updatedBooking = formatBooking(result.rows[0] as any)
+    
+    // Invalidate cache
+    await invalidateCache(CacheKeys.booking(bookingId))
+    await invalidateCache('bookings:list')
+    
+    return updatedBooking
+  })
+}
+
+/**
+ * Get booking fee history
+ */
+export async function getBookingFeeHistory(
+  bookingId: string
+): Promise<BookingFeeHistory[]> {
+  const db = getTursoClient()
+
+  const result = await db.execute({
+    sql: `
+      SELECT * FROM booking_fee_history 
+      WHERE booking_id = ?
+      ORDER BY created_at DESC
+    `,
+    args: [bookingId],
+  })
+
+  return result.rows.map((row: any) => ({
+    id: row.id,
+    bookingId: row.booking_id,
+    oldFeeAmount: row.old_fee_amount != null ? Number(row.old_fee_amount) : null,
+    oldFeeAmountOriginal: row.old_fee_amount_original != null ? Number(row.old_fee_amount_original) : null,
+    oldFeeCurrency: row.old_fee_currency || null,
+    oldFeeConversionRate: row.old_fee_conversion_rate != null ? Number(row.old_fee_conversion_rate) : null,
+    oldFeeRateDate: row.old_fee_rate_date || null,
+    oldFeeNotes: row.old_fee_notes || null,
+    newFeeAmount: row.new_fee_amount != null ? Number(row.new_fee_amount) : null,
+    newFeeAmountOriginal: row.new_fee_amount_original != null ? Number(row.new_fee_amount_original) : null,
+    newFeeCurrency: row.new_fee_currency || null,
+    newFeeConversionRate: row.new_fee_conversion_rate != null ? Number(row.new_fee_conversion_rate) : null,
+    newFeeRateDate: row.new_fee_rate_date || null,
+    newFeeNotes: row.new_fee_notes || null,
+    changedBy: row.changed_by,
+    changeReason: row.change_reason || null,
+    bookingStatusAtChange: row.booking_status_at_change,
+    isRestorationChange: Boolean(Number(row.is_restoration_change)),
+    createdAt: row.created_at,
+  }))
+}
+
+/**
  * Log admin action
  */
 export async function logAdminAction(data: {
@@ -1643,6 +2122,14 @@ export function formatBooking(row: any): Booking {
       const inferredOtherChannel = hasVerifiedAt && !hasEvidenceUrl && !explicitOtherChannel
       return explicitOtherChannel || inferredOtherChannel
     })(),
+    feeAmount: row.fee_amount != null ? Number(row.fee_amount) : null,
+    feeAmountOriginal: row.fee_amount_original != null ? Number(row.fee_amount_original) : null,
+    feeCurrency: row.fee_currency || null,
+    feeConversionRate: row.fee_conversion_rate != null ? Number(row.fee_conversion_rate) : null,
+    feeRateDate: row.fee_rate_date || null,
+    feeRecordedAt: row.fee_recorded_at || null,
+    feeRecordedBy: row.fee_recorded_by || null,
+    feeNotes: row.fee_notes || null,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   }

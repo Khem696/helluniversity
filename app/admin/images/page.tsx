@@ -22,11 +22,12 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select"
-import { Upload, Edit, Loader2, Image as ImageIcon, ChevronDown, ChevronUp, Globe, Image as ImageIcon2, Trash2, GripVertical, Check } from "lucide-react"
+import { Upload, Edit, Loader2, Image as ImageIcon, ChevronDown, ChevronUp, Globe, Image as ImageIcon2, Trash2, GripVertical, Check, X } from "lucide-react"
 import { toast } from "sonner"
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible"
 import { useAdminData } from "@/hooks/useAdminData"
 import { API_PATHS, buildApiUrl } from "@/lib/api-config"
+import { GenericDeleteConfirmationDialog } from "@/components/admin/GenericDeleteConfirmationDialog"
 import {
   DndContext,
   closestCenter,
@@ -282,8 +283,17 @@ export default function ImagesPage() {
   const [viewMode, setViewMode] = useState<"sections" | "grid">("sections")
   const uploadFormRef = useRef<HTMLFormElement>(null)
   const [titleFilter, setTitleFilter] = useState("")
+  const [debouncedTitleFilter, setDebouncedTitleFilter] = useState("")
   const [sortBy, setSortBy] = useState<"created_at" | "updated_at" | "display_order" | "title">("display_order")
   const [sortOrder, setSortOrder] = useState<"ASC" | "DESC">("ASC")
+  
+  // Debounce title search input (500ms delay)
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setDebouncedTitleFilter(titleFilter)
+    }, 500)
+    return () => clearTimeout(timer)
+  }, [titleFilter])
   
   // Build endpoint with filters (memoized to trigger refetch when filters change)
   const endpoint = useMemo(() => {
@@ -292,13 +302,13 @@ export default function ImagesPage() {
     if (categoryFilter !== "all") {
       params.append("category", categoryFilter)
     }
-    if (titleFilter) {
-      params.append("title", titleFilter)
+    if (debouncedTitleFilter) {
+      params.append("title", debouncedTitleFilter)
     }
     params.append("sortBy", sortBy)
     params.append("sortOrder", sortOrder)
     return buildApiUrl(API_PATHS.adminImages, Object.fromEntries(params))
-  }, [categoryFilter, titleFilter, sortBy, sortOrder])
+  }, [categoryFilter, debouncedTitleFilter, sortBy, sortOrder])
   
   // Use useAdminData hook for images with optimistic updates
   const {
@@ -579,12 +589,13 @@ export default function ImagesPage() {
     }
   }
 
-  // Delete image handler
-  const handleDelete = async (image: Image) => {
+  // Handle delete image - open confirmation dialog
+  const handleDelete = (image: Image) => {
     setImageToDelete(image)
     setDeleteDialogOpen(true)
   }
 
+  // Confirm delete image - actually perform the deletion
   const confirmDelete = async () => {
     if (!imageToDelete) return
 
@@ -857,12 +868,30 @@ export default function ImagesPage() {
         </div>
         {/* Second Row: Search, Sort By, Sort Order */}
         <div className="flex flex-col sm:flex-row gap-4">
-          <Input
-            placeholder="Search by title..."
-            value={titleFilter}
-            onChange={(e) => setTitleFilter(e.target.value)}
-            className="w-full sm:w-64"
-          />
+          <div className="relative w-full sm:w-64">
+            <Input
+              placeholder="Search title (contains)..."
+              value={titleFilter}
+              onChange={(e) => setTitleFilter(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") {
+                  e.preventDefault()
+                }
+              }}
+              className="w-full pr-8"
+            />
+            {titleFilter && (
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                className="absolute right-1 top-1/2 -translate-y-1/2 h-6 w-6 p-0 hover:bg-gray-100"
+                onClick={() => setTitleFilter("")}
+              >
+                <X className="h-4 w-4" />
+              </Button>
+            )}
+          </div>
           <Select value={sortBy} onValueChange={(value) => setSortBy(value as typeof sortBy)}>
             <SelectTrigger className="w-full sm:w-48">
               <SelectValue placeholder="Sort by" />
@@ -1216,62 +1245,45 @@ export default function ImagesPage() {
       </Dialog>
 
       {/* Delete Confirmation Dialog */}
-      <Dialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>
-        <DialogContent className="max-w-[95vw] sm:max-w-md max-h-[90vh] overflow-y-auto">
-          <DialogHeader>
-            <DialogTitle>Delete Image</DialogTitle>
-            <DialogDescription>
-              Are you sure you want to delete this image? This action cannot be undone.
-            </DialogDescription>
-          </DialogHeader>
-          {imageToDelete && (
-            <div className="space-y-4">
-              <div className="p-4 bg-gray-50 rounded-lg">
-                <p className="text-sm font-medium text-gray-900 mb-1">
-                  {imageToDelete.title || "Untitled Image"}
-                </p>
-                <p className="text-xs text-gray-600">
-                  {imageToDelete.category && (
-                    <span className="inline-block bg-blue-100 text-blue-800 px-2 py-0.5 rounded mr-2">
-                      {imageToDelete.category}
-                    </span>
-                  )}
-                  {imageToDelete.width} × {imageToDelete.height}
-                </p>
+      <GenericDeleteConfirmationDialog
+        open={deleteDialogOpen}
+        onOpenChange={setDeleteDialogOpen}
+        title="Delete Image"
+        description="Are you sure you want to delete this image? This action cannot be undone."
+        itemName={imageToDelete ? (imageToDelete.title || "Untitled Image") : undefined}
+        itemDetails={imageToDelete ? (
+          <div className="space-y-1 text-xs">
+            {imageToDelete.category && (
+              <div>
+                <span className="inline-block bg-blue-100 text-blue-800 px-2 py-0.5 rounded mr-2">
+                  {imageToDelete.category}
+                </span>
               </div>
-              <div className="flex gap-2 justify-end">
-                <Button
-                  variant="outline"
-                  onClick={() => {
-                    setDeleteDialogOpen(false)
-                    setImageToDelete(null)
-                  }}
-                  disabled={deleting}
-                >
-                  Cancel
-                </Button>
-                <Button
-                  variant="destructive"
-                  onClick={confirmDelete}
-                  disabled={deleting}
-                >
-                  {deleting ? (
-                    <>
-                      <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                      Deleting...
-                    </>
-                  ) : (
-                    <>
-                      <Trash2 className="w-4 h-4 mr-2" />
-                      Delete
-                    </>
-                  )}
-                </Button>
-              </div>
+            )}
+            <div>
+              <span className="font-medium">Dimensions:</span> {imageToDelete.width} × {imageToDelete.height}
             </div>
-          )}
-        </DialogContent>
-      </Dialog>
+            {imageToDelete.format && (
+              <div>
+                <span className="font-medium">Format:</span> {imageToDelete.format}
+              </div>
+            )}
+            {imageToDelete.file_size && (
+              <div>
+                <span className="font-medium">File Size:</span> {(imageToDelete.file_size / 1024).toFixed(2)} KB
+              </div>
+            )}
+          </div>
+        ) : undefined}
+        warningMessage="This image will be permanently deleted from storage and the database. This action cannot be undone."
+        onConfirm={confirmDelete}
+        onCancel={() => {
+          setDeleteDialogOpen(false)
+          setImageToDelete(null)
+        }}
+        isLoading={deleting}
+        confirmButtonText="Delete Image"
+      />
 
     </div>
   )

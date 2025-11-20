@@ -58,18 +58,27 @@ export const GET = withVersioning(async (
       return authError
     }
 
-    // Invalidate cache to ensure fresh data when admin views booking
-    // This prevents showing stale status (e.g., pending_deposit when it should be paid_deposit)
-    const { invalidateCache, CacheKeys } = await import("@/lib/cache")
-    await invalidateCache(CacheKeys.booking(id))
-    
+    // Use getBookingById which includes caching
+    // Cache will be invalidated automatically when booking is updated
     const booking = await getBookingById(id)
-
+    
     if (!booking) {
       await logger.warn('Admin get booking failed: booking not found', { bookingId: id })
       return notFoundResponse('Booking', { requestId })
     }
     
+    // Debug: Log booking data (including fee fields)
+    if (process.env.NODE_ENV === 'development') {
+      console.log('[API v1 GET /bookings/[id]] Booking from cache/DB:', {
+        bookingId: id,
+        feeAmount: booking.feeAmount,
+        feeCurrency: booking.feeCurrency,
+        feeAmountOriginal: booking.feeAmountOriginal,
+        hasFee: !!(booking.feeAmount && Number(booking.feeAmount) > 0),
+        feeKeys: Object.keys(booking).filter(k => k.toLowerCase().includes('fee')),
+      })
+    }
+
     await logger.info('Booking retrieved', { bookingId: id, status: booking.status })
 
     // Get status history
@@ -134,9 +143,50 @@ export const GET = withVersioning(async (
       deposit_verified_by: booking.depositVerifiedBy,
       // Preserve boolean value correctly - use explicit check to avoid undefined -> false conversion
       deposit_verified_from_other_channel: booking.depositVerifiedFromOtherChannel === true,
+      // CRITICAL: Explicitly include all fee fields
+      fee_amount: (booking as any).feeAmount != null ? (booking as any).feeAmount : null,
+      fee_amount_original: (booking as any).feeAmountOriginal != null ? (booking as any).feeAmountOriginal : null,
+      fee_currency: (booking as any).feeCurrency || null,
+      fee_conversion_rate: (booking as any).feeConversionRate != null ? (booking as any).feeConversionRate : null,
+      fee_rate_date: (booking as any).feeRateDate != null ? (booking as any).feeRateDate : null,
+      fee_recorded_at: (booking as any).feeRecordedAt != null ? (booking as any).feeRecordedAt : null,
+      fee_recorded_by: (booking as any).feeRecordedBy || null,
+      fee_notes: (booking as any).feeNotes || null,
       created_at: booking.createdAt,
       updated_at: booking.updatedAt,
     }
+    
+    // Debug: Log transformed booking fee data
+    console.log('[API v1 GET /bookings/[id]] Transformed booking fee data:', {
+      bookingId: id,
+      fee_amount: transformedBooking.fee_amount,
+      fee_currency: transformedBooking.fee_currency,
+      fee_amount_original: transformedBooking.fee_amount_original,
+      hasFee: !!(transformedBooking.fee_amount && Number(transformedBooking.fee_amount) > 0),
+      allFeeKeys: Object.keys(transformedBooking).filter(k => k.toLowerCase().includes('fee')),
+    })
+    
+    // CRITICAL: Ensure fee fields are always present in the response (even if null)
+    // This prevents them from being omitted during JSON serialization
+    const finalBooking = {
+      ...transformedBooking,
+      fee_amount: transformedBooking.fee_amount ?? null,
+      fee_amount_original: transformedBooking.fee_amount_original ?? null,
+      fee_currency: transformedBooking.fee_currency ?? null,
+      fee_conversion_rate: transformedBooking.fee_conversion_rate ?? null,
+      fee_rate_date: transformedBooking.fee_rate_date ?? null,
+      fee_recorded_at: transformedBooking.fee_recorded_at ?? null,
+      fee_recorded_by: transformedBooking.fee_recorded_by ?? null,
+      fee_notes: transformedBooking.fee_notes ?? null,
+    }
+    
+    console.log('[API v1 GET /bookings/[id]] Final booking with explicit fee fields:', {
+      bookingId: id,
+      fee_amount: finalBooking.fee_amount,
+      fee_currency: finalBooking.fee_currency,
+      allKeys: Object.keys(finalBooking),
+      feeKeys: Object.keys(finalBooking).filter(k => k.toLowerCase().includes('fee')),
+    })
 
     // Transform status history to match frontend interface (snake_case)
     const transformedStatusHistory = statusHistory.map(h => ({
@@ -151,7 +201,7 @@ export const GET = withVersioning(async (
 
     return successResponse(
       {
-        booking: transformedBooking,
+        booking: finalBooking,
         statusHistory: transformedStatusHistory,
         overlappingBookings: overlappingBookings.map(b => ({
           id: b.id,
@@ -773,6 +823,15 @@ export const PATCH = withVersioning(async (
         deposit_verified_by: updatedBooking.depositVerifiedBy,
         // Preserve boolean value correctly - use explicit check to avoid undefined -> false conversion
         deposit_verified_from_other_channel: updatedBooking.depositVerifiedFromOtherChannel === true,
+        // CRITICAL: Include all fee fields
+        fee_amount: updatedBooking.feeAmount ?? null,
+        fee_amount_original: updatedBooking.feeAmountOriginal ?? null,
+        fee_currency: updatedBooking.feeCurrency || null,
+        fee_conversion_rate: updatedBooking.feeConversionRate ?? null,
+        fee_rate_date: updatedBooking.feeRateDate ?? null,
+        fee_recorded_at: updatedBooking.feeRecordedAt ?? null,
+        fee_recorded_by: updatedBooking.feeRecordedBy || null,
+        fee_notes: updatedBooking.feeNotes || null,
         created_at: updatedBooking.createdAt,
         updated_at: updatedBooking.updatedAt,
       }
@@ -1385,6 +1444,17 @@ export const PATCH = withVersioning(async (
       deposit_evidence_url: updatedBooking.depositEvidenceUrl,
       deposit_verified_at: updatedBooking.depositVerifiedAt,
       deposit_verified_by: updatedBooking.depositVerifiedBy,
+      // Preserve boolean value correctly - use explicit check to avoid undefined -> false conversion
+      deposit_verified_from_other_channel: updatedBooking.depositVerifiedFromOtherChannel === true,
+      // CRITICAL: Include all fee fields
+      fee_amount: updatedBooking.feeAmount ?? null,
+      fee_amount_original: updatedBooking.feeAmountOriginal ?? null,
+      fee_currency: updatedBooking.feeCurrency || null,
+      fee_conversion_rate: updatedBooking.feeConversionRate ?? null,
+      fee_rate_date: updatedBooking.feeRateDate ?? null,
+      fee_recorded_at: updatedBooking.feeRecordedAt ?? null,
+      fee_recorded_by: updatedBooking.feeRecordedBy || null,
+      fee_notes: updatedBooking.feeNotes || null,
       created_at: updatedBooking.createdAt,
       updated_at: updatedBooking.updatedAt,
     }

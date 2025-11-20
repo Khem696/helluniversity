@@ -19,7 +19,7 @@ export function InitDatabaseButton() {
   const checkStatus = async () => {
     setStatus({ type: "checking" })
     try {
-      const response = await fetch("/api/v1/admin/init-db")
+      const response = await fetch(API_PATHS.adminInitDb)
       
       // Check if response is ok
       if (!response.ok) {

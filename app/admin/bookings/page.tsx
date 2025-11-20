@@ -46,6 +46,11 @@ import {
   Trash2,
   MessageCircle,
   AlertTriangle,
+  Download,
+  X,
+  Bookmark,
+  Calendar as CalendarIcon,
+  Filter,
 } from "lucide-react"
 import Link from "next/link"
 import { toast } from "sonner"
@@ -54,6 +59,11 @@ import { TZDate } from '@date-fns/tz'
 import { BookingStateInfo } from "@/components/admin/BookingStateInfo"
 import { ActionConfirmationDialog } from "@/components/admin/ActionConfirmationDialog"
 import { DeleteConfirmationDialog } from "@/components/admin/DeleteConfirmationDialog"
+import { BookingExportDialog } from "@/components/admin/BookingExportDialog"
+import { SearchHighlight } from "@/components/admin/SearchHighlight"
+import { SearchInputWithHistory } from "@/components/admin/SearchInputWithHistory"
+import { FilterPresetsDialog } from "@/components/admin/FilterPresetsDialog"
+import { AdvancedBookingFilters } from "@/components/admin/AdvancedBookingFilters"
 import { useBookingActions } from "@/hooks/useBookingActions"
 import { getAvailableActions, mapActionToStatus, type ActionDefinition } from "@/lib/booking-state-machine"
 import { calculateStartTimestamp } from "@/lib/booking-validations"
@@ -122,6 +132,22 @@ export default function BookingsPage() {
   const [saving, setSaving] = useState(false)
   const [selectedBooking, setSelectedBooking] = useState<Booking | null>(null)
   const [statusHistory, setStatusHistory] = useState<StatusHistory[]>([])
+  const [feeHistory, setFeeHistory] = useState<Array<{
+    id: string
+    oldFeeAmount: number | null
+    newFeeAmount: number | null
+    oldFeeAmountOriginal: number | null
+    newFeeAmountOriginal: number | null
+    oldFeeCurrency: string | null
+    newFeeCurrency: string | null
+    oldFeeConversionRate: number | null
+    newFeeConversionRate: number | null
+    changedBy: string
+    changeReason: string | null
+    bookingStatusAtChange: string
+    isRestorationChange: boolean
+    createdAt: number
+  }>>([])
   const [overlappingBookings, setOverlappingBookings] = useState<Array<{
     id: string
     name: string
@@ -138,15 +164,32 @@ export default function BookingsPage() {
   const [viewDialogOpen, setViewDialogOpen] = useState(false)
   const [loadingBookingDetails, setLoadingBookingDetails] = useState(false)
   const [statusDialogOpen, setStatusDialogOpen] = useState(false)
+  const [feeDialogOpen, setFeeDialogOpen] = useState(false)
+  const [feeAmountOriginal, setFeeAmountOriginal] = useState<string>("")
+  const [feeCurrency, setFeeCurrency] = useState<string>("THB")
+  const [feeConversionRate, setFeeConversionRate] = useState<string>("")
+  const [feeAmount, setFeeAmount] = useState<string>("")
+  const [feeNotes, setFeeNotes] = useState<string>("")
   const [statusFilter, setStatusFilter] = useState<string>("all")
+  const [statusFilters, setStatusFilters] = useState<string[]>([]) // Multiple status selection
   const [emailFilter, setEmailFilter] = useState("")
   const [referenceNumberFilter, setReferenceNumberFilter] = useState("")
   const [nameFilter, setNameFilter] = useState("")
   const [phoneFilter, setPhoneFilter] = useState("")
   const [eventTypeFilter, setEventTypeFilter] = useState<string>("all")
+  
+  // Debounced filter values for API calls (prevents refetch on every keystroke)
+  const [debouncedEmailFilter, setDebouncedEmailFilter] = useState("")
+  const [debouncedReferenceNumberFilter, setDebouncedReferenceNumberFilter] = useState("")
+  const [debouncedNameFilter, setDebouncedNameFilter] = useState("")
+  const [debouncedPhoneFilter, setDebouncedPhoneFilter] = useState("")
   const [showOverlappingOnly, setShowOverlappingOnly] = useState(false)
   const [sortBy, setSortBy] = useState<"created_at" | "start_date" | "name" | "updated_at">("created_at")
   const [sortOrder, setSortOrder] = useState<"ASC" | "DESC">("DESC")
+  const [startDateFrom, setStartDateFrom] = useState("")
+  const [startDateTo, setStartDateTo] = useState("")
+  const [useDateRange, setUseDateRange] = useState(false)
+  const [presetsDialogOpen, setPresetsDialogOpen] = useState(false)
   const [proposedDateRange, setProposedDateRange] = useState<"single" | "multiple">("single")
   const [pageSize, setPageSize] = useState(25)
   const [postponeMode, setPostponeMode] = useState<"user-propose" | "admin-propose">("user-propose")
@@ -171,6 +214,7 @@ export default function BookingsPage() {
   const [bookingToDelete, setBookingToDelete] = useState<Booking | null>(null)
   const [otherChannelConfirmText, setOtherChannelConfirmText] = useState("")
   const [otherChannelDialogOpen, setOtherChannelDialogOpen] = useState(false)
+  const [exportDialogOpen, setExportDialogOpen] = useState(false)
   
   // Use refs to track current values without causing dependency array changes
   const selectedBookingRef = useRef<Booking | null>(null)
@@ -223,6 +267,48 @@ export default function BookingsPage() {
     }
   }, [confirmationDialogOpen, deleteDialogOpen, otherChannelDialogOpen, viewDialogOpen, statusDialogOpen])
   
+  // Search handlers - trigger search immediately on Enter key
+  const handleReferenceNumberSearch = (value: string) => {
+    console.log('[BookingsPage] Reference number search triggered (Enter):', value)
+    setDebouncedReferenceNumberFilter(value)
+  }
+
+  // Debounced search handlers - trigger search automatically while typing
+  const handleReferenceNumberDebouncedSearch = (value: string) => {
+    console.log('[BookingsPage] Reference number debounced search triggered:', value)
+    setDebouncedReferenceNumberFilter(value)
+  }
+
+  const handleEmailSearch = (value: string) => {
+    console.log('[BookingsPage] Email search triggered (Enter):', value)
+    setDebouncedEmailFilter(value)
+  }
+
+  const handleEmailDebouncedSearch = (value: string) => {
+    console.log('[BookingsPage] Email debounced search triggered:', value)
+    setDebouncedEmailFilter(value)
+  }
+
+  const handleNameSearch = (value: string) => {
+    console.log('[BookingsPage] Name search triggered (Enter):', value)
+    setDebouncedNameFilter(value)
+  }
+
+  const handleNameDebouncedSearch = (value: string) => {
+    console.log('[BookingsPage] Name debounced search triggered:', value)
+    setDebouncedNameFilter(value)
+  }
+
+  const handlePhoneSearch = (value: string) => {
+    console.log('[BookingsPage] Phone search triggered (Enter):', value)
+    setDebouncedPhoneFilter(value)
+  }
+
+  const handlePhoneDebouncedSearch = (value: string) => {
+    console.log('[BookingsPage] Phone debounced search triggered:', value)
+    setDebouncedPhoneFilter(value)
+  }
+  
   // Event types for filter dropdown
   const eventTypes = [
     { value: "all", label: "All Event Types" },
@@ -234,22 +320,36 @@ export default function BookingsPage() {
   ]
   
   // Build base endpoint with filters (without limit/offset for infinite scroll)
+  // Use debounced values for search inputs to prevent refetch on every keystroke
   const baseEndpoint = useMemo(() => {
+    console.log('[BookingsPage] baseEndpoint recalculating:', {
+      debouncedReferenceNumberFilter,
+      debouncedEmailFilter,
+      debouncedNameFilter,
+      debouncedPhoneFilter,
+      statusFilter,
+      statusFilters,
+    })
     const params = new URLSearchParams()
-    if (statusFilter !== "all") {
+    // Use multiple status filters if selected, otherwise fall back to single status filter
+    if (statusFilters.length > 0) {
+      // Send statuses as comma-separated string for v1 API
+      params.append("statuses", statusFilters.join(","))
+    } else if (statusFilter !== "all") {
       params.append("status", statusFilter)
     }
-    if (emailFilter) {
-      params.append("email", emailFilter)
+    if (debouncedEmailFilter) {
+      params.append("email", debouncedEmailFilter)
     }
-    if (referenceNumberFilter) {
-      params.append("referenceNumber", referenceNumberFilter)
+    if (debouncedReferenceNumberFilter) {
+      console.log('[BookingsPage] Adding referenceNumber to params:', debouncedReferenceNumberFilter)
+      params.append("referenceNumber", debouncedReferenceNumberFilter)
     }
-    if (nameFilter) {
-      params.append("name", nameFilter)
+    if (debouncedNameFilter) {
+      params.append("name", debouncedNameFilter)
     }
-    if (phoneFilter) {
-      params.append("phone", phoneFilter)
+    if (debouncedPhoneFilter) {
+      params.append("phone", debouncedPhoneFilter)
     }
     if (eventTypeFilter !== "all") {
       params.append("eventType", eventTypeFilter)
@@ -257,16 +357,28 @@ export default function BookingsPage() {
     if (showOverlappingOnly) {
       params.append("showOverlappingOnly", "true")
     }
+    if (useDateRange) {
+      if (startDateFrom) {
+        // Convert YYYY-MM-DD to Unix timestamp (Bangkok timezone)
+        const fromDate = new Date(startDateFrom + "T00:00:00+07:00")
+        params.append("startDateFrom", Math.floor(fromDate.getTime() / 1000).toString())
+      }
+      if (startDateTo) {
+        const toDate = new Date(startDateTo + "T23:59:59+07:00")
+        params.append("startDateTo", Math.floor(toDate.getTime() / 1000).toString())
+      }
+    }
     params.append("sortBy", sortBy)
     params.append("sortOrder", sortOrder)
     return buildApiUrl(API_PATHS.adminBookings, Object.fromEntries(params))
-  }, [statusFilter, emailFilter, referenceNumberFilter, nameFilter, phoneFilter, eventTypeFilter, showOverlappingOnly, sortBy, sortOrder])
+  }, [statusFilter, statusFilters, debouncedEmailFilter, debouncedReferenceNumberFilter, debouncedNameFilter, debouncedPhoneFilter, eventTypeFilter, showOverlappingOnly, sortBy, sortOrder, startDateFrom, startDateTo, useDateRange])
   
   // Use infinite scroll hook for bookings
   const {
     bookings,
     total,
     loading,
+    isFetching,
     hasMore,
     loadMore,
     refetch: fetchBookings,
@@ -276,7 +388,7 @@ export default function BookingsPage() {
   } = useInfiniteAdminBookings({
     baseEndpoint,
     pageSize,
-    refetchInterval: 30000,
+    refetchInterval: 60000, // Increase to 60 seconds to reduce request frequency
     enabled: !!session,
     isDialogOpen: () => viewDialogOpen || statusDialogOpen,
   })
@@ -602,8 +714,8 @@ export default function BookingsPage() {
   const fetchUnavailableDatesForDateChange = useCallback(async (bookingId: string | null) => {
     try {
       const url = bookingId 
-        ? `/api/v1/booking/availability?bookingId=${encodeURIComponent(bookingId)}`
-        : "/api/v1/booking/availability"
+        ? buildApiUrl(API_PATHS.bookingAvailability, { bookingId })
+        : API_PATHS.bookingAvailability
       
       const response = await fetch(url)
       const json = await response.json()
@@ -663,6 +775,19 @@ export default function BookingsPage() {
           h.old_status && h.new_status && h.old_status.trim() !== '' && h.new_status.trim() !== ''
         )
         
+        // Debug logging (remove in production if needed)
+        if (process.env.NODE_ENV === 'development') {
+          console.log('[fetchBookingDetails] Received booking data:', {
+            bookingId,
+            hasBooking: !!booking,
+            fee_amount: booking?.fee_amount,
+            feeAmount: booking?.feeAmount,
+            fee_currency: booking?.fee_currency,
+            feeCurrency: booking?.feeCurrency,
+            bookingKeys: booking ? Object.keys(booking) : [],
+          })
+        }
+        
         if (booking) {
           setSelectedBooking(booking)
           setStatusHistory(statusHistory)
@@ -679,6 +804,18 @@ export default function BookingsPage() {
       } else {
         const errorMessage = json.error?.message || "Failed to load booking details"
         toast.error(errorMessage)
+      }
+
+      // Fetch fee history
+      try {
+        const feeHistoryResponse = await fetch(buildApiUrl(API_PATHS.adminBookingFeeHistory(bookingId), { t: Date.now() }))
+        const feeHistoryJson = await feeHistoryResponse.json()
+        if (feeHistoryJson.success && feeHistoryJson.data) {
+          setFeeHistory(feeHistoryJson.data.history || [])
+        }
+      } catch (feeError) {
+        console.error("Failed to load fee history:", feeError)
+        setFeeHistory([])
       }
     } catch (error) {
       toast.error("Failed to load booking details")
@@ -1018,7 +1155,7 @@ export default function BookingsPage() {
     const depositVerifiedBy = shouldVerifyDeposit ? adminEmail : undefined
 
     try {
-      const response = await fetch(`/api/v1/admin/bookings/${selectedBooking.id}`, {
+      const response = await fetch(API_PATHS.adminBooking(selectedBooking.id), {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -1186,6 +1323,183 @@ export default function BookingsPage() {
     }
   }
 
+  // Handle fee update
+  const handleFeeUpdate = async (e: React.FormEvent<HTMLFormElement>) => {
+    e.preventDefault()
+    
+    if (!selectedBooking) {
+      toast.error("No booking selected")
+      return
+    }
+
+    // Validate status allows fee recording
+    if (selectedBooking.status !== "confirmed" && selectedBooking.status !== "finished") {
+      toast.error("Fee can only be recorded for confirmed or finished bookings")
+      return
+    }
+
+    // Parse and validate inputs
+    const originalAmount = parseFloat(feeAmountOriginal)
+    if (isNaN(originalAmount) || originalAmount < 0) {
+      toast.error("Please enter a valid original amount")
+      return
+    }
+
+    const currencyUpper = feeCurrency.toUpperCase()
+    let conversionRate: number | null = null
+    let baseAmount: number | null = null
+
+    if (currencyUpper === "THB") {
+      // THB: no conversion needed
+      baseAmount = originalAmount
+    } else {
+      // Foreign currency: need conversion
+      if (feeConversionRate && feeConversionRate.trim() !== "") {
+        const rate = parseFloat(feeConversionRate)
+        if (isNaN(rate) || rate < 0.01 || rate > 10000) {
+          toast.error("Conversion rate must be between 0.01 and 10000")
+          return
+        }
+        conversionRate = rate
+        baseAmount = originalAmount * rate
+      } else if (feeAmount && feeAmount.trim() !== "") {
+        const amount = parseFloat(feeAmount)
+        if (isNaN(amount) || amount < 0) {
+          toast.error("Please enter a valid base amount (THB)")
+          return
+        }
+        baseAmount = amount
+        conversionRate = amount / originalAmount
+        if (conversionRate < 0.01 || conversionRate > 10000) {
+          toast.error("Calculated conversion rate is outside reasonable range")
+          return
+        }
+      } else {
+        toast.error("Either conversion rate or base amount (THB) must be provided for non-THB currency")
+        return
+      }
+    }
+
+    setSaving(true)
+    try {
+      const response = await fetch(buildApiUrl(API_PATHS.adminBooking(selectedBooking.id) + "/fee"), {
+        method: "PATCH",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          feeAmountOriginal: originalAmount,
+          feeCurrency: currencyUpper,
+          feeConversionRate: conversionRate,
+          feeAmount: baseAmount,
+          feeNotes: feeNotes.trim() || null,
+        }),
+      })
+
+      const json = await response.json()
+
+      if (json.success) {
+        const hasFee = (selectedBooking as any).fee_amount ?? (selectedBooking as any).feeAmount
+        toast.success(hasFee ? "Fee updated successfully" : "Fee recorded successfully")
+        setFeeDialogOpen(false)
+        
+        // Get updated booking from response
+        const updatedBooking = json.data?.booking
+        
+        // Debug logging
+        if (process.env.NODE_ENV === 'development') {
+          console.log('[handleFeeUpdate] Fee update response:', {
+            hasResponse: !!json.data,
+            hasBooking: !!updatedBooking,
+            bookingId: selectedBooking.id,
+            fee_amount: updatedBooking?.fee_amount,
+            feeAmount: updatedBooking?.feeAmount,
+            fee_currency: updatedBooking?.fee_currency,
+            feeCurrency: updatedBooking?.feeCurrency,
+            updatedBookingKeys: updatedBooking ? Object.keys(updatedBooking) : [],
+            fullBooking: updatedBooking,
+          })
+        }
+        
+        if (updatedBooking) {
+          // Optimistically update the booking in the list
+          replaceItem(selectedBooking.id, updatedBooking)
+          // Also update selected booking for the detail view
+          setSelectedBooking(updatedBooking)
+          
+          // Debug logging after update
+          if (process.env.NODE_ENV === 'development') {
+            console.log('[handleFeeUpdate] Updated selectedBooking:', {
+              fee_amount: updatedBooking.fee_amount,
+              feeAmount: updatedBooking.feeAmount,
+              fee_currency: updatedBooking.fee_currency,
+            })
+          }
+        }
+        
+        // Refresh booking details to get latest data including fee history
+        await fetchBookingDetails(selectedBooking.id)
+        
+        // Invalidate and refetch bookings list to ensure fresh data
+        // Trigger invalidation event for React Query cache
+        if (typeof window !== 'undefined') {
+          const event = new CustomEvent('invalidateAdminBookings')
+          window.dispatchEvent(event)
+        }
+        await fetchBookings()
+      } else {
+        const errorMessage = json.error?.message || "Failed to update fee"
+        toast.error(errorMessage)
+      }
+    } catch (error) {
+      console.error("Error updating fee:", error)
+      toast.error("Failed to update fee. Please try again.")
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  // Auto-calculate fee amounts when values change
+  useEffect(() => {
+    if (!feeDialogOpen) return
+
+    const original = parseFloat(feeAmountOriginal)
+    const currencyUpper = feeCurrency.toUpperCase()
+
+    if (isNaN(original) || original <= 0) {
+      if (currencyUpper === "THB") {
+        setFeeAmount("")
+      } else {
+        setFeeAmount("")
+        setFeeConversionRate("")
+      }
+      return
+    }
+
+    if (currencyUpper === "THB") {
+      // THB: base amount = original amount (always)
+      setFeeAmount(original.toFixed(2))
+      setFeeConversionRate("")
+    } else {
+      // Foreign currency: calculate based on what's provided
+      // Priority: If rate is provided, calculate base amount
+      // If base amount is provided, calculate rate
+      if (feeConversionRate && feeConversionRate.trim() !== "") {
+        const rate = parseFloat(feeConversionRate)
+        if (!isNaN(rate) && rate > 0) {
+          const calculated = original * rate
+          setFeeAmount(calculated.toFixed(2))
+        }
+      } else if (feeAmount && feeAmount.trim() !== "") {
+        const amount = parseFloat(feeAmount)
+        if (!isNaN(amount) && amount > 0 && original > 0) {
+          const calculated = amount / original
+          setFeeConversionRate(calculated.toFixed(4))
+        }
+      }
+    }
+  }, [feeAmountOriginal, feeCurrency, feeConversionRate, feeAmount, feeDialogOpen])
+
   const getStatusBadge = (status: string) => {
     const variants: Record<string, "default" | "secondary" | "destructive" | "outline"> = {
       pending: "outline",
@@ -1248,7 +1562,64 @@ export default function BookingsPage() {
     }
   }
 
-  if (status === "loading" || loading) {
+  const formatFee = (booking: Booking) => {
+    // Handle both snake_case (from API) and camelCase (from formatBooking)
+    const feeAmount = (booking as any).fee_amount ?? (booking as any).feeAmount
+    const feeAmountOriginal = (booking as any).fee_amount_original ?? (booking as any).feeAmountOriginal
+    const feeCurrency = (booking as any).fee_currency ?? (booking as any).feeCurrency
+    
+    // Debug logging (remove in production if needed)
+    if (process.env.NODE_ENV === 'development') {
+      console.log('[formatFee] Booking fee data:', {
+        bookingId: booking.id,
+        bookingReference: (booking as any).reference_number,
+        fee_amount: (booking as any).fee_amount,
+        feeAmount: (booking as any).feeAmount,
+        feeAmountResolved: feeAmount,
+        feeAmountType: typeof feeAmount,
+        feeCurrency,
+        feeAmountOriginal,
+        allFeeKeys: Object.keys(booking).filter(k => k.toLowerCase().includes('fee')),
+        fullBooking: booking,
+      })
+    }
+    
+    // Check if fee exists and is a valid positive number
+    // Handle both number and string types
+    let feeNum: number | null = null
+    if (feeAmount != null && feeAmount !== undefined) {
+      if (typeof feeAmount === 'string') {
+        feeNum = parseFloat(feeAmount)
+      } else if (typeof feeAmount === 'number') {
+        feeNum = feeAmount
+      } else {
+        feeNum = Number(feeAmount)
+      }
+    }
+    
+    if (feeNum === null || isNaN(feeNum) || feeNum <= 0) {
+      if (process.env.NODE_ENV === 'development') {
+        console.log('[formatFee] Fee check failed:', { feeNum, feeAmount, isNull: feeAmount === null, isUndefined: feeAmount === undefined })
+      }
+      return <span className="text-gray-400 italic">Not recorded</span>
+    }
+    
+    const baseAmount = feeNum.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+    if (feeCurrency && feeCurrency.toUpperCase() !== "THB" && feeAmountOriginal) {
+      const originalAmount = Number(feeAmountOriginal).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+      return (
+        <div className="text-sm">
+          <div className="font-medium text-gray-900">{baseAmount} THB</div>
+          <div className="text-gray-500 text-xs">{originalAmount} {feeCurrency}</div>
+        </div>
+      )
+    }
+    return <span className="text-sm font-medium text-gray-900">{baseAmount} THB</span>
+  }
+
+  // Only show full-page loading on initial load (when there's no data yet)
+  // When refetching with existing data, show content with a subtle loading indicator
+  if (status === "loading" || (loading && bookings.length === 0)) {
     return (
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-12">
         <div className="flex items-center justify-center h-64">
@@ -1284,102 +1655,107 @@ export default function BookingsPage() {
               </div>
             )}
           </div>
-          <Link href="/admin/bookings/archive" prefetch={false}>
-            <Button variant="outline">
-              <Archive className="w-4 h-4 mr-2" />
-              View Archive
+          <div className="flex gap-2">
+            <Button
+              variant="outline"
+              onClick={() => setExportDialogOpen(true)}
+            >
+              <Download className="w-4 h-4 mr-2" />
+              Export
             </Button>
-          </Link>
+            <Link href="/admin/bookings/archive" prefetch={false}>
+              <Button variant="outline">
+                <Archive className="w-4 h-4 mr-2" />
+                View Archive
+              </Button>
+            </Link>
+          </div>
         </div>
       </div>
 
-      {/* Filters */}
-      <div className="mb-6 space-y-4">
-        {/* First Row: Status, Event Type, Sort By, Sort Order */}
-        <div className="flex flex-col sm:flex-row gap-4">
-        <Select value={statusFilter} onValueChange={setStatusFilter}>
-          <SelectTrigger className="w-full sm:w-48">
-            <SelectValue placeholder="Filter by status" />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="all">All Statuses</SelectItem>
-            <SelectItem value="pending">Pending</SelectItem>
-              <SelectItem value="pending_deposit">Pending Deposit</SelectItem>
-              <SelectItem value="confirmed">Confirmed</SelectItem>
-          </SelectContent>
-        </Select>
-          <Select value={eventTypeFilter} onValueChange={setEventTypeFilter}>
-            <SelectTrigger className="w-full sm:w-48">
-              <SelectValue placeholder="Filter by event type" />
-            </SelectTrigger>
-            <SelectContent>
-              {eventTypes.map((type) => (
-                <SelectItem key={type.value} value={type.value}>
-                  {type.label}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-          <Select value={sortBy} onValueChange={(value) => setSortBy(value as typeof sortBy)}>
-            <SelectTrigger className="w-full sm:w-48">
-              <SelectValue placeholder="Sort by" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="created_at">Created Date</SelectItem>
-              <SelectItem value="start_date">Start Date</SelectItem>
-              <SelectItem value="name">Name</SelectItem>
-              <SelectItem value="updated_at">Updated Date</SelectItem>
-            </SelectContent>
-          </Select>
-          <Select value={sortOrder} onValueChange={(value) => setSortOrder(value as typeof sortOrder)}>
-            <SelectTrigger className="w-full sm:w-32">
-              <SelectValue placeholder="Order" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="DESC">Descending</SelectItem>
-              <SelectItem value="ASC">Ascending</SelectItem>
-            </SelectContent>
-          </Select>
+      {/* Advanced Filters */}
+      <AdvancedBookingFilters
+        statusFilter={statusFilter}
+        onStatusFilterChange={setStatusFilter}
+        statusFilters={statusFilters}
+        onStatusFiltersChange={setStatusFilters}
+        emailFilter={emailFilter}
+        onEmailFilterChange={setEmailFilter}
+        onEmailSearch={handleEmailSearch}
+        onEmailDebouncedSearch={handleEmailDebouncedSearch}
+        referenceNumberFilter={referenceNumberFilter}
+        onReferenceNumberFilterChange={setReferenceNumberFilter}
+        onReferenceNumberSearch={handleReferenceNumberSearch}
+        onReferenceNumberDebouncedSearch={handleReferenceNumberDebouncedSearch}
+        nameFilter={nameFilter}
+        onNameFilterChange={setNameFilter}
+        onNameSearch={handleNameSearch}
+        onNameDebouncedSearch={handleNameDebouncedSearch}
+        phoneFilter={phoneFilter}
+        onPhoneFilterChange={setPhoneFilter}
+        onPhoneSearch={handlePhoneSearch}
+        onPhoneDebouncedSearch={handlePhoneDebouncedSearch}
+        eventTypeFilter={eventTypeFilter}
+        onEventTypeFilterChange={setEventTypeFilter}
+        showOverlappingOnly={showOverlappingOnly}
+        onShowOverlappingOnlyChange={(value) => setShowOverlappingOnly(value)}
+        startDateFrom={startDateFrom}
+        onStartDateFromChange={setStartDateFrom}
+        startDateTo={startDateTo}
+        onStartDateToChange={setStartDateTo}
+        useDateRange={useDateRange}
+        onUseDateRangeChange={(value) => setUseDateRange(value)}
+        sortBy={sortBy}
+        onSortByChange={setSortBy}
+        sortOrder={sortOrder}
+        onSortOrderChange={setSortOrder}
+        eventTypes={eventTypes}
+        onClearAll={() => {
+          setStatusFilter("all")
+          setStatusFilters([])
+          setEmailFilter("")
+          setReferenceNumberFilter("")
+          setNameFilter("")
+          setPhoneFilter("")
+          // CRITICAL: Also clear debounced values to actually clear the filters
+          setDebouncedEmailFilter("")
+          setDebouncedReferenceNumberFilter("")
+          setDebouncedNameFilter("")
+          setDebouncedPhoneFilter("")
+          setEventTypeFilter("all")
+          setShowOverlappingOnly(false)
+          setStartDateFrom("")
+          setStartDateTo("")
+          setUseDateRange(false)
+        }}
+        hasActiveFilters={Boolean(
+          statusFilter !== "all" || 
+          statusFilters.length > 0 || 
+          debouncedEmailFilter || 
+          debouncedReferenceNumberFilter || 
+          debouncedNameFilter || 
+          debouncedPhoneFilter || 
+          eventTypeFilter !== "all" || 
+          showOverlappingOnly ||
+          (useDateRange && (startDateFrom || startDateTo))
+        )}
+      />
+      
+      {/* Results Count */}
+      {!loading && (
+        <div className="mb-4 text-sm text-gray-600">
+          {total > 0 ? (
+            <>
+              Showing <span className="font-medium">{bookings.length}</span> of <span className="font-medium">{total}</span> booking{total !== 1 ? 's' : ''}
+              {(statusFilter !== "all" || statusFilters.length > 0 || debouncedEmailFilter || debouncedReferenceNumberFilter || debouncedNameFilter || debouncedPhoneFilter || eventTypeFilter !== "all" || showOverlappingOnly || (useDateRange && (startDateFrom || startDateTo))) && (
+                <span className="ml-2 text-gray-500">(filtered)</span>
+              )}
+            </>
+          ) : (
+            <span>No bookings found</span>
+          )}
         </div>
-        {/* Second Row: Search Fields */}
-        <div className="flex flex-col sm:flex-row gap-4">
-          <Input
-            placeholder="Search by reference number..."
-            value={referenceNumberFilter}
-            onChange={(e) => setReferenceNumberFilter(e.target.value)}
-            className="w-full sm:w-48"
-          />
-          <Input
-            placeholder="Search by name..."
-            value={nameFilter}
-            onChange={(e) => setNameFilter(e.target.value)}
-            className="w-full sm:w-48"
-          />
-          <Input
-            placeholder="Search by phone..."
-            value={phoneFilter}
-            onChange={(e) => setPhoneFilter(e.target.value)}
-            className="w-full sm:w-48"
-          />
-        <Input
-          placeholder="Filter by email..."
-          value={emailFilter}
-          onChange={(e) => setEmailFilter(e.target.value)}
-          className="w-full sm:w-64"
-        />
-        </div>
-        <div className="flex items-center gap-2 mt-2">
-          <label className="flex items-center gap-2 cursor-pointer">
-            <input
-              type="checkbox"
-              checked={showOverlappingOnly}
-              onChange={(e) => setShowOverlappingOnly(e.target.checked)}
-              className="w-4 h-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500"
-            />
-            <span className="text-sm font-medium text-gray-700">Show Overlapping Bookings Only</span>
-          </label>
-        </div>
-      </div>
+      )}
 
       {/* Bookings Table */}
       {bookings.length === 0 ? (
@@ -1414,6 +1790,9 @@ export default function BookingsPage() {
                     Status
                   </th>
                     <th className="px-6 xl:px-8 py-4 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    Fee
+                  </th>
+                    <th className="px-6 xl:px-8 py-4 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                     Created
                   </th>
                     <th className="px-6 xl:px-8 py-4 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">
@@ -1436,12 +1815,20 @@ export default function BookingsPage() {
                     </td>
                     <td className="px-6 xl:px-8 py-4 whitespace-nowrap">
                       <div className="text-sm font-medium text-gray-900">
-                        {getBookingReferenceNumber(booking)}
+                        <SearchHighlight
+                          text={getBookingReferenceNumber(booking)}
+                          searchTerm={referenceNumberFilter}
+                        />
                       </div>
                     </td>
                     <td className="px-6 xl:px-8 py-4 whitespace-nowrap">
                       <div className="flex items-center gap-2">
-                        <div className="text-sm font-medium text-gray-900">{booking.name}</div>
+                        <div className="text-sm font-medium text-gray-900">
+                          <SearchHighlight
+                            text={booking.name}
+                            searchTerm={nameFilter}
+                          />
+                        </div>
                         {booking.user_response && (
                           <Badge variant="outline" className="bg-blue-100 text-blue-800 border-blue-300">
                             <AlertCircle className="w-3 h-3 mr-1" />
@@ -1451,11 +1838,17 @@ export default function BookingsPage() {
                       </div>
                       <div className="text-sm text-gray-500 flex items-center gap-1 mt-1">
                         <Mail className="w-3 h-3" />
-                        {booking.email}
+                        <SearchHighlight
+                          text={booking.email}
+                          searchTerm={emailFilter}
+                        />
                       </div>
                       <div className="text-sm text-gray-500 flex items-center gap-1 mt-1">
                         <Phone className="w-3 h-3" />
-                        {booking.phone}
+                        <SearchHighlight
+                          text={booking.phone}
+                          searchTerm={phoneFilter}
+                        />
                       </div>
                     </td>
                     <td className="px-6 xl:px-8 py-4">
@@ -1484,6 +1877,9 @@ export default function BookingsPage() {
                     </td>
                     <td className="px-6 xl:px-8 py-4 whitespace-nowrap">
                       {getStatusBadge(booking.status)}
+                    </td>
+                    <td className="px-6 xl:px-8 py-4 whitespace-nowrap">
+                      {formatFee(booking)}
                     </td>
                     <td className="px-6 xl:px-8 py-4 whitespace-nowrap text-sm text-gray-500">
                       {formatTimestamp(booking.created_at)}
@@ -1628,6 +2024,11 @@ export default function BookingsPage() {
                         <Clock className="w-3 h-3 flex-shrink-0" />
                         {formatTimeForDisplay(booking.start_time)} - {formatTimeForDisplay(booking.end_time)}
                       </div>
+                    </div>
+
+                    <div>
+                      <div className="text-xs font-medium text-gray-500 mb-1">Fee</div>
+                      <div className="text-sm text-gray-900">{formatFee(booking)}</div>
                     </div>
 
                     <div>
@@ -1966,7 +2367,7 @@ export default function BookingsPage() {
                       <div>
                         <Label>Deposit Evidence Image</Label>
                         <a 
-                          href={`/api/v1/admin/deposit/${selectedBooking.id}/image`}
+                          href={API_PATHS.adminDepositImage(selectedBooking.id)}
                           target="_blank" 
                           rel="noopener noreferrer"
                           className="text-sm text-blue-600 hover:underline block mt-1 font-medium"
@@ -1985,6 +2386,157 @@ export default function BookingsPage() {
                   </div>
                 </div>
               )}
+
+              {/* Fee Information */}
+              <div>
+                <div className="flex items-center justify-between mb-3">
+                  <h3 className="text-lg font-semibold">Fee Information</h3>
+                  {(selectedBooking.status === "confirmed" || selectedBooking.status === "finished") && (
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={() => {
+                        // Initialize form with current fee values if updating
+                        // Note: selectedBooking from fetchBookingDetails uses camelCase (formatBooking converts it)
+                        // But useAdminBookings hook uses snake_case, so we need to check both
+                        const currentFeeAmount = (selectedBooking as any).fee_amount ?? (selectedBooking as any).feeAmount
+                        if (currentFeeAmount) {
+                          const feeAmountOrig = (selectedBooking as any).fee_amount_original ?? (selectedBooking as any).feeAmountOriginal
+                          const feeCurr = (selectedBooking as any).fee_currency ?? (selectedBooking as any).feeCurrency
+                          const feeConvRate = (selectedBooking as any).fee_conversion_rate ?? (selectedBooking as any).feeConversionRate
+                          const feeNotesVal = (selectedBooking as any).fee_notes ?? (selectedBooking as any).feeNotes
+                          
+                          setFeeAmountOriginal(feeAmountOrig?.toString() || "")
+                          setFeeCurrency(feeCurr || "THB")
+                          setFeeConversionRate(feeConvRate?.toString() || "")
+                          setFeeAmount(currentFeeAmount.toString())
+                          setFeeNotes(feeNotesVal || "")
+                        } else {
+                          setFeeAmountOriginal("")
+                          setFeeCurrency("THB")
+                          setFeeConversionRate("")
+                          setFeeAmount("")
+                          setFeeNotes("")
+                        }
+                        setFeeDialogOpen(true)
+                      }}
+                      disabled={saving}
+                    >
+                      {((selectedBooking as any).fee_amount ?? (selectedBooking as any).feeAmount) ? "Update Fee" : "Record Fee"}
+                    </Button>
+                  )}
+                </div>
+                {(() => {
+                  // Handle both camelCase (from formatBooking) and snake_case (from useAdminBookings)
+                  const feeAmount = (selectedBooking as any).fee_amount ?? (selectedBooking as any).feeAmount
+                  const feeAmountOriginal = (selectedBooking as any).fee_amount_original ?? (selectedBooking as any).feeAmountOriginal
+                  const feeCurrency = (selectedBooking as any).fee_currency ?? (selectedBooking as any).feeCurrency
+                  const feeConversionRate = (selectedBooking as any).fee_conversion_rate ?? (selectedBooking as any).feeConversionRate
+                  const feeRateDate = (selectedBooking as any).fee_rate_date ?? (selectedBooking as any).feeRateDate
+                  const feeNotes = (selectedBooking as any).fee_notes ?? (selectedBooking as any).feeNotes
+                  const feeRecordedAt = (selectedBooking as any).fee_recorded_at ?? (selectedBooking as any).feeRecordedAt
+                  const feeRecordedBy = (selectedBooking as any).fee_recorded_by ?? (selectedBooking as any).feeRecordedBy
+                  
+                  // Debug logging (remove in production if needed)
+                  if (process.env.NODE_ENV === 'development') {
+                    console.log('[BookingDetail] Fee data:', {
+                      bookingId: selectedBooking.id,
+                      bookingReference: (selectedBooking as any).reference_number,
+                      fee_amount: (selectedBooking as any).fee_amount,
+                      feeAmount: (selectedBooking as any).feeAmount,
+                      feeAmountResolved: feeAmount,
+                      feeAmountType: typeof feeAmount,
+                      feeCurrency,
+                      feeAmountOriginal,
+                      selectedBookingKeys: Object.keys(selectedBooking),
+                      allFeeKeys: Object.keys(selectedBooking).filter(k => k.toLowerCase().includes('fee')),
+                      fullSelectedBooking: selectedBooking,
+                    })
+                  }
+                  
+                  // Check if fee exists and is a valid positive number
+                  // Handle both number and string types
+                  let feeNum: number | null = null
+                  if (feeAmount != null && feeAmount !== undefined) {
+                    if (typeof feeAmount === 'string') {
+                      feeNum = parseFloat(feeAmount)
+                    } else if (typeof feeAmount === 'number') {
+                      feeNum = feeAmount
+                    } else {
+                      feeNum = Number(feeAmount)
+                    }
+                  }
+                  const hasFee = feeNum !== null && !isNaN(feeNum) && feeNum > 0
+                  
+                  if (process.env.NODE_ENV === 'development') {
+                    console.log('[BookingDetail] Fee check result:', { hasFee, feeNum, feeAmount })
+                  }
+                  
+                  return hasFee ? (
+                    <div className="bg-yellow-50 border border-yellow-200 rounded p-4">
+                      <div className="space-y-2">
+                        <div>
+                          <Label>Base Amount (THB)</Label>
+                          <div className="text-sm font-medium text-gray-900">
+                            {Number(feeAmount).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} THB
+                          </div>
+                        </div>
+                        {feeCurrency && feeCurrency.toUpperCase() !== "THB" && feeAmountOriginal && (
+                          <>
+                            <div>
+                              <Label>Original Amount</Label>
+                              <div className="text-sm text-gray-900">
+                                {feeAmountOriginal.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} {feeCurrency}
+                              </div>
+                            </div>
+                            {feeConversionRate && (
+                              <div>
+                                <Label>Conversion Rate</Label>
+                                <div className="text-sm text-gray-900">
+                                  {feeConversionRate.toFixed(4)}
+                                </div>
+                              </div>
+                            )}
+                            {feeRateDate && (
+                              <div>
+                                <Label>Rate Date</Label>
+                                <div className="text-sm text-gray-500">
+                                  {formatTimestamp(feeRateDate)}
+                                </div>
+                              </div>
+                            )}
+                          </>
+                        )}
+                        {feeNotes && (
+                          <div>
+                            <Label>Notes</Label>
+                            <div className="text-sm text-gray-900">{feeNotes}</div>
+                          </div>
+                        )}
+                        {feeRecordedAt && (
+                          <div>
+                            <Label>Recorded</Label>
+                            <div className="text-sm text-gray-500">
+                              {formatTimestamp(feeRecordedAt)}
+                              {feeRecordedBy && ` by ${feeRecordedBy}`}
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="bg-gray-50 border border-gray-200 rounded p-4">
+                      <p className="text-sm text-gray-500 italic">No fee recorded yet</p>
+                      {(selectedBooking.status === "confirmed" || selectedBooking.status === "finished") && (
+                        <p className="text-xs text-gray-400 mt-2">Click "Record Fee" to add fee information</p>
+                      )}
+                      {(selectedBooking.status !== "confirmed" && selectedBooking.status !== "finished") && (
+                        <p className="text-xs text-yellow-600 mt-2">Fee can only be recorded when booking is confirmed or finished</p>
+                      )}
+                    </div>
+                  )
+                })()}
+              </div>
 
               {/* Admin Notes */}
               {selectedBooking.admin_notes && (
@@ -2042,6 +2594,60 @@ export default function BookingsPage() {
                   )
                 })()}
               </div>
+
+              {/* Fee History */}
+              {feeHistory.length > 0 && (
+                <div>
+                  <h3 className="text-lg font-semibold mb-3">Fee History</h3>
+                  <div className="space-y-2">
+                    {feeHistory.map((history) => {
+                      const formatFeeDisplay = (amount: number | null, original: number | null, currency: string | null, rate: number | null) => {
+                        if (amount === null) return "Not recorded"
+                        const baseAmount = amount.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+                        if (currency && currency.toUpperCase() !== "THB" && original) {
+                          const originalAmount = original.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+                          const rateDisplay = rate ? rate.toFixed(4) : "N/A"
+                          return `${baseAmount} THB (${originalAmount} ${currency}, rate: ${rateDisplay})`
+                        }
+                        return `${baseAmount} THB`
+                      }
+
+                      const oldDisplay = formatFeeDisplay(history.oldFeeAmount, history.oldFeeAmountOriginal, history.oldFeeCurrency, history.oldFeeConversionRate)
+                      const newDisplay = formatFeeDisplay(history.newFeeAmount, history.newFeeAmountOriginal, history.newFeeCurrency, history.newFeeConversionRate)
+
+                      return (
+                        <div key={history.id} className="flex items-start gap-3 p-3 bg-gray-50 rounded">
+                          <div className="flex-1">
+                            <div className="text-sm font-medium">
+                              {history.oldFeeAmount === null ? "Fee Recorded" : "Fee Updated"}
+                            </div>
+                            <div className="text-sm text-gray-600 mt-1">
+                              {history.oldFeeAmount === null ? (
+                                <span>→ {newDisplay}</span>
+                              ) : (
+                                <span>{oldDisplay} → {newDisplay}</span>
+                              )}
+                            </div>
+                            {history.changeReason && (
+                              <div className="text-xs text-gray-500 mt-1">{history.changeReason}</div>
+                            )}
+                            <div className="text-xs text-gray-500 mt-1">
+                              {formatTimestamp(history.createdAt)}
+                              {history.changedBy && ` by ${history.changedBy}`}
+                              {history.isRestorationChange && (
+                                <Badge variant="outline" className="ml-2 text-xs">Restoration</Badge>
+                              )}
+                            </div>
+                            <div className="text-xs text-gray-400 mt-1">
+                              Status at change: {history.bookingStatusAtChange}
+                            </div>
+                          </div>
+                        </div>
+                      )
+                    })}
+                  </div>
+                </div>
+              )}
             </div>
           ) : null}
         </DialogContent>
@@ -2722,6 +3328,176 @@ export default function BookingsPage() {
         </DialogContent>
       </Dialog>
 
+      {/* Fee Recording/Update Dialog */}
+      <Dialog 
+        open={feeDialogOpen} 
+        onOpenChange={(open) => {
+          setFeeDialogOpen(open)
+          if (!open) {
+            // Reset form when dialog closes
+            setFeeAmountOriginal("")
+            setFeeCurrency("THB")
+            setFeeConversionRate("")
+            setFeeAmount("")
+            setFeeNotes("")
+          }
+        }}
+      >
+        <DialogContent className="max-w-2xl w-[95vw] sm:w-full">
+          <DialogHeader>
+            <DialogTitle>{selectedBooking?.fee_amount ? "Update Fee" : "Record Fee"}</DialogTitle>
+            <DialogDescription>
+              {selectedBooking?.fee_amount 
+                ? "Update the fee for this booking. Changes will be logged in fee history."
+                : "Record the fee for this booking. Fee can only be recorded for confirmed or finished bookings."}
+            </DialogDescription>
+          </DialogHeader>
+          {selectedBooking && (
+            <form onSubmit={handleFeeUpdate} className="space-y-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div>
+                  <Label htmlFor="fee_amount_original">Original Amount *</Label>
+                  <Input
+                    id="fee_amount_original"
+                    type="number"
+                    step="0.01"
+                    min="0"
+                    value={feeAmountOriginal}
+                    onChange={(e) => setFeeAmountOriginal(e.target.value)}
+                    placeholder="0.00"
+                    required
+                    disabled={saving}
+                  />
+                </div>
+                <div>
+                  <Label htmlFor="fee_currency">Currency *</Label>
+                  <Select value={feeCurrency} onValueChange={setFeeCurrency} disabled={saving}>
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="THB">THB (Thai Baht)</SelectItem>
+                      <SelectItem value="USD">USD (US Dollar)</SelectItem>
+                      <SelectItem value="EUR">EUR (Euro)</SelectItem>
+                      <SelectItem value="GBP">GBP (British Pound)</SelectItem>
+                      <SelectItem value="JPY">JPY (Japanese Yen)</SelectItem>
+                      <SelectItem value="CNY">CNY (Chinese Yuan)</SelectItem>
+                      <SelectItem value="SGD">SGD (Singapore Dollar)</SelectItem>
+                      <SelectItem value="MYR">MYR (Malaysian Ringgit)</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+              </div>
+
+              {feeCurrency.toUpperCase() !== "THB" && (
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  <div>
+                    <Label htmlFor="fee_conversion_rate">Conversion Rate</Label>
+                    <Input
+                      id="fee_conversion_rate"
+                      type="number"
+                      step="0.0001"
+                      min="0.01"
+                      max="10000"
+                      value={feeConversionRate}
+                      onChange={(e) => setFeeConversionRate(e.target.value)}
+                      placeholder="Auto-calculated if base amount provided"
+                      disabled={saving}
+                    />
+                    <p className="text-xs text-gray-500 mt-1">
+                      Rate: 1 {feeCurrency} = ? THB
+                    </p>
+                  </div>
+                  <div>
+                    <Label htmlFor="fee_amount">Base Amount (THB)</Label>
+                    <Input
+                      id="fee_amount"
+                      type="number"
+                      step="0.01"
+                      min="0"
+                      value={feeAmount}
+                      onChange={(e) => setFeeAmount(e.target.value)}
+                      placeholder="Auto-calculated if rate provided"
+                      disabled={saving}
+                    />
+                    <p className="text-xs text-gray-500 mt-1">
+                      Calculated: {feeAmountOriginal && feeConversionRate 
+                        ? (parseFloat(feeAmountOriginal) * parseFloat(feeConversionRate)).toFixed(2)
+                        : feeAmount || "0.00"} THB
+                    </p>
+                  </div>
+                </div>
+              )}
+
+              {feeCurrency.toUpperCase() === "THB" && (
+                <div>
+                  <Label htmlFor="fee_amount_thb">Base Amount (THB)</Label>
+                  <Input
+                    id="fee_amount_thb"
+                    type="number"
+                    step="0.01"
+                    min="0"
+                    value={feeAmount}
+                    onChange={(e) => setFeeAmount(e.target.value)}
+                    placeholder="Same as original amount"
+                    disabled
+                    className="bg-gray-50"
+                  />
+                  <p className="text-xs text-gray-500 mt-1">
+                    For THB, base amount equals original amount
+                  </p>
+                </div>
+              )}
+
+              <div>
+                <Label htmlFor="fee_notes">Notes (Optional)</Label>
+                <Textarea
+                  id="fee_notes"
+                  value={feeNotes}
+                  onChange={(e) => setFeeNotes(e.target.value)}
+                  placeholder="Payment method, invoice number, etc."
+                  rows={3}
+                  disabled={saving}
+                />
+              </div>
+
+              <div className="flex flex-col sm:flex-row justify-end gap-2">
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() => {
+                    setFeeDialogOpen(false)
+                    setFeeAmountOriginal("")
+                    setFeeCurrency("THB")
+                    setFeeConversionRate("")
+                    setFeeAmount("")
+                    setFeeNotes("")
+                  }}
+                  disabled={saving}
+                  className="w-full sm:w-auto"
+                >
+                  Cancel
+                </Button>
+                <Button
+                  type="submit"
+                  disabled={saving || !feeAmountOriginal || parseFloat(feeAmountOriginal) <= 0}
+                  className="w-full sm:w-auto"
+                >
+                  {saving ? (
+                    <>
+                      <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                      {((selectedBooking as any).fee_amount ?? (selectedBooking as any).feeAmount) ? "Updating..." : "Recording..."}
+                    </>
+                  ) : (
+                    ((selectedBooking as any).fee_amount ?? (selectedBooking as any).feeAmount) ? "Update Fee" : "Record Fee"
+                  )}
+                </Button>
+              </div>
+            </form>
+          )}
+        </DialogContent>
+      </Dialog>
+
       {/* Action Confirmation Dialog */}
       <ActionConfirmationDialog
         open={confirmationDialogOpen}
@@ -2736,6 +3512,23 @@ export default function BookingsPage() {
           setPendingValidation(null)
         }}
         isLoading={actionLoading}
+      />
+
+      {/* Export Dialog */}
+      <BookingExportDialog
+        open={exportDialogOpen}
+        onOpenChange={setExportDialogOpen}
+        filters={{
+          status: statusFilter !== "all" ? statusFilter : undefined,
+          email: debouncedEmailFilter || undefined,
+          referenceNumber: debouncedReferenceNumberFilter || undefined,
+          name: debouncedNameFilter || undefined,
+          phone: debouncedPhoneFilter || undefined,
+          eventType: eventTypeFilter !== "all" ? eventTypeFilter : undefined,
+          sortBy,
+          sortOrder,
+          showOverlappingOnly,
+        }}
       />
 
       {/* Delete Confirmation Dialog */}

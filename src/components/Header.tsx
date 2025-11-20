@@ -204,7 +204,7 @@ export function Header() {
   // Function to refresh unavailable dates (called on month navigation)
   const refreshUnavailableDates = () => {
     if (bookingOpen && mounted) {
-      fetch("/api/v1/booking/availability")
+      fetch(API_PATHS.bookingAvailability)
         .then((res) => res.json())
         .then((json) => {
           const unavailableDatesArray = json.data?.unavailableDates || json.unavailableDates || []

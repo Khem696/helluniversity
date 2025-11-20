@@ -150,7 +150,7 @@ export default function DepositUploadPage() {
         if (response.status === 409 || parsedError.type === 'conflict') {
           // Refresh booking data and show retry option
           try {
-            const bookingResponse = await fetch(`/api/v1/booking/response/${token}`)
+            const bookingResponse = await fetch(API_PATHS.bookingResponse(token))
             const bookingJson = await bookingResponse.json()
             if (bookingJson.success) {
               const refreshedBooking = bookingJson.data?.booking || bookingJson.booking
@@ -218,7 +218,7 @@ export default function DepositUploadPage() {
     setError(null)
 
     try {
-      const response = await fetch(`/api/v1/booking/response/${token}`, {
+      const response = await fetch(API_PATHS.bookingResponse(token), {
         method: "POST",
         headers: {
           "Content-Type": "application/json",

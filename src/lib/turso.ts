@@ -387,7 +387,7 @@ export async function initializeDatabase(options?: { cleanupOrphanedImages?: boo
       SELECT name FROM sqlite_master 
       WHERE type='table' AND name IN (
         'images', 'events', 'rate_limits', 'bookings', 
-        'booking_status_history', 'admin_actions', 'event_images', 'email_queue', 'email_sent_log', 'error_logs', 'job_queue', 'settings'
+        'booking_status_history', 'booking_fee_history', 'admin_actions', 'event_images', 'email_queue', 'email_sent_log', 'error_logs', 'job_queue', 'settings'
       )
     `)
 
@@ -539,6 +539,18 @@ export async function initializeDatabase(options?: { cleanupOrphanedImages?: boo
           proposed_end_date INTEGER,
           user_response TEXT,
           response_date INTEGER,
+          deposit_evidence_url TEXT,
+          deposit_verified_at INTEGER,
+          deposit_verified_by TEXT,
+          deposit_verified_from_other_channel INTEGER DEFAULT 0,
+          fee_amount REAL,
+          fee_amount_original REAL,
+          fee_currency TEXT,
+          fee_conversion_rate REAL,
+          fee_rate_date INTEGER,
+          fee_recorded_at INTEGER,
+          fee_recorded_by TEXT,
+          fee_notes TEXT,
           created_at INTEGER DEFAULT (unixepoch()),
           updated_at INTEGER DEFAULT (unixepoch())
         )
@@ -601,6 +613,21 @@ export async function initializeDatabase(options?: { cleanupOrphanedImages?: boo
         CREATE INDEX idx_bookings_token_expires_at ON bookings(token_expires_at)
       `)
       
+      // Fee-related indexes
+      await db.execute(`
+        CREATE INDEX idx_bookings_fee_amount ON bookings(fee_amount)
+      `)
+      await db.execute(`
+        CREATE INDEX idx_bookings_fee_currency ON bookings(fee_currency)
+      `)
+      await db.execute(`
+        CREATE INDEX idx_bookings_fee_recorded_at ON bookings(fee_recorded_at)
+      `)
+      // Composite index for filtering by status and fee
+      await db.execute(`
+        CREATE INDEX idx_bookings_status_fee ON bookings(status, fee_amount)
+      `)
+      
       // Note: reference_number already has UNIQUE constraint which creates an index automatically
       // No need for separate index on reference_number
       console.log("✓ Created bookings table")
@@ -628,6 +655,56 @@ export async function initializeDatabase(options?: { cleanupOrphanedImages?: boo
         CREATE INDEX idx_status_history_created_at ON booking_status_history(created_at)
       `)
       console.log("✓ Created booking_status_history table")
+    }
+
+    // Create booking_fee_history table for fee change audit trail
+    if (!existingTables.has("booking_fee_history")) {
+      try {
+        await db.execute(`
+          CREATE TABLE booking_fee_history (
+            id TEXT PRIMARY KEY,
+            booking_id TEXT NOT NULL,
+            old_fee_amount REAL,
+            old_fee_amount_original REAL,
+            old_fee_currency TEXT,
+            old_fee_conversion_rate REAL,
+            old_fee_rate_date INTEGER,
+            old_fee_notes TEXT,
+            new_fee_amount REAL,
+            new_fee_amount_original REAL,
+            new_fee_currency TEXT,
+            new_fee_conversion_rate REAL,
+            new_fee_rate_date INTEGER,
+            new_fee_notes TEXT,
+            changed_by TEXT NOT NULL,
+            change_reason TEXT,
+            booking_status_at_change TEXT,
+            is_restoration_change INTEGER DEFAULT 0,
+            created_at INTEGER DEFAULT (unixepoch()),
+            FOREIGN KEY (booking_id) REFERENCES bookings(id) ON DELETE CASCADE
+          )
+        `)
+        
+        await db.execute(`
+          CREATE INDEX idx_fee_history_booking_id ON booking_fee_history(booking_id)
+        `)
+        await db.execute(`
+          CREATE INDEX idx_fee_history_created_at ON booking_fee_history(created_at)
+        `)
+        await db.execute(`
+          CREATE INDEX idx_fee_history_changed_by ON booking_fee_history(changed_by)
+        `)
+        console.log("✓ Created booking_fee_history table")
+      } catch (error: any) {
+        // Table might already exist (race condition or manual creation)
+        // Check if it's a "table already exists" error
+        if (error?.message?.includes("already exists") || error?.cause?.message?.includes("already exists")) {
+          console.log("✓ booking_fee_history table already exists, skipping creation")
+        } else {
+          // Re-throw if it's a different error
+          throw error
+        }
+      }
     }
 
     // Create admin_actions table for general admin action logging
@@ -1318,6 +1395,14 @@ async function migrateExistingTables(
             deposit_verified_at INTEGER,
             deposit_verified_by TEXT,
             deposit_verified_from_other_channel INTEGER DEFAULT 0,
+            fee_amount REAL,
+            fee_amount_original REAL,
+            fee_currency TEXT,
+            fee_conversion_rate REAL,
+            fee_rate_date INTEGER,
+            fee_recorded_at INTEGER,
+            fee_recorded_by TEXT,
+            fee_notes TEXT,
             created_at INTEGER DEFAULT (unixepoch()),
             updated_at INTEGER DEFAULT (unixepoch())
           )
@@ -1330,9 +1415,10 @@ async function migrateExistingTables(
           const oldTableInfo = await db.execute(`PRAGMA table_info(bookings)`)
           const oldColumns = oldTableInfo.rows.map((row: any) => row.name)
           const hasDepositVerifiedFromOtherChannel = oldColumns.includes('deposit_verified_from_other_channel')
+          const hasFeeColumns = oldColumns.includes('fee_amount')
           
-          if (hasDepositVerifiedFromOtherChannel) {
-            // All columns exist, copy everything
+          if (hasDepositVerifiedFromOtherChannel && hasFeeColumns) {
+            // All columns exist, copy everything including fee columns
             await db.execute(`
               INSERT INTO bookings_new 
               SELECT 
@@ -1343,11 +1429,30 @@ async function migrateExistingTables(
                 proposed_date, proposed_end_date, user_response, response_date,
                 deposit_evidence_url, deposit_verified_at, deposit_verified_by,
                 deposit_verified_from_other_channel,
+                fee_amount, fee_amount_original, fee_currency, fee_conversion_rate,
+                fee_rate_date, fee_recorded_at, fee_recorded_by, fee_notes,
                 created_at, updated_at
               FROM bookings
             `)
-          } else {
-            // Missing deposit_verified_from_other_channel column, use default value
+          } else if (hasDepositVerifiedFromOtherChannel) {
+            // Has deposit_verified_from_other_channel but missing fee columns
+            await db.execute(`
+              INSERT INTO bookings_new 
+              SELECT 
+                id, reference_number, name, email, phone, participants, event_type, other_event_type,
+                date_range, start_date, end_date, start_time, end_time,
+                organization_type, organized_person, introduction, biography, special_requests,
+                status, admin_notes, response_token, token_expires_at,
+                proposed_date, proposed_end_date, user_response, response_date,
+                deposit_evidence_url, deposit_verified_at, deposit_verified_by,
+                deposit_verified_from_other_channel,
+                NULL as fee_amount, NULL as fee_amount_original, NULL as fee_currency, NULL as fee_conversion_rate,
+                NULL as fee_rate_date, NULL as fee_recorded_at, NULL as fee_recorded_by, NULL as fee_notes,
+                created_at, updated_at
+              FROM bookings
+            `)
+          } else if (hasFeeColumns) {
+            // Has fee columns but missing deposit_verified_from_other_channel
             await db.execute(`
               INSERT INTO bookings_new 
               SELECT 
@@ -1358,6 +1463,25 @@ async function migrateExistingTables(
                 proposed_date, proposed_end_date, user_response, response_date,
                 deposit_evidence_url, deposit_verified_at, deposit_verified_by,
                 0 as deposit_verified_from_other_channel,
+                fee_amount, fee_amount_original, fee_currency, fee_conversion_rate,
+                fee_rate_date, fee_recorded_at, fee_recorded_by, fee_notes,
+                created_at, updated_at
+              FROM bookings
+            `)
+          } else {
+            // Missing both deposit_verified_from_other_channel and fee columns
+            await db.execute(`
+              INSERT INTO bookings_new 
+              SELECT 
+                id, reference_number, name, email, phone, participants, event_type, other_event_type,
+                date_range, start_date, end_date, start_time, end_time,
+                organization_type, organized_person, introduction, biography, special_requests,
+                status, admin_notes, response_token, token_expires_at,
+                proposed_date, proposed_end_date, user_response, response_date,
+                deposit_evidence_url, deposit_verified_at, deposit_verified_by,
+                0 as deposit_verified_from_other_channel,
+                NULL as fee_amount, NULL as fee_amount_original, NULL as fee_currency, NULL as fee_conversion_rate,
+                NULL as fee_rate_date, NULL as fee_recorded_at, NULL as fee_recorded_by, NULL as fee_notes,
                 created_at, updated_at
               FROM bookings
             `)
@@ -1507,6 +1631,63 @@ async function migrateExistingTables(
           ALTER TABLE bookings ADD COLUMN deposit_verified_from_other_channel INTEGER DEFAULT 0
         `)
         console.log("✓ Added deposit_verified_from_other_channel column to bookings table")
+      }
+
+      // Add fee-related fields
+      if (!columnNames.has("fee_amount")) {
+        await db.execute(`
+          ALTER TABLE bookings ADD COLUMN fee_amount REAL
+        `)
+        console.log("✓ Added fee_amount column to bookings table")
+      }
+
+      if (!columnNames.has("fee_amount_original")) {
+        await db.execute(`
+          ALTER TABLE bookings ADD COLUMN fee_amount_original REAL
+        `)
+        console.log("✓ Added fee_amount_original column to bookings table")
+      }
+
+      if (!columnNames.has("fee_currency")) {
+        await db.execute(`
+          ALTER TABLE bookings ADD COLUMN fee_currency TEXT
+        `)
+        console.log("✓ Added fee_currency column to bookings table")
+      }
+
+      if (!columnNames.has("fee_conversion_rate")) {
+        await db.execute(`
+          ALTER TABLE bookings ADD COLUMN fee_conversion_rate REAL
+        `)
+        console.log("✓ Added fee_conversion_rate column to bookings table")
+      }
+
+      if (!columnNames.has("fee_rate_date")) {
+        await db.execute(`
+          ALTER TABLE bookings ADD COLUMN fee_rate_date INTEGER
+        `)
+        console.log("✓ Added fee_rate_date column to bookings table")
+      }
+
+      if (!columnNames.has("fee_recorded_at")) {
+        await db.execute(`
+          ALTER TABLE bookings ADD COLUMN fee_recorded_at INTEGER
+        `)
+        console.log("✓ Added fee_recorded_at column to bookings table")
+      }
+
+      if (!columnNames.has("fee_recorded_by")) {
+        await db.execute(`
+          ALTER TABLE bookings ADD COLUMN fee_recorded_by TEXT
+        `)
+        console.log("✓ Added fee_recorded_by column to bookings table")
+      }
+
+      if (!columnNames.has("fee_notes")) {
+        await db.execute(`
+          ALTER TABLE bookings ADD COLUMN fee_notes TEXT
+        `)
+        console.log("✓ Added fee_notes column to bookings table")
       }
 
       // Add reference_number column for short booking IDs
@@ -1716,6 +1897,42 @@ async function migrateExistingTables(
       if (!emailQueueIndexNames.has("idx_email_queue_status_type_created")) {
         await db.execute(`CREATE INDEX IF NOT EXISTS idx_email_queue_status_type_created ON email_queue(status, email_type, created_at)`)
         console.log("✓ Added idx_email_queue_status_type_created index")
+      }
+    }
+
+    // Migrate booking_fee_history table: verify structure matches expected
+    if (existingTables.has("booking_fee_history")) {
+      const feeHistoryColumns = await db.execute(`
+        PRAGMA table_info(booking_fee_history)
+      `)
+      const feeHistoryColumnNames = new Set(
+        feeHistoryColumns.rows.map((row: any) => row.name)
+      )
+      
+      // Expected columns (19 total)
+      const expectedColumns = [
+        'id', 'booking_id',
+        'old_fee_amount', 'old_fee_amount_original', 'old_fee_currency',
+        'old_fee_conversion_rate', 'old_fee_rate_date', 'old_fee_notes',
+        'new_fee_amount', 'new_fee_amount_original', 'new_fee_currency',
+        'new_fee_conversion_rate', 'new_fee_rate_date', 'new_fee_notes',
+        'changed_by', 'change_reason', 'booking_status_at_change',
+        'is_restoration_change', 'created_at'
+      ]
+      
+      const missingColumns = expectedColumns.filter(col => !feeHistoryColumnNames.has(col))
+      const extraColumns = Array.from(feeHistoryColumnNames).filter(col => !expectedColumns.includes(col))
+      
+      if (missingColumns.length > 0 || extraColumns.length > 0 || feeHistoryColumnNames.size !== 19) {
+        console.warn(`⚠️ booking_fee_history table structure mismatch. Expected 19 columns, found ${feeHistoryColumnNames.size}`)
+        if (missingColumns.length > 0) {
+          console.warn(`   Missing columns: ${missingColumns.join(', ')}`)
+        }
+        if (extraColumns.length > 0) {
+          console.warn(`   Extra columns: ${extraColumns.join(', ')}`)
+        }
+        console.warn(`   Current columns: ${Array.from(feeHistoryColumnNames).join(', ')}`)
+        console.warn(`   ⚠️ Table structure doesn't match expected. Please recreate the table or fix manually.`)
       }
     }
 

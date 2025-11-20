@@ -53,6 +53,11 @@ export const GET = withVersioning(async (request: Request) => {
       | "cancelled"
       | "finished"
       | null
+    // Support multiple status filters (for advanced filtering)
+    const statusesParam = searchParams.get("statuses")
+    const statuses = statusesParam 
+      ? (statusesParam.split(',').filter(s => s.trim()) as Array<"pending" | "pending_deposit" | "paid_deposit" | "confirmed" | "cancelled" | "finished">)
+      : undefined
     // CRITICAL: Validate and clamp limit/offset to prevent DoS
     const rawLimit = parseInt(searchParams.get("limit") || "50")
     const rawOffset = parseInt(searchParams.get("offset") || "0")
@@ -92,8 +97,8 @@ export const GET = withVersioning(async (request: Request) => {
     
     const result = await listBookings({
       status: status || undefined,
-      statuses: archive ? ["finished", "cancelled"] : undefined,
-      excludeArchived: !archive, // Exclude archived when not requesting archive
+      statuses: statuses || (archive ? ["finished", "cancelled"] : undefined),
+      excludeArchived: !archive && !statuses, // Exclude archived when not requesting archive and no statuses filter
       limit,
       offset,
       email,
@@ -148,6 +153,15 @@ export const GET = withVersioning(async (request: Request) => {
       deposit_verified_by: booking.depositVerifiedBy,
       // Preserve boolean value correctly - use explicit check to avoid undefined -> false conversion
       deposit_verified_from_other_channel: booking.depositVerifiedFromOtherChannel === true,
+      // CRITICAL: Include all fee fields
+      fee_amount: booking.feeAmount ?? null,
+      fee_amount_original: booking.feeAmountOriginal ?? null,
+      fee_currency: booking.feeCurrency || null,
+      fee_conversion_rate: booking.feeConversionRate ?? null,
+      fee_rate_date: booking.feeRateDate ?? null,
+      fee_recorded_at: booking.feeRecordedAt ?? null,
+      fee_recorded_by: booking.feeRecordedBy || null,
+      fee_notes: booking.feeNotes || null,
       created_at: booking.createdAt,
       updated_at: booking.updatedAt,
     }))

@@ -1,7 +1,7 @@
 "use client"
 
 import React from 'react'
-import { useInfiniteQuery, useQueryClient } from '@tanstack/react-query'
+import { useInfiniteQuery, useQueryClient, InfiniteData } from '@tanstack/react-query'
 import { API_PATHS, buildApiUrl } from '@/lib/api-config'
 import { Booking } from './useAdminBookings'
 
@@ -18,7 +18,8 @@ interface UseInfiniteAdminBookingsOptions {
 interface UseInfiniteAdminBookingsReturn {
   bookings: Booking[]
   total: number
-  loading: boolean
+  loading: boolean // Only true on initial load (no data yet)
+  isFetching: boolean // True when fetching (including refetches with existing data)
   error: Error | null
   hasMore: boolean
   loadMore: () => Promise<void>
@@ -47,6 +48,9 @@ export function useInfiniteAdminBookings(
     return isDialogOpen === true
   }, [isDialogOpen])
 
+  // Keep track of previous data across query key changes
+  const previousDataRef = React.useRef<{ pages: Array<{ bookings: Booking[]; total: number }>; pageParams: number[] } | undefined>(undefined)
+
   const {
     data,
     isLoading,
@@ -55,7 +59,8 @@ export function useInfiniteAdminBookings(
     hasNextPage,
     refetch: refetchQuery,
     isFetchingNextPage,
-  } = useInfiniteQuery<{ bookings: Booking[]; total: number }>({
+    isFetching,
+  } = useInfiniteQuery<{ bookings: Booking[]; total: number }, Error, InfiniteData<{ bookings: Booking[]; total: number }, number>, string[], number>({
     queryKey: ['infiniteAdminBookings', baseEndpoint],
     initialPageParam: 0,
     queryFn: async ({ pageParam }) => {
@@ -74,6 +79,24 @@ export function useInfiniteAdminBookings(
       const bookings = json.data?.bookings || json.bookings || []
       const total = json.data?.pagination?.total || json.data?.total || 0
       
+      // Debug logging (remove in production if needed)
+      if (process.env.NODE_ENV === 'development' && bookings.length > 0) {
+        console.log('[useInfiniteAdminBookings] Received bookings:', {
+          count: bookings.length,
+          sampleBooking: {
+            id: bookings[0].id,
+            reference_number: bookings[0].reference_number,
+            fee_amount: bookings[0].fee_amount,
+            feeAmount: bookings[0].feeAmount,
+            fee_currency: bookings[0].fee_currency,
+            feeCurrency: bookings[0].feeCurrency,
+            hasFee: !!(bookings[0].fee_amount || bookings[0].feeAmount),
+            bookingKeys: Object.keys(bookings[0]).filter(k => k.toLowerCase().includes('fee')),
+          },
+          bookingsWithFee: bookings.filter((b: any) => (b.fee_amount || b.feeAmount) && Number(b.fee_amount || b.feeAmount) > 0).length,
+        })
+      }
+      
       return { bookings, total }
     },
     getNextPageParam: (lastPage, allPages) => {
@@ -88,21 +111,48 @@ export function useInfiniteAdminBookings(
       if (checkDialogOpen()) {
         return false
       }
+      // Only refetch if data is stale (older than staleTime)
+      const dataUpdatedAt = query.state.dataUpdatedAt
+      if (dataUpdatedAt && Date.now() - dataUpdatedAt < 30000) {
+        // Data is fresh (less than 30 seconds old), don't refetch yet
+        return false
+      }
       return refetchInterval
     },
     refetchIntervalInBackground: false,
-    refetchOnWindowFocus: true,
+    refetchOnWindowFocus: false, // Disable to prevent excessive refetches
     refetchOnReconnect: true,
-    staleTime: 10000,
+    staleTime: 60000, // Increase staleTime to 60 seconds to reduce refetch frequency
     gcTime: 5 * 60 * 1000,
     enabled: enabled && !checkDialogOpen(),
     retry: 2,
     retryDelay: (attemptIndex) => Math.min(1000 * 2 ** attemptIndex, 30000),
+    // Keep previous data while fetching new data to prevent list from disappearing
+    // When query key changes, use the ref to maintain previous data across different query keys
+    placeholderData: (previousData) => {
+      // If we have previousData for the same query, use it
+      if (previousData) {
+        return previousData
+      }
+      // If query key changed (no previousData), use the ref to keep showing last known data
+      if (previousDataRef.current) {
+        return previousDataRef.current
+      }
+      // No data available
+      return undefined
+    },
   })
+
+  // Update ref when data changes (so we can use it for next query key change)
+  React.useEffect(() => {
+    if (data) {
+      previousDataRef.current = data
+    }
+  }, [data])
 
   // Flatten all pages into single array
   const bookings = React.useMemo(() => {
-    return data?.pages.flatMap(page => page.bookings) || []
+    return data?.pages.flatMap((page: { bookings: Booking[]; total: number }) => page.bookings) || []
   }, [data])
 
   // Get total from first page (should be consistent)
@@ -178,7 +228,8 @@ export function useInfiniteAdminBookings(
   return {
     bookings,
     total,
-    loading: isLoading,
+    loading: isLoading, // Only true on initial load, not when refetching
+    isFetching, // True when fetching new data (including refetches)
     error: error as Error | null,
     hasMore: hasNextPage || false,
     loadMore,

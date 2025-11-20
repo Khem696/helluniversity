@@ -55,6 +55,7 @@ import { dateToBangkokDateString } from "@/lib/timezone-client"
 import { API_PATHS, buildApiUrl } from "@/lib/api-config"
 import { useInfiniteAdminBookings, type Booking as BookingType } from "@/hooks/useInfiniteAdminBookings"
 import { useInfiniteScroll } from "@/hooks/useInfiniteScroll"
+import { SearchInputWithHistory } from "@/components/admin/SearchInputWithHistory"
 
 // Helper function to add AM/PM to 24-hour time format for display
 // Converts "13:00" -> "13:00 PM", "09:30" -> "09:30 AM", "00:00" -> "00:00 AM"
@@ -101,6 +102,11 @@ export default function BookingsArchivePage() {
   const [referenceNumberFilter, setReferenceNumberFilter] = useState("")
   const [nameFilter, setNameFilter] = useState("")
   const [phoneFilter, setPhoneFilter] = useState("")
+  // Debounced search filters (used in API calls)
+  const [debouncedEmailFilter, setDebouncedEmailFilter] = useState("")
+  const [debouncedReferenceNumberFilter, setDebouncedReferenceNumberFilter] = useState("")
+  const [debouncedNameFilter, setDebouncedNameFilter] = useState("")
+  const [debouncedPhoneFilter, setDebouncedPhoneFilter] = useState("")
   const [eventTypeFilter, setEventTypeFilter] = useState<string>("all")
   const [depositStatusFilter, setDepositStatusFilter] = useState<string>("all")
   const [sortBy, setSortBy] = useState<"created_at" | "start_date" | "name" | "updated_at">("created_at")
@@ -184,24 +190,59 @@ export default function BookingsArchivePage() {
     { value: "Other", label: "Other" },
   ]
 
+  // Search handlers - trigger search immediately on Enter key
+  const handleReferenceNumberSearch = (value: string) => {
+    setDebouncedReferenceNumberFilter(value)
+  }
+
+  // Debounced search handlers - trigger search automatically while typing
+  const handleReferenceNumberDebouncedSearch = (value: string) => {
+    setDebouncedReferenceNumberFilter(value)
+  }
+
+  const handleEmailSearch = (value: string) => {
+    setDebouncedEmailFilter(value)
+  }
+
+  const handleEmailDebouncedSearch = (value: string) => {
+    setDebouncedEmailFilter(value)
+  }
+
+  const handleNameSearch = (value: string) => {
+    setDebouncedNameFilter(value)
+  }
+
+  const handleNameDebouncedSearch = (value: string) => {
+    setDebouncedNameFilter(value)
+  }
+
+  const handlePhoneSearch = (value: string) => {
+    setDebouncedPhoneFilter(value)
+  }
+
+  const handlePhoneDebouncedSearch = (value: string) => {
+    setDebouncedPhoneFilter(value)
+  }
+
   // Build base endpoint with filters (without limit/offset for infinite scroll)
+  // Use debounced values for search inputs to prevent refetch on every keystroke
   const baseEndpoint = useMemo(() => {
     const params = new URLSearchParams()
     params.append("archive", "true") // Request archive bookings
     if (statusFilter !== "all") {
       params.append("status", statusFilter)
     }
-    if (emailFilter) {
-      params.append("email", emailFilter)
+    if (debouncedEmailFilter) {
+      params.append("email", debouncedEmailFilter)
     }
-    if (referenceNumberFilter) {
-      params.append("referenceNumber", referenceNumberFilter)
+    if (debouncedReferenceNumberFilter) {
+      params.append("referenceNumber", debouncedReferenceNumberFilter)
     }
-    if (nameFilter) {
-      params.append("name", nameFilter)
+    if (debouncedNameFilter) {
+      params.append("name", debouncedNameFilter)
     }
-    if (phoneFilter) {
-      params.append("phone", phoneFilter)
+    if (debouncedPhoneFilter) {
+      params.append("phone", debouncedPhoneFilter)
     }
     if (eventTypeFilter !== "all") {
       params.append("eventType", eventTypeFilter)
@@ -209,13 +250,14 @@ export default function BookingsArchivePage() {
     params.append("sortBy", sortBy)
     params.append("sortOrder", sortOrder)
     return buildApiUrl(API_PATHS.adminBookings, Object.fromEntries(params))
-  }, [statusFilter, emailFilter, referenceNumberFilter, nameFilter, phoneFilter, eventTypeFilter, sortBy, sortOrder])
+  }, [statusFilter, debouncedEmailFilter, debouncedReferenceNumberFilter, debouncedNameFilter, debouncedPhoneFilter, eventTypeFilter, sortBy, sortOrder])
   
   // Use infinite scroll hook for bookings
   const {
     bookings,
     total,
     loading,
+    isFetching,
     hasMore,
     loadMore,
     refetch: fetchBookings,
@@ -225,7 +267,7 @@ export default function BookingsArchivePage() {
   } = useInfiniteAdminBookings({
     baseEndpoint,
     pageSize,
-    refetchInterval: 30000,
+    refetchInterval: 60000, // Increase to 60 seconds to reduce request frequency
     enabled: !!session,
     isDialogOpen: () => viewDialogOpen || statusDialogOpen,
   })
@@ -967,7 +1009,9 @@ export default function BookingsArchivePage() {
     }
   }
 
-  if (status === "loading" || loading) {
+  // Only show full-page loading on initial load (when there's no data yet)
+  // When refetching with existing data, show content with a subtle loading indicator
+  if (status === "loading" || (loading && bookings.length === 0)) {
     return (
       <div className="max-w-[1600px] mx-auto px-4 sm:px-6 lg:px-8 py-6 sm:py-8 lg:py-12">
         <div className="flex items-center justify-center h-64">
@@ -1046,30 +1090,50 @@ export default function BookingsArchivePage() {
         </div>
         {/* Second Row: Search Fields */}
         <div className="flex flex-col sm:flex-row gap-4">
-          <Input
-            placeholder="Search by reference number..."
-            value={referenceNumberFilter}
-            onChange={(e) => setReferenceNumberFilter(e.target.value)}
-            className="w-full sm:w-48"
-          />
-          <Input
-            placeholder="Search by name..."
-            value={nameFilter}
-            onChange={(e) => setNameFilter(e.target.value)}
-            className="w-full sm:w-48"
-          />
-          <Input
-            placeholder="Search by phone..."
-            value={phoneFilter}
-            onChange={(e) => setPhoneFilter(e.target.value)}
-            className="w-full sm:w-48"
-          />
-          <Input
-            placeholder="Filter by email..."
-            value={emailFilter}
-            onChange={(e) => setEmailFilter(e.target.value)}
-            className="w-full sm:w-64"
-          />
+          <div className="w-full sm:w-48">
+            <SearchInputWithHistory
+              value={referenceNumberFilter}
+              onChange={setReferenceNumberFilter}
+              onSearch={handleReferenceNumberSearch}
+              debouncedOnSearch={handleReferenceNumberDebouncedSearch}
+              placeholder="Search reference number..."
+              storageKey="archive-search-ref"
+              className="w-full"
+            />
+          </div>
+          <div className="w-full sm:w-48">
+            <SearchInputWithHistory
+              value={nameFilter}
+              onChange={setNameFilter}
+              onSearch={handleNameSearch}
+              debouncedOnSearch={handleNameDebouncedSearch}
+              placeholder="Search name..."
+              storageKey="archive-search-name"
+              className="w-full"
+            />
+          </div>
+          <div className="w-full sm:w-48">
+            <SearchInputWithHistory
+              value={phoneFilter}
+              onChange={setPhoneFilter}
+              onSearch={handlePhoneSearch}
+              debouncedOnSearch={handlePhoneDebouncedSearch}
+              placeholder="Search phone..."
+              storageKey="archive-search-phone"
+              className="w-full"
+            />
+          </div>
+          <div className="w-full sm:w-64">
+            <SearchInputWithHistory
+              value={emailFilter}
+              onChange={setEmailFilter}
+              onSearch={handleEmailSearch}
+              debouncedOnSearch={handleEmailDebouncedSearch}
+              placeholder="Search email..."
+              storageKey="archive-search-email"
+              className="w-full"
+            />
+          </div>
         </div>
         {/* Third Row: Deposit Status Filter */}
         <div className="flex flex-col sm:flex-row gap-4">

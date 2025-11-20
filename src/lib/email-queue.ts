@@ -671,6 +671,7 @@ export async function processCriticalStatusEmails(limit: number = 20): Promise<{
 export async function getEmailQueueItems(options?: {
   status?: EmailQueueItem["status"]
   emailType?: EmailQueueItem["emailType"]
+  bookingReference?: string // Search for booking reference in metadata
   limit?: number
   offset?: number
 }): Promise<{ items: EmailQueueItem[]; total: number }> {
@@ -693,6 +694,21 @@ export async function getEmailQueueItems(options?: {
   if (options?.emailType) {
     sql += " AND email_type = ?"
     args.push(options.emailType)
+  }
+  
+  // Search for booking reference in metadata JSON
+  // Metadata can contain bookingId or booking reference number
+  // We search in the JSON string for the reference pattern
+  if (options?.bookingReference) {
+    const refLower = options.bookingReference.toLowerCase().trim()
+    if (refLower) {
+      // Search for booking reference in metadata JSON
+      // Pattern: looks for "bookingId" or "referenceNumber" fields containing the search term
+      // Use LIKE with escaped pattern to search in JSON string
+      const escapedRef = refLower.replace(/%/g, '\\%').replace(/_/g, '\\_')
+      sql += " AND (metadata LIKE ? OR metadata LIKE ? OR subject LIKE ?)"
+      args.push(`%"bookingId":"%${escapedRef}%`, `%"referenceNumber":"%${escapedRef}%`, `%[${escapedRef}%`)
+    }
   }
   
   // Get total count (uses same indexes for filtering)
