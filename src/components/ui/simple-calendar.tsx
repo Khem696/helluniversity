@@ -153,18 +153,8 @@ export function SimpleCalendar({
             
             // Build tooltip text with specific messages for different disable reasons
             let tooltipText: string | undefined = undefined;
-            if (isOccupiedDate && dateTimeRanges.length > 0) {
-              // Occupied with time ranges
-              const timeInfo = dateTimeRanges
-                .map((range) => {
-                  const start = range.startTime || "All day";
-                  const end = range.endTime || "All day";
-                  return start === end ? start : `${start} - ${end}`;
-                })
-                .join(", ");
-              tooltipText = `This date is occupied: ${timeInfo}`;
-            } else if (isOccupiedDate) {
-              // Occupied without time ranges
+            if (isOccupiedDate) {
+              // Occupied date (time ranges not shown in tooltip)
               tooltipText = "This date is occupied";
             } else if (isDisabled) {
               // Determine specific reason for disabled date
