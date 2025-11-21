@@ -33,20 +33,32 @@ import { getApiVersion, normalizeVersion, addVersionHeaders } from './api-versio
 export function withVersioning<T = any>(
   handler: (request: NextRequest) => Promise<NextResponse<T>>
 ): (request: NextRequest) => Promise<NextResponse<T>>
+export function withVersioning<T = any>(
+  handler: (request: Request) => Promise<NextResponse<T>>
+): (request: Request) => Promise<NextResponse<T>>
 export function withVersioning<T = any, P extends Record<string, string> = Record<string, string>>(
   handler: (request: Request, context: { params: Promise<P> }) => Promise<NextResponse<T>>
 ): (request: Request, context: { params: Promise<P> }) => Promise<NextResponse<T>>
 export function withVersioning<T = any>(
-  handler: ((request: NextRequest) => Promise<NextResponse<T>>) | ((request: Request, context: { params: Promise<any> }) => Promise<NextResponse<T>>)
+  handler: ((request: NextRequest) => Promise<NextResponse<T>>) | ((request: Request) => Promise<NextResponse<T>>) | ((request: Request, context: { params: Promise<any> }) => Promise<NextResponse<T>>)
 ): any {
   return async (request: NextRequest | Request, context?: { params: Promise<any> }): Promise<NextResponse<T>> => {
     // Detect API version from request
     const version = normalizeVersion(getApiVersion(request))
     
     // Call the original handler
-    const response = context 
-      ? await (handler as (request: Request, context: { params: Promise<any> }) => Promise<NextResponse<T>>)(request as Request, context)
-      : await (handler as (request: NextRequest) => Promise<NextResponse<T>>)(request as NextRequest)
+    // Handle three cases: NextRequest handler, Request handler, or Request with params handler
+    let response: NextResponse<T>
+    if (context) {
+      // Handler with params (Request + context)
+      response = await (handler as (request: Request, context: { params: Promise<any> }) => Promise<NextResponse<T>>)(request as Request, context)
+    } else if (request instanceof Request && !(request instanceof NextRequest)) {
+      // Plain Request handler (App Router route handlers receive Request)
+      response = await (handler as (request: Request) => Promise<NextResponse<T>>)(request as Request)
+    } else {
+      // NextRequest handler (for middleware compatibility)
+      response = await (handler as (request: NextRequest) => Promise<NextResponse<T>>)(request as NextRequest)
+    }
     
     // Add version headers to response
     // Type assertion needed because addVersionHeaders preserves the response type

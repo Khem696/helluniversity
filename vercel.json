@@ -13,6 +13,10 @@
   },
   "crons": [
     {
+      "path": "/api/v1/cron/health",
+      "schedule": "*/2 * * * *"
+    },
+    {
       "path": "/api/v1/cron/test",
       "schedule": "*/5 * * * *"
     },
