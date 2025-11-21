@@ -148,6 +148,7 @@ export default function BookingsPage() {
   const [nameFilter, setNameFilter] = useState("")
   const [phoneFilter, setPhoneFilter] = useState("")
   const [eventTypeFilter, setEventTypeFilter] = useState<string>("all")
+  const [depositStatusFilter, setDepositStatusFilter] = useState<string>("all")
   
   // Debounced filter values for API calls (prevents refetch on every keystroke)
   const [debouncedEmailFilter, setDebouncedEmailFilter] = useState("")
@@ -379,6 +380,34 @@ export default function BookingsPage() {
     threshold: 200,
     enabled: !!session && !viewDialogOpen && !statusDialogOpen,
   })
+
+  // Client-side filtering for deposit status (since API doesn't support it)
+  // Note: This works with infinite scroll but may show fewer items per "page"
+  // since filtering happens after loading
+  const filteredBookings = useMemo(() => {
+    if (depositStatusFilter === "all") {
+      return bookings
+    }
+    return bookings.filter((booking) => {
+      switch (depositStatusFilter) {
+        case "no_deposit":
+          return !booking.deposit_evidence_url && !booking.deposit_verified_at
+        case "deposit_available":
+          return booking.deposit_evidence_url && !booking.deposit_verified_at
+        case "deposit_verified":
+          return booking.deposit_evidence_url && booking.deposit_verified_at
+        case "deposit_verified_other_channel":
+          return !booking.deposit_evidence_url && booking.deposit_verified_at && booking.deposit_verified_from_other_channel
+        default:
+          return true
+      }
+    })
+  }, [bookings, depositStatusFilter])
+  
+  // When deposit filter is active, we still load more but filter client-side
+  // This means hasMore might be true even if filtered results are empty
+  const displayTotal = depositStatusFilter === "all" ? total : filteredBookings.length
+  const displayHasMore = depositStatusFilter === "all" ? hasMore : (filteredBookings.length < bookings.length || hasMore)
   
   // Initialize booking actions hook
   const {
@@ -1577,6 +1606,8 @@ export default function BookingsPage() {
         sortOrder={sortOrder}
         onSortOrderChange={setSortOrder}
         eventTypes={eventTypes}
+        depositStatusFilter={depositStatusFilter}
+        onDepositStatusFilterChange={setDepositStatusFilter}
         onClearAll={() => {
           setStatusFilter("all")
           setStatusFilters([])
@@ -1590,6 +1621,7 @@ export default function BookingsPage() {
           setDebouncedNameFilter("")
           setDebouncedPhoneFilter("")
           setEventTypeFilter("all")
+          setDepositStatusFilter("all")
           setShowOverlappingOnly(false)
           setStartDateFrom("")
           setStartDateTo("")
@@ -1600,7 +1632,8 @@ export default function BookingsPage() {
           statusFilters.length > 0 || 
           debouncedEmailFilter || 
           debouncedReferenceNumberFilter || 
-          debouncedNameFilter || 
+          debouncedNameFilter ||
+          depositStatusFilter !== "all" || 
           debouncedPhoneFilter || 
           eventTypeFilter !== "all" || 
           showOverlappingOnly ||
@@ -1611,10 +1644,10 @@ export default function BookingsPage() {
       {/* Results Count */}
       {!loading && (
         <div className="mb-4 text-sm text-gray-600">
-          {total > 0 ? (
+          {displayTotal > 0 ? (
             <>
-              Showing <span className="font-medium">{bookings.length}</span> of <span className="font-medium">{total}</span> booking{total !== 1 ? 's' : ''}
-              {(statusFilter !== "all" || statusFilters.length > 0 || debouncedEmailFilter || debouncedReferenceNumberFilter || debouncedNameFilter || debouncedPhoneFilter || eventTypeFilter !== "all" || showOverlappingOnly || (useDateRange && (startDateFrom || startDateTo))) && (
+              Showing <span className="font-medium">{filteredBookings.length}</span> of <span className="font-medium">{displayTotal}</span> booking{displayTotal !== 1 ? 's' : ''}
+              {(statusFilter !== "all" || statusFilters.length > 0 || debouncedEmailFilter || debouncedReferenceNumberFilter || debouncedNameFilter || debouncedPhoneFilter || eventTypeFilter !== "all" || depositStatusFilter !== "all" || showOverlappingOnly || (useDateRange && (startDateFrom || startDateTo))) && (
                 <span className="ml-2 text-gray-500">(filtered)</span>
               )}
             </>
@@ -1626,10 +1659,10 @@ export default function BookingsPage() {
 
       {/* Bookings Table */}
       <BookingTable
-        bookings={bookings}
-        total={total}
+        bookings={filteredBookings}
+        total={displayTotal}
         loading={loading}
-        hasMore={hasMore}
+        hasMore={displayHasMore}
         pageSize={pageSize}
         onPageSizeChange={(size) => {
           setPageSize(size)

@@ -46,6 +46,8 @@ interface AdvancedBookingFiltersProps {
   onEventTypeFilterChange: (value: string) => void
   showOverlappingOnly: boolean
   onShowOverlappingOnlyChange: (value: boolean) => void
+  depositStatusFilter?: string
+  onDepositStatusFilterChange?: (value: string) => void
   
   // Date range filters
   startDateFrom: string
@@ -103,6 +105,8 @@ export function AdvancedBookingFilters({
   onEventTypeFilterChange,
   showOverlappingOnly,
   onShowOverlappingOnlyChange,
+  depositStatusFilter,
+  onDepositStatusFilterChange,
   startDateFrom,
   onStartDateFromChange,
   startDateTo,
@@ -427,6 +431,24 @@ export function AdvancedBookingFilters({
           </Label>
         </div>
       </div>
+
+      {/* Third Row: Deposit Status Filter */}
+      {depositStatusFilter !== undefined && onDepositStatusFilterChange && (
+        <div className="flex flex-col sm:flex-row gap-4">
+          <Select value={depositStatusFilter} onValueChange={onDepositStatusFilterChange}>
+            <SelectTrigger className="w-full sm:w-48">
+              <SelectValue placeholder="Filter by deposit status" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All Deposit Statuses</SelectItem>
+              <SelectItem value="no_deposit">No deposit</SelectItem>
+              <SelectItem value="deposit_available">Deposit Available</SelectItem>
+              <SelectItem value="deposit_verified">Deposit Verified</SelectItem>
+              <SelectItem value="deposit_verified_other_channel">Deposit Verified from Other Channels</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
+      )}
 
       {/* Clear All Filters */}
       {hasActiveFilters && (
