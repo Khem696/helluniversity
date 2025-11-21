@@ -202,9 +202,19 @@ export const POST = withVersioning(async (request: Request): Promise<NextRespons
     // Check if verification was successful
     if (!recaptchaData.success) {
       await logger.warn('reCAPTCHA verification failed', { errorCodes: recaptchaData["error-codes"] || [] })
+      
+      // Check for specific error codes that indicate expired token
+      const errorCodes = recaptchaData["error-codes"] || []
+      const isExpired = errorCodes.includes('timeout-or-duplicate') || 
+                       errorCodes.includes('invalid-input-response')
+      
+      const errorMessage = isExpired 
+        ? 'CAPTCHA verification expired. Please verify again and resubmit.'
+        : 'CAPTCHA verification failed. Please complete the CAPTCHA verification again.'
+      
       return validationErrorResponse(
-        ['reCAPTCHA verification failed'],
-        { requestId, errorCodes: recaptchaData["error-codes"] || [] }
+        [errorMessage],
+        { requestId, errorCodes }
       )
     }
 

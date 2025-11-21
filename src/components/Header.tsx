@@ -383,13 +383,27 @@ export function Header() {
   }
 
   function handleRecaptchaExpire() {
-    // Don't show error if form is submitting or modal is closing
-    // This prevents error messages after successful submission
-    if (isSubmitting || !bookingOpen) {
-      return
-    }
+    // CRITICAL: Always reset captcha state when it expires, even during submission
+    // This prevents submitting with expired tokens
     setRecaptchaToken(null)
     setIsRecaptchaVerified(false)
+    
+    // If form is submitting, stop the submission and show error
+    if (isSubmitting) {
+      setIsSubmitting(false)
+      setError({
+        type: "recaptcha",
+        message: "CAPTCHA verification expired during submission. Please verify again and resubmit.",
+        retryable: true
+      })
+      return
+    }
+    
+    // Don't show error if modal is closing (prevents error messages after successful submission)
+    if (!bookingOpen) {
+      return
+    }
+    
     setError({
       type: "recaptcha",
       message: "CAPTCHA verification expired. Please verify again to continue.",
@@ -595,6 +609,17 @@ export function Header() {
       console.warn("Failed to verify booking status before submission:", statusError)
     }
     
+    // CRITICAL: Final captcha validation check right before submission
+    // This prevents race condition where captcha expires between initial check and API call
+    if (!isRecaptchaVerified || !recaptchaToken) {
+      setError({
+        type: "recaptcha",
+        message: "CAPTCHA verification expired. Please verify again to continue.",
+        retryable: true
+      })
+      return
+    }
+    
     setIsSubmitting(true)
     
     try {
@@ -718,6 +743,17 @@ export function Header() {
             console.log('API Error Response (400):', JSON.stringify(data, null, 2))
           }
           const errorMsg = getErrorMessage(data.error, "Invalid request. Please check your input and try again.")
+          
+          // CRITICAL: If captcha validation failed, reset captcha state
+          if (errorMsg.toLowerCase().includes('captcha') || errorMsg.toLowerCase().includes('recaptcha')) {
+            setRecaptchaToken(null)
+            setIsRecaptchaVerified(false)
+            // Force reCAPTCHA to re-render by incrementing key
+            if (recaptchaKeyRef.current !== undefined) {
+              recaptchaKeyRef.current += 1
+            }
+          }
+          
           throw new Error(errorMsg)
         } else if (response.status === 401 || response.status === 403) {
           throw new Error("Authentication failed. Please refresh the page and try again.")
@@ -839,6 +875,19 @@ export function Header() {
       
     } catch (error: any) {
       console.error("Booking submission error:", error)
+      
+      // CRITICAL: If error is related to captcha, reset captcha state
+      const errorMsg = error?.message || String(error) || ""
+      if (errorMsg.toLowerCase().includes('captcha') || 
+          errorMsg.toLowerCase().includes('recaptcha') ||
+          errorMsg.toLowerCase().includes('verification')) {
+        setRecaptchaToken(null)
+        setIsRecaptchaVerified(false)
+        // Force reCAPTCHA to re-render by incrementing key
+        if (recaptchaKeyRef.current !== undefined) {
+          recaptchaKeyRef.current += 1
+        }
+      }
       
       // Track booking error with funnel step
       const errorTypeForTracking = error.name === "AbortError" ? "timeout" : 

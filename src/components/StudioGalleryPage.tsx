@@ -243,6 +243,12 @@ export function StudioGalleryPage() {
   }, [galleryImages.length, galleryCurrent]);
 
   const [viewerOpen, setViewerOpen] = useState(false);
+  
+  // Notify breadcrumb component when viewer state changes
+  useEffect(() => {
+    const event = new CustomEvent('studio-gallery-viewer-change', { detail: viewerOpen })
+    window.dispatchEvent(event)
+  }, [viewerOpen])
   const [viewerIndex, setViewerIndex] = useState(0);
   const [viewerMode, setViewerMode] = useState<"studio" | "gallery">("studio");
   const [carouselApi, setCarouselApi] = useState<CarouselApi | null>(null);
@@ -666,7 +672,7 @@ export function StudioGalleryPage() {
         </div>
       </section>
       <Dialog open={viewerOpen} onOpenChange={setViewerOpen}>
-        <DialogContent className="p-0 border-0 max-w-none sm:max-w-none md:max-w-none lg:max-w-none w-screen h-screen top-0 left-0 translate-x-0 translate-y-0 rounded-none bg-black overflow-hidden">
+        <DialogContent className="p-0 border-0 max-w-none sm:max-w-none md:max-w-none lg:max-w-none w-screen h-screen top-0 left-0 translate-x-0 translate-y-0 rounded-none bg-black overflow-hidden z-[110]">
           <DialogHeader className="sr-only">
             <DialogTitle>Image viewer</DialogTitle>
             <DialogDescription>Full-screen carousel to browse images.</DialogDescription>
