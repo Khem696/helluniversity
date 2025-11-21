@@ -8,29 +8,44 @@ export const revalidate = 3600 // Revalidate every hour
 /**
  * Get the production base URL for sitemap
  * Sitemaps should ALWAYS use the production domain, not preview URLs
+ * 
+ * IMPORTANT: This function NEVER uses VERCEL_URL to avoid preview URLs
+ * in sitemaps. Google Search Console only accepts URLs from verified domains.
  */
 function getProductionBaseUrl(): string {
-  // Priority 1: Explicitly set production URL
+  // Priority 1: Explicitly set production URL (required in Vercel)
   if (process.env.NEXT_PUBLIC_BASE_URL) {
-    return process.env.NEXT_PUBLIC_BASE_URL
+    const url = process.env.NEXT_PUBLIC_BASE_URL.trim()
+    // Ensure it's not a Vercel preview URL
+    if (!url.includes('.vercel.app')) {
+      return url
+    }
   }
   
   // Priority 2: Alternative site URL variable
   if (process.env.NEXT_PUBLIC_SITE_URL) {
-    return process.env.NEXT_PUBLIC_SITE_URL
+    const url = process.env.NEXT_PUBLIC_SITE_URL.trim()
+    // Ensure it's not a Vercel preview URL
+    if (!url.includes('.vercel.app')) {
+      return url
+    }
   }
   
-  // Priority 3: Only use production URL if in production environment
-  // Never use VERCEL_URL for sitemaps as it could be a preview URL
-  if (isProduction()) {
-    // Default production URL (update this to your actual production domain)
-    return 'https://www.huculturehub.com'
+  // Priority 3: Hardcoded production domain (fallback)
+  // NEVER use VERCEL_URL here - it could be a preview URL
+  // This ensures sitemaps always use production URLs even in preview builds
+  const productionDomain = 'https://www.huculturehub.com'
+  
+  // Log warning if environment variable is not set (helpful for debugging)
+  if (process.env.NODE_ENV !== 'development') {
+    console.warn(
+      '[Sitemap] NEXT_PUBLIC_BASE_URL not set. Using hardcoded production domain:',
+      productionDomain,
+      'Please set NEXT_PUBLIC_BASE_URL in Vercel environment variables.'
+    )
   }
   
-  // For non-production environments, still return production URL for sitemap
-  // This ensures sitemaps always have production URLs even in preview builds
-  // Google Search Console only accepts URLs from the verified domain
-  return 'https://www.huculturehub.com'
+  return productionDomain
 }
 
 async function getPublishedEvents() {
@@ -63,6 +78,14 @@ async function getPublishedEvents() {
 export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
   // Always use production URL for sitemap, never preview URLs
   const baseUrl = getProductionBaseUrl()
+  
+  // Debug: Log the base URL being used (only in non-production to avoid log spam)
+  if (!isProduction()) {
+    console.log('[Sitemap] Using base URL:', baseUrl)
+    console.log('[Sitemap] NEXT_PUBLIC_BASE_URL:', process.env.NEXT_PUBLIC_BASE_URL)
+    console.log('[Sitemap] NEXT_PUBLIC_SITE_URL:', process.env.NEXT_PUBLIC_SITE_URL)
+    console.log('[Sitemap] VERCEL_URL:', process.env.VERCEL_URL)
+  }
   
   // Static pages
   const staticPages: MetadataRoute.Sitemap = [
