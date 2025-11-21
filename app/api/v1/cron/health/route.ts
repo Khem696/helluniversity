@@ -1,44 +1,56 @@
 /**
  * Health Check Endpoint for Cron Routes
  * 
- * Ultra-simple endpoint to verify routes are accessible
- * No dependencies, no wrappers, just basic logging
+ * Simple endpoint to verify cron routes are accessible and working
+ * Protected with CRON_SECRET authentication
  */
 
 export const dynamic = 'force-dynamic'
+
+import { NextResponse } from 'next/server'
+import { verifyCronSecret } from '@/lib/cron-utils'
 
 export async function GET(request: Request) {
   const timestamp = new Date().toISOString()
   const userAgent = request.headers.get('user-agent') || 'unknown'
   const url = new URL(request.url)
   
-  // Log everything - Vercel cron jobs use user-agent "vercel-cron/1.0"
-  console.log('[cron-health] Health check called:', {
+  // Verify Vercel cron secret
+  try {
+    verifyCronSecret(request)
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : 'Authentication failed'
+    console.error('[cron-health] Authentication failed:', errorMessage)
+    return NextResponse.json(
+      {
+        status: 'error',
+        message: errorMessage,
+        timestamp,
+      },
+      { status: 401 }
+    )
+  }
+  
+  // Log successful health check - Vercel cron jobs use user-agent "vercel-cron/1.0"
+  console.log('[cron-health] Health check successful:', {
     timestamp,
     method: request.method,
     path: url.pathname,
     userAgent,
     isVercelCron: userAgent === 'vercel-cron/1.0',
-    headers: Object.fromEntries(request.headers.entries()),
   })
-  console.error('[cron-health] ERROR level log test at:', timestamp)
   
-  return new Response(JSON.stringify({
+  return NextResponse.json({
     status: 'ok',
     timestamp,
     message: 'Cron health check endpoint is accessible',
     userAgent,
     isVercelCron: userAgent === 'vercel-cron/1.0',
     path: url.pathname,
-  }), {
-    status: 200,
-    headers: {
-      'Content-Type': 'application/json',
-    },
   })
 }
 
-export async function POST() {
-  return GET()
+export async function POST(request: Request) {
+  return GET(request)
 }
 

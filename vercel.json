@@ -17,10 +17,6 @@
       "schedule": "*/2 * * * *"
     },
     {
-      "path": "/api/v1/cron/test/",
-      "schedule": "*/5 * * * *"
-    },
-    {
       "path": "/api/v1/cron/daily-digest/",
       "schedule": "0 9 * * *"
     },
