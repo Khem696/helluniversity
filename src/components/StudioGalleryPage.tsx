@@ -244,11 +244,12 @@ export function StudioGalleryPage() {
 
   const [viewerOpen, setViewerOpen] = useState(false);
   
-  // Notify breadcrumb component when viewer state changes
+  // Notify breadcrumb component when any dialog state changes
   useEffect(() => {
-    const event = new CustomEvent('studio-gallery-viewer-change', { detail: viewerOpen })
+    const hasAnyDialogOpen = viewerOpen || aiSpaceGenOpen
+    const event = new CustomEvent('dialog-state-change', { detail: hasAnyDialogOpen })
     window.dispatchEvent(event)
-  }, [viewerOpen])
+  }, [viewerOpen, aiSpaceGenOpen])
   const [viewerIndex, setViewerIndex] = useState(0);
   const [viewerMode, setViewerMode] = useState<"studio" | "gallery">("studio");
   const [carouselApi, setCarouselApi] = useState<CarouselApi | null>(null);
@@ -570,7 +571,7 @@ export function StudioGalleryPage() {
                           Tailor Your Reservation
                         </h2>
                         <p className="text-white/90 font-comfortaa text-sm sm:text-base lg:text-sm xl:text-base leading-relaxed">
-                          Select images and describe your decoration style to generate AI-powered space designs.
+                          Select an event to see what’s possible for your studio reservation.
                         </p>
                       </div>
                     </div>

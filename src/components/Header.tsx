@@ -418,6 +418,10 @@ export function Header() {
       return
     }
     setBookingOpen(open)
+    
+    // Notify breadcrumb component when booking dialog state changes
+    const event = new CustomEvent('dialog-state-change', { detail: open })
+    window.dispatchEvent(event)
     if (open) {
       // Modal opened - reset captcha verification but keep form data
       setRecaptchaToken(null)

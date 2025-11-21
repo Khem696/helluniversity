@@ -1,6 +1,6 @@
 import { StudioGalleryPage as StudioGalleryContent } from '@/components/StudioGalleryPage'
 import { generateMetadata as generateSEOMetadata, getBaseUrl } from '@/lib/seo-utils'
-import { StudioGalleryBreadcrumb } from '@/components/StudioGalleryBreadcrumb'
+import { BreadcrumbWrapper } from '@/components/BreadcrumbWrapper'
 
 export const metadata = generateSEOMetadata({
   title: 'Studio & Gallery',
@@ -26,8 +26,8 @@ export const metadata = generateSEOMetadata({
 export default function StudioGallery() {
   return (
     <>
-      {/* Breadcrumbs - Client component that handles visibility */}
-      <StudioGalleryBreadcrumb />
+      {/* Breadcrumbs - Automatically hides when modals are open */}
+      <BreadcrumbWrapper items={[{ name: 'Studio & Gallery', url: '/studio-gallery' }]} />
       {/* Original Studio Gallery page layout - untouched */}
       <StudioGalleryContent />
     </>

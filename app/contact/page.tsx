@@ -1,7 +1,7 @@
 import { ContactPage as ContactContent } from '@/components/ContactPage'
 import { generateMetadata as generateSEOMetadata, getBaseUrl } from '@/lib/seo-utils'
 import { generateContactPageStructuredData, generateServiceStructuredData } from '@/lib/structured-data'
-import { Breadcrumbs } from '@/components/Breadcrumbs'
+import { BreadcrumbWrapper } from '@/components/BreadcrumbWrapper'
 
 export const metadata = generateSEOMetadata({
   title: 'Contact',
@@ -42,14 +42,8 @@ export default function Contact() {
           __html: JSON.stringify(serviceStructuredData),
         }}
       />
-      {/* Breadcrumbs - Fixed position to not affect layout */}
-      <div className="fixed top-[calc(var(--header-h)+1rem)] left-0 right-0 z-[100] pointer-events-none">
-        <div className="container mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="pointer-events-auto">
-            <Breadcrumbs items={[{ name: 'Contact', url: '/contact' }]} />
-          </div>
-        </div>
-      </div>
+      {/* Breadcrumbs - Automatically hides when modals are open */}
+      <BreadcrumbWrapper items={[{ name: 'Contact', url: '/contact' }]} />
       {/* Original Contact page layout - untouched */}
       <ContactContent />
     </>
