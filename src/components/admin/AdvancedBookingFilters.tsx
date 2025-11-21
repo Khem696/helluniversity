@@ -1,6 +1,6 @@
 "use client"
 
-import { useState } from "react"
+import { useState, useEffect, useRef } from "react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
@@ -118,11 +118,60 @@ export function AdvancedBookingFilters({
   hasActiveFilters,
 }: AdvancedBookingFiltersProps) {
   const [showMultiStatus, setShowMultiStatus] = useState(false)
+  const [isMultiStatusDropdownOpen, setIsMultiStatusDropdownOpen] = useState(false)
+  const multiStatusRef = useRef<HTMLDivElement>(null)
+
+  // Sync showMultiStatus with statusFilters - if statusFilters has items, show multi mode
+  useEffect(() => {
+    if (statusFilters.length > 0) {
+      setShowMultiStatus(true)
+    } else if (statusFilter !== "multi") {
+      // Only hide if not explicitly in multi mode
+      setShowMultiStatus(false)
+      setIsMultiStatusDropdownOpen(false)
+    }
+  }, [statusFilters, statusFilter])
+
+  // Handle click outside to close dropdown
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (multiStatusRef.current && !multiStatusRef.current.contains(event.target as Node)) {
+        setIsMultiStatusDropdownOpen(false)
+      }
+    }
+
+    if (isMultiStatusDropdownOpen) {
+      document.addEventListener("mousedown", handleClickOutside)
+    }
+
+    return () => {
+      document.removeEventListener("mousedown", handleClickOutside)
+    }
+  }, [isMultiStatusDropdownOpen])
+
+  // Handle when user selects "multi" from dropdown
+  const handleStatusFilterChange = (value: string) => {
+    if (value === "multi") {
+      setShowMultiStatus(true)
+      setIsMultiStatusDropdownOpen(true) // Open dropdown when entering multi mode
+      // Don't change statusFilter to "multi", keep it as "all" when in multi mode
+      onStatusFilterChange("all")
+    } else {
+      // If switching away from multi mode, clear statusFilters
+      if (showMultiStatus && statusFilters.length > 0) {
+        onStatusFiltersChange([])
+      }
+      setShowMultiStatus(false)
+      setIsMultiStatusDropdownOpen(false)
+      onStatusFilterChange(value)
+    }
+  }
 
   const toggleStatus = (status: string) => {
     if (statusFilters.includes(status)) {
-      onStatusFiltersChange(statusFilters.filter((s) => s !== status))
-      if (statusFilters.length === 1) {
+      const newFilters = statusFilters.filter((s) => s !== status)
+      onStatusFiltersChange(newFilters)
+      if (newFilters.length === 0) {
         setShowMultiStatus(false)
         onStatusFilterChange("all")
       }
@@ -157,9 +206,9 @@ export function AdvancedBookingFilters({
       {/* First Row: Status, Event Type, Sort By, Sort Order */}
       <div className="flex flex-col sm:flex-row gap-4">
         {/* Status Filter - Single or Multiple */}
-        <div className="relative w-full sm:w-48">
+        <div className="relative w-full sm:w-48" ref={multiStatusRef}>
           {!showMultiStatus ? (
-            <Select value={statusFilter} onValueChange={onStatusFilterChange}>
+            <Select value={statusFilter} onValueChange={handleStatusFilterChange}>
               <SelectTrigger className="w-full">
                 <SelectValue placeholder="Filter by status" />
               </SelectTrigger>
@@ -174,18 +223,29 @@ export function AdvancedBookingFilters({
               </SelectContent>
             </Select>
           ) : (
-            <div className="border border-gray-300 rounded-md p-2 min-h-[40px] flex flex-wrap gap-1">
+            <div 
+              className="border border-gray-300 rounded-md p-2 min-h-[40px] flex flex-wrap gap-1 cursor-pointer"
+              onClick={() => setIsMultiStatusDropdownOpen(!isMultiStatusDropdownOpen)}
+            >
               {statusFilters.length === 0 ? (
                 <span className="text-sm text-gray-500">Select statuses...</span>
               ) : (
                 statusFilters.map((status) => {
                   const statusLabel = ALL_STATUSES.find((s) => s.value === status)?.label || status
                   return (
-                    <Badge key={status} variant="secondary" className="flex items-center gap-1">
+                    <Badge 
+                      key={status} 
+                      variant="secondary" 
+                      className="flex items-center gap-1"
+                      onClick={(e) => e.stopPropagation()}
+                    >
                       {statusLabel}
                       <X
                         className="w-3 h-3 cursor-pointer"
-                        onClick={() => toggleStatus(status)}
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          toggleStatus(status)
+                        }}
                       />
                     </Badge>
                   )
@@ -196,8 +256,10 @@ export function AdvancedBookingFilters({
                 variant="ghost"
                 size="sm"
                 className="h-6 px-2 text-xs ml-auto"
-                onClick={() => {
+                onClick={(e) => {
+                  e.stopPropagation()
                   setShowMultiStatus(false)
+                  setIsMultiStatusDropdownOpen(false)
                   onStatusFiltersChange([])
                   onStatusFilterChange("all")
                 }}
@@ -206,7 +268,7 @@ export function AdvancedBookingFilters({
               </Button>
             </div>
           )}
-          {showMultiStatus && (
+          {showMultiStatus && isMultiStatusDropdownOpen && (
             <div className="absolute z-50 w-full mt-1 bg-white border border-gray-200 rounded-md shadow-lg p-2">
               <div className="space-y-1">
                 {ALL_STATUSES.map((status) => (
