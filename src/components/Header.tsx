@@ -1662,7 +1662,13 @@ export function Header() {
 
         {/* Mobile Menu Button */}
         <button
-          onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
+          onClick={() => {
+            const newState = !mobileMenuOpen
+            setMobileMenuOpen(newState)
+            // Notify breadcrumb component when mobile menu state changes
+            const event = new CustomEvent('mobile-menu-state-change', { detail: newState })
+            window.dispatchEvent(event)
+          }}
           className="lg:hidden text-white p-2 sm:p-3 sm:absolute sm:right-4 sm:top-1/2 sm:-translate-y-1/2"
           aria-label="Toggle navigation"
         >
