@@ -1,8 +1,37 @@
 import { MetadataRoute } from 'next'
 import { getTursoClient } from '@/lib/turso'
+import { isProduction } from '@/lib/env'
 
 export const dynamic = 'force-dynamic'
 export const revalidate = 3600 // Revalidate every hour
+
+/**
+ * Get the production base URL for sitemap
+ * Sitemaps should ALWAYS use the production domain, not preview URLs
+ */
+function getProductionBaseUrl(): string {
+  // Priority 1: Explicitly set production URL
+  if (process.env.NEXT_PUBLIC_BASE_URL) {
+    return process.env.NEXT_PUBLIC_BASE_URL
+  }
+  
+  // Priority 2: Alternative site URL variable
+  if (process.env.NEXT_PUBLIC_SITE_URL) {
+    return process.env.NEXT_PUBLIC_SITE_URL
+  }
+  
+  // Priority 3: Only use production URL if in production environment
+  // Never use VERCEL_URL for sitemaps as it could be a preview URL
+  if (isProduction()) {
+    // Default production URL (update this to your actual production domain)
+    return 'https://www.huculturehub.com'
+  }
+  
+  // For non-production environments, still return production URL for sitemap
+  // This ensures sitemaps always have production URLs even in preview builds
+  // Google Search Console only accepts URLs from the verified domain
+  return 'https://www.huculturehub.com'
+}
 
 async function getPublishedEvents() {
   try {
@@ -32,10 +61,8 @@ async function getPublishedEvents() {
 }
 
 export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
-  const baseUrl = process.env.NEXT_PUBLIC_BASE_URL || 
-    (process.env.NODE_ENV === 'production' 
-      ? 'https://khem696.github.io/helluniversity' 
-      : 'http://localhost:3000')
+  // Always use production URL for sitemap, never preview URLs
+  const baseUrl = getProductionBaseUrl()
   
   // Static pages
   const staticPages: MetadataRoute.Sitemap = [

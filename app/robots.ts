@@ -1,9 +1,32 @@
 import { MetadataRoute } from 'next'
+import { isProduction } from '@/lib/env'
 
-const baseUrl = process.env.NEXT_PUBLIC_BASE_URL || 
-  (process.env.NODE_ENV === 'production' 
-    ? 'https://khem696.github.io/helluniversity' 
-    : 'http://localhost:3000')
+/**
+ * Get the production base URL for robots.txt
+ * Robots.txt should use the production domain
+ */
+function getProductionBaseUrl(): string {
+  // Priority 1: Explicitly set production URL
+  if (process.env.NEXT_PUBLIC_BASE_URL) {
+    return process.env.NEXT_PUBLIC_BASE_URL
+  }
+  
+  // Priority 2: Alternative site URL variable
+  if (process.env.NEXT_PUBLIC_SITE_URL) {
+    return process.env.NEXT_PUBLIC_SITE_URL
+  }
+  
+  // Priority 3: Default production URL
+  // Never use VERCEL_URL for robots.txt as it could be a preview URL
+  if (isProduction()) {
+    return 'https://www.huculturehub.com'
+  }
+  
+  // For non-production, still return production URL
+  return 'https://www.huculturehub.com'
+}
+
+const baseUrl = getProductionBaseUrl()
 
 export const dynamic = 'force-static'
 
