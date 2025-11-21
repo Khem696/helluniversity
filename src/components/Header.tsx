@@ -112,9 +112,11 @@ export function Header({ initialBookingEnabled }: HeaderProps = {}) {
     startDate: number
     endDate: number
   }>>([])
-  // Use initial value if provided, otherwise start as false to prevent flash
+  // Use initial value if provided - if enabled, show button immediately (optimistic)
+  // If disabled or undefined, start as false to prevent showing button when it shouldn't
   const [bookingsEnabled, setBookingsEnabled] = useState<boolean>(initialBookingEnabled ?? false)
-  const [bookingStatusLoaded, setBookingStatusLoaded] = useState<boolean>(initialBookingEnabled !== undefined) // If initial value provided, mark as loaded
+  // Mark as loaded immediately if we have initial value - this allows instant display when enabled
+  const [bookingStatusLoaded, setBookingStatusLoaded] = useState<boolean>(initialBookingEnabled !== undefined)
   const [calendarMonth, setCalendarMonth] = useState<Date>(new Date())
 
   // Ensure component is mounted (client-side only)
@@ -135,10 +137,16 @@ export function Header({ initialBookingEnabled }: HeaderProps = {}) {
           
           if (json.success && json.data) {
             const newStatus = json.data.enabled
+            const previousStatus = bookingsEnabled
             setBookingsEnabled(newStatus)
             
+            // If status changed from enabled to disabled, close dialog immediately
+            if (previousStatus && !newStatus && bookingOpen) {
+              setBookingOpen(false)
+              toast.error("Bookings are currently disabled. Please try again later.")
+            }
             // If bookings are disabled while dialog is open, close the dialog immediately
-            if (!newStatus && bookingOpen) {
+            else if (!newStatus && bookingOpen) {
               setBookingOpen(false)
               toast.error("Bookings are currently disabled. Please try again later.")
             }
@@ -151,9 +159,9 @@ export function Header({ initialBookingEnabled }: HeaderProps = {}) {
       // Verify immediately
       verifyStatus()
       
-      // Poll more frequently when modal is open (every 5 seconds) to catch changes quickly
-      // Poll less frequently when modal is closed (every 30 seconds)
-      const pollInterval = setInterval(verifyStatus, bookingOpen ? 5000 : 30000)
+      // Poll very frequently to catch changes instantly (every 2 seconds)
+      // This ensures button disappears immediately when disabled
+      const pollInterval = setInterval(verifyStatus, 2000)
       
       return () => {
         clearInterval(pollInterval)
@@ -195,8 +203,8 @@ export function Header({ initialBookingEnabled }: HeaderProps = {}) {
       // Fetch immediately only if we don't have initial status
       fetchBookingStatus()
       
-      // Poll every 30 seconds to check for status changes
-      const pollInterval = setInterval(fetchBookingStatus, 30000)
+      // Poll every 2 seconds to catch changes instantly (same as when we have initial status)
+      const pollInterval = setInterval(fetchBookingStatus, 2000)
       
       return () => {
         clearInterval(pollInterval)
