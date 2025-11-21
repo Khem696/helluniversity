@@ -220,19 +220,22 @@ function SortableImageItem({
           {isAISpaceSection && (
             <button
               onClick={() => onToggleAI(image.id, image.ai_selected)}
-              className="flex items-center gap-2 text-sm"
+              disabled={uploading}
+              className="flex items-center gap-2 text-sm disabled:opacity-50 disabled:cursor-not-allowed"
             >
               <div className={`w-6 h-6 rounded border-2 flex items-center justify-center transition-colors ${
                 isSelectedForAI
                   ? "bg-[#5B9AB8] border-[#5B9AB8]"
                   : "bg-white border-gray-300"
               }`}>
-                {isSelectedForAI && (
+                {uploading ? (
+                  <Loader2 className="w-3 h-3 animate-spin text-gray-400" />
+                ) : isSelectedForAI ? (
                   <Check className="w-4 h-4 text-white" />
-                )}
+                ) : null}
               </div>
               <span className="text-xs text-gray-600">
-                {isSelectedForAI ? "Selected" : "Select for AI"}
+                {uploading ? "Updating..." : isSelectedForAI ? "Selected" : "Select for AI"}
               </span>
             </button>
           )}
@@ -264,6 +267,8 @@ function SortableImageItem({
 export default function ImagesPage() {
   const { data: session, status } = useSession()
   const [uploading, setUploading] = useState(false)
+  const [reordering, setReordering] = useState(false)
+  const [togglingAI, setTogglingAI] = useState<string | null>(null) // Track which image is being toggled
   
   // Initialize drag and drop sensors
   const sensors = useSensors(
@@ -398,7 +403,7 @@ export default function ImagesPage() {
   const handleDragEnd = async (event: DragEndEvent, category: string) => {
     const { active, over } = event
 
-    if (!over || active.id === over.id) {
+    if (!over || active.id === over.id || reordering) {
       return
     }
 
@@ -412,6 +417,8 @@ export default function ImagesPage() {
     if (oldIndex === -1 || newIndex === -1) {
       return
     }
+
+    setReordering(true)
 
     // Optimistically update UI
     const reorderedImages = arrayMove(sortedImages, oldIndex, newIndex)
@@ -488,11 +495,18 @@ export default function ImagesPage() {
       toast.error("Failed to update image order")
       // Revert on error - refetch to get correct state from server
       fetchImages()
+    } finally {
+      setReordering(false)
     }
   }
 
   // Toggle AI selection for an image with automatic ordering
   const toggleAISelection = async (imageId: string, currentValue: number | boolean | undefined) => {
+    if (togglingAI === imageId || reordering) {
+      return // Prevent duplicate toggles or toggles during reordering
+    }
+
+    setTogglingAI(imageId)
     try {
       const newValue = !currentValue || currentValue === 0
       const response = await fetch(API_PATHS.adminImageToggleAISelection, {
@@ -527,6 +541,8 @@ export default function ImagesPage() {
     } catch (error) {
       toast.error("Failed to update image selection")
       console.error(error)
+    } finally {
+      setTogglingAI(null)
     }
   }
 
@@ -635,19 +651,6 @@ export default function ImagesPage() {
     ? images 
     : images.filter(img => img.category === categoryFilter)
 
-  // Debug logging for image filtering
-  console.log("[ImagesPage] Image filtering:", {
-    totalImages: images.length,
-    categoryFilter,
-    filteredImagesCount: filteredImages.length,
-    categories: categories,
-    imagesSample: images.slice(0, 3).map(img => ({
-      id: img.id,
-      category: img.category,
-      blob_url: img.blob_url?.substring(0, 50) + '...'
-    }))
-  })
-
   // Group images by section
   const imagesBySection = SECTIONS.map(section => {
     const sectionImages = filteredImages
@@ -704,16 +707,6 @@ export default function ImagesPage() {
       ...section,
       images: sectionImages,
     }
-  })
-
-  // Debug logging for sections
-  console.log("[ImagesPage] Section grouping:", {
-    sectionsCount: imagesBySection.length,
-    sectionsWithImages: imagesBySection.filter(s => s.images.length > 0).map(s => ({
-      name: s.name,
-      imageCount: s.images.length,
-      categories: s.categories
-    }))
   })
 
   const toggleSection = (sectionName: string) => {
@@ -997,11 +990,11 @@ export default function ImagesPage() {
                                     ({subCat.images.length} {subCat.images.length === 1 ? "image" : "images"})
                                   </span>
                                 </div>
-                                <DndContext
-                                  sensors={sensors}
-                                  collisionDetection={closestCenter}
-                                  onDragEnd={(e) => handleDragEnd(e, subCat.category)}
-                                >
+                                    <DndContext
+                                      sensors={reordering ? [] : sensors}
+                                      collisionDetection={closestCenter}
+                                      onDragEnd={(e) => handleDragEnd(e, subCat.category)}
+                                    >
                                   <SortableContext
                                     items={subCat.images.map((img: Image) => img.id)}
                                     strategy={rectSortingStrategy}
@@ -1016,9 +1009,9 @@ export default function ImagesPage() {
                                             setEditDialogOpen(true)
                                           }}
                                           onDelete={handleDelete}
-                                          onToggleAI={toggleAISelection}
-                                          isAISpaceSection={section.name === "AI Space Generator"}
-                                          uploading={uploading}
+                                    onToggleAI={toggleAISelection}
+                                    isAISpaceSection={section.name === "AI Space Generator"}
+                                    uploading={uploading || reordering || togglingAI !== null}
                                         />
                                       ))}
                                     </div>
@@ -1031,7 +1024,7 @@ export default function ImagesPage() {
                       ) : (
                         /* Default: show all images in grid */
                         <DndContext
-                          sensors={sensors}
+                          sensors={reordering ? [] : sensors}
                           collisionDetection={closestCenter}
                           onDragEnd={(e) => {
                             // Get the category from the first image (all images in section should have same category)

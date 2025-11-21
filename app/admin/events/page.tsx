@@ -97,6 +97,7 @@ function SortablePhotoItem({
   eventId,
   onRemove,
   saving,
+  removing,
 }: {
   photo: {
     id: string
@@ -110,6 +111,7 @@ function SortablePhotoItem({
   eventId: string
   onRemove: (eventId: string, eventImageId: string) => void
   saving: boolean
+  removing: boolean
 }) {
   const {
     attributes,
@@ -149,9 +151,13 @@ function SortablePhotoItem({
         variant="destructive"
         className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity"
         onClick={() => onRemove(eventId, photo.id)}
-        disabled={saving}
+        disabled={saving || removing}
       >
-        <Trash2 className="w-3 h-3" />
+        {removing ? (
+          <Loader2 className="w-3 h-3 animate-spin" />
+        ) : (
+          <Trash2 className="w-3 h-3" />
+        )}
       </Button>
       <div className="text-xs text-gray-500 mt-1 text-center">
         Order: {photo.display_order}
@@ -164,6 +170,8 @@ export default function EventsPage() {
   const { data: session, status } = useSession()
   const [saving, setSaving] = useState(false)
   const [deleting, setDeleting] = useState(false)
+  const [reorderingPhotos, setReorderingPhotos] = useState(false)
+  const [removingPhoto, setRemovingPhoto] = useState<string | null>(null) // Track which photo is being removed
   
   // Initialize drag and drop sensors
   const sensors = useSensors(
@@ -387,7 +395,7 @@ export default function EventsPage() {
 
   // Handle drag end for photo reordering
   const handleDragEnd = async (event: DragEndEvent) => {
-    if (!editingEvent) return
+    if (!editingEvent || reorderingPhotos) return
 
     const { active, over } = event
 
@@ -410,6 +418,8 @@ export default function EventsPage() {
     ) {
       return
     }
+
+    setReorderingPhotos(true)
 
     // Optimistically update UI
     const reorderedPhotos = arrayMove(
@@ -470,11 +480,18 @@ export default function EventsPage() {
         setEditingEvent(reverted)
         replaceItem(editingEvent.id, reverted)
       }
+    } finally {
+      setReorderingPhotos(false)
     }
   }
 
   // Remove in-event photo
   const handleRemovePhoto = async (eventId: string, eventImageId: string) => {
+    if (removingPhoto === eventImageId || reorderingPhotos) {
+      return // Prevent duplicate removals or removals during reordering
+    }
+
+    setRemovingPhoto(eventImageId)
     try {
       const response = await fetch(API_PATHS.adminEventImage(eventId, eventImageId), {
         method: "DELETE",
@@ -499,6 +516,8 @@ export default function EventsPage() {
     } catch (error) {
       toast.error("Failed to remove photo")
       console.error(error)
+    } finally {
+      setRemovingPhoto(null)
     }
   }
 
@@ -1552,7 +1571,7 @@ export default function EventsPage() {
                 </div>
                 {editingEvent.in_event_photos && editingEvent.in_event_photos.length > 0 ? (
                   <DndContext
-                    sensors={sensors}
+                    sensors={reorderingPhotos ? [] : sensors}
                     collisionDetection={closestCenter}
                     onDragEnd={handleDragEnd}
                   >
@@ -1568,6 +1587,7 @@ export default function EventsPage() {
                             eventId={editingEvent.id}
                             onRemove={handleRemovePhoto}
                             saving={saving}
+                            removing={removingPhoto === photo.id}
                           />
                         ))}
                       </div>

@@ -75,26 +75,15 @@ import { SimpleCalendar } from "@/components/ui/simple-calendar"
 import { TimePicker } from "@/components/ui/time-picker"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import { dateToBangkokDateString } from "@/lib/timezone-client"
-
-// Helper function to add AM/PM to 24-hour time format for display
-// Converts "13:00" -> "13:00 PM", "09:30" -> "09:30 AM", "00:00" -> "00:00 AM"
-function formatTimeForDisplay(time24: string | null | undefined): string {
-  if (!time24 || !time24.includes(':')) return time24 || ''
-  
-  try {
-    const [hours, minutes] = time24.split(':')
-    const hour24 = parseInt(hours, 10)
-    const mins = minutes || '00'
-    
-    if (isNaN(hour24)) return time24
-    
-    // Keep 24-hour format, just add AM/PM
-    const period = hour24 < 12 ? 'AM' : 'PM'
-    return `${time24} ${period}`
-  } catch (error) {
-    return time24
-  }
-}
+import { BookingTable } from "@/components/admin/BookingTable"
+import {
+  formatTimeForDisplay,
+  formatDate,
+  formatTimestamp,
+  formatFee,
+  getStatusBadge,
+  getBookingReferenceNumber,
+} from "@/lib/booking-helpers"
 
 // Use Booking type from hook to ensure consistency
 type Booking = BookingType
@@ -107,24 +96,6 @@ interface StatusHistory {
   changed_by: string | null
   change_reason: string | null
   created_at: number
-}
-
-// Helper function to get booking reference number with fallback for old records
-// Generates a deterministic reference number based on booking ID if missing
-// Updated to match new format: 3 chars timestamp + 3 chars random (HU-XXXXXX)
-function getBookingReferenceNumber(booking: Booking): string {
-  if (booking.reference_number) {
-    return booking.reference_number
-  }
-  // For old records without reference_number, generate a deterministic one based on ID
-  // Use last 8 characters of UUID and convert to base36-like format
-  // This ensures the same booking always gets the same reference number
-  // Updated to new format: 3 chars + 3 chars (was 3 chars + 2 chars)
-  const idPart = booking.id.replace(/-/g, '').slice(-8)
-  const numValue = parseInt(idPart, 16) % 46656 // 36^3
-  // Use first 4 hex chars of ID for deterministic "random" part (was 2 chars)
-  const deterministicPart = parseInt(idPart.slice(0, 4), 16) % 46656 // 36^3
-  return `HU-${numValue.toString(36).toUpperCase().padStart(3, '0')}${deterministicPart.toString(36).toUpperCase().padStart(3, '0')}`
 }
 
 export default function BookingsPage() {
@@ -1512,122 +1483,6 @@ export default function BookingsPage() {
     }
   }, [feeAmountOriginal, feeCurrency, feeConversionRate, feeAmount, feeDialogOpen])
 
-  const getStatusBadge = (status: string) => {
-    const variants: Record<string, "default" | "secondary" | "destructive" | "outline"> = {
-      pending: "outline",
-      pending_deposit: "secondary",
-      confirmed: "default",
-      cancelled: "destructive",
-      finished: "default",
-    }
-    const colors: Record<string, string> = {
-      pending: "bg-yellow-100 text-yellow-800 border-yellow-300",
-      pending_deposit: "bg-orange-100 text-orange-800 border-orange-300",
-      confirmed: "bg-green-100 text-green-800 border-green-300",
-      cancelled: "bg-gray-100 text-gray-800 border-gray-300",
-      finished: "bg-gray-100 text-gray-800 border-gray-300",
-    }
-    return (
-      <Badge className={colors[status] || ""} variant={variants[status] || "default"}>
-        {status === "pending_deposit" ? "Pending Deposit" : status === "confirmed" ? "Confirmed" : status.charAt(0).toUpperCase() + status.slice(1)}
-      </Badge>
-    )
-  }
-
-  const formatTimestamp = (timestamp: number | null | undefined) => {
-    if (timestamp === null || timestamp === undefined || timestamp === 0) return "N/A"
-    try {
-      // Handle both Unix timestamp (seconds) and milliseconds
-      const timestampMs = timestamp > 1000000000000 
-        ? timestamp // Already in milliseconds
-        : timestamp * 1000 // Convert from seconds to milliseconds
-      
-      // CRITICAL: Convert UTC timestamp to Bangkok timezone for display
-      // Timestamps in DB are UTC but represent Bangkok time
-      const utcDate = new Date(timestampMs)
-      const bangkokDate = new TZDate(utcDate.getTime(), 'Asia/Bangkok')
-      
-      return format(bangkokDate, "MMM dd, yyyy 'at' h:mm a")
-    } catch (error) {
-      console.error("Error formatting timestamp:", timestamp, error)
-      return "N/A"
-    }
-  }
-
-  const formatDate = (timestamp: number | null | undefined) => {
-    if (timestamp === null || timestamp === undefined || timestamp === 0) return "N/A"
-    try {
-      // Handle both Unix timestamp (seconds) and milliseconds
-      const timestampMs = timestamp > 1000000000000 
-        ? timestamp // Already in milliseconds
-        : timestamp * 1000 // Convert from seconds to milliseconds
-      
-      // Convert UTC timestamp to Bangkok timezone for display
-      // Timestamps in DB are UTC but represent Bangkok time
-      const utcDate = new Date(timestampMs)
-      const bangkokDate = new TZDate(utcDate.getTime(), 'Asia/Bangkok')
-      
-      return format(bangkokDate, "MMM dd, yyyy")
-    } catch (error) {
-      console.error("Error formatting date:", timestamp, error)
-      return "N/A"
-    }
-  }
-
-  const formatFee = (booking: Booking) => {
-    // Handle both snake_case (from API) and camelCase (from formatBooking)
-    const feeAmount = (booking as any).fee_amount ?? (booking as any).feeAmount
-    const feeAmountOriginal = (booking as any).fee_amount_original ?? (booking as any).feeAmountOriginal
-    const feeCurrency = (booking as any).fee_currency ?? (booking as any).feeCurrency
-    
-    // Debug logging (remove in production if needed)
-    if (process.env.NODE_ENV === 'development') {
-      console.log('[formatFee] Booking fee data:', {
-        bookingId: booking.id,
-        bookingReference: (booking as any).reference_number,
-        fee_amount: (booking as any).fee_amount,
-        feeAmount: (booking as any).feeAmount,
-        feeAmountResolved: feeAmount,
-        feeAmountType: typeof feeAmount,
-        feeCurrency,
-        feeAmountOriginal,
-        allFeeKeys: Object.keys(booking).filter(k => k.toLowerCase().includes('fee')),
-        fullBooking: booking,
-      })
-    }
-    
-    // Check if fee exists and is a valid positive number
-    // Handle both number and string types
-    let feeNum: number | null = null
-    if (feeAmount != null && feeAmount !== undefined) {
-      if (typeof feeAmount === 'string') {
-        feeNum = parseFloat(feeAmount)
-      } else if (typeof feeAmount === 'number') {
-        feeNum = feeAmount
-      } else {
-        feeNum = Number(feeAmount)
-      }
-    }
-    
-    if (feeNum === null || isNaN(feeNum) || feeNum <= 0) {
-      if (process.env.NODE_ENV === 'development') {
-        console.log('[formatFee] Fee check failed:', { feeNum, feeAmount, isNull: feeAmount === null, isUndefined: feeAmount === undefined })
-      }
-      return <span className="text-gray-400 italic">Not recorded</span>
-    }
-    
-    const baseAmount = feeNum.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
-    if (feeCurrency && feeCurrency.toUpperCase() !== "THB" && feeAmountOriginal) {
-      const originalAmount = Number(feeAmountOriginal).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
-      return (
-        <div className="text-sm">
-          <div className="font-medium text-gray-900">{baseAmount} THB</div>
-          <div className="text-gray-500 text-xs">{originalAmount} {feeCurrency}</div>
-        </div>
-      )
-    }
-    return <span className="text-sm font-medium text-gray-900">{baseAmount} THB</span>
-  }
 
   // Only show full-page loading on initial load (when there's no data yet)
   // When refetching with existing data, show content with a subtle loading indicator
@@ -1770,350 +1625,29 @@ export default function BookingsPage() {
       )}
 
       {/* Bookings Table */}
-      {bookings.length === 0 ? (
-        <div className="text-center py-12">
-          <Calendar className="w-16 h-16 mx-auto text-gray-400 mb-4" />
-          <p className="text-gray-600">No bookings found</p>
-        </div>
-      ) : (
-        <>
-          {/* Desktop Table View */}
-          <div className="hidden lg:block bg-white rounded-lg shadow overflow-hidden">
-          <div className="overflow-x-auto">
-            <table className="min-w-full divide-y divide-gray-200">
-              <thead className="bg-gray-50">
-                <tr>
-                    <th className="px-6 xl:px-8 py-4 text-left text-xs font-medium text-gray-500 uppercase tracking-wider w-16">
-                    No.
-                  </th>
-                    <th className="px-6 xl:px-8 py-4 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                    Booking Reference
-                  </th>
-                    <th className="px-6 xl:px-8 py-4 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                    Name
-                  </th>
-                    <th className="px-6 xl:px-8 py-4 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                    Event Details
-                  </th>
-                    <th className="px-6 xl:px-8 py-4 text-left text-xs font-medium text-gray-500 uppercase tracking-wider min-w-[180px]">
-                    Date/Time
-                  </th>
-                    <th className="px-6 xl:px-8 py-4 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                    Status
-                  </th>
-                    <th className="px-6 xl:px-8 py-4 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                    Fee
-                  </th>
-                    <th className="px-6 xl:px-8 py-4 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                    Created
-                  </th>
-                    <th className="px-6 xl:px-8 py-4 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">
-                    Actions
-                  </th>
-                </tr>
-              </thead>
-              <tbody className="bg-white divide-y divide-gray-200">
-                {bookings.map((booking, index) => {
-                  const hasNewResponse = booking.user_response && booking.response_date && 
-                    (booking.response_date * 1000) > lastCheckedAtRef.current - 300000 // New if within last 5 minutes
-                  
-                  return (
-                  <tr 
-                    key={booking.id} 
-                    className={`hover:bg-gray-50 ${hasNewResponse ? 'bg-blue-50 border-l-4 border-l-blue-500' : ''}`}
-                  >
-                    <td className="px-6 xl:px-8 py-4 whitespace-nowrap text-sm text-gray-500">
-                      {index + 1}
-                    </td>
-                    <td className="px-6 xl:px-8 py-4 whitespace-nowrap">
-                      <div className="text-sm font-medium text-gray-900">
-                        <SearchHighlight
-                          text={getBookingReferenceNumber(booking)}
-                          searchTerm={referenceNumberFilter}
-                        />
-                      </div>
-                    </td>
-                    <td className="px-6 xl:px-8 py-4 whitespace-nowrap">
-                      <div className="flex items-center gap-2">
-                        <div className="text-sm font-medium text-gray-900">
-                          <SearchHighlight
-                            text={booking.name}
-                            searchTerm={nameFilter}
-                          />
-                        </div>
-                        {booking.user_response && (
-                          <Badge variant="outline" className="bg-blue-100 text-blue-800 border-blue-300">
-                            <AlertCircle className="w-3 h-3 mr-1" />
-                            Response
-                          </Badge>
-                        )}
-                      </div>
-                      <div className="text-sm text-gray-500 flex items-center gap-1 mt-1">
-                        <Mail className="w-3 h-3" />
-                        <SearchHighlight
-                          text={booking.email}
-                          searchTerm={emailFilter}
-                        />
-                      </div>
-                      <div className="text-sm text-gray-500 flex items-center gap-1 mt-1">
-                        <Phone className="w-3 h-3" />
-                        <SearchHighlight
-                          text={booking.phone}
-                          searchTerm={phoneFilter}
-                        />
-                      </div>
-                    </td>
-                    <td className="px-6 xl:px-8 py-4">
-                      <div className="text-sm text-gray-900">{booking.event_type}</div>
-                      {booking.organization_type && (
-                        <div className="text-sm text-gray-500">{booking.organization_type}</div>
-                      )}
-                      {booking.participants && (
-                        <div className="text-sm text-gray-500 flex items-center gap-1 mt-1">
-                          <Users className="w-3 h-3" />
-                          {booking.participants} participants
-                        </div>
-                      )}
-                    </td>
-                    <td className="px-6 xl:px-8 py-4 min-w-[180px]">
-                      <div className="text-sm text-gray-900">
-                        {formatDate(booking.start_date)}
-                        {booking.end_date && booking.end_date !== booking.start_date && (
-                          <span> - {formatDate(booking.end_date)}</span>
-                        )}
-                      </div>
-                      <div className="text-sm text-gray-500 flex items-center gap-1 mt-1.5">
-                        <Clock className="w-3 h-3 flex-shrink-0" />
-                        <span className="whitespace-normal break-words">{formatTimeForDisplay(booking.start_time)} - {formatTimeForDisplay(booking.end_time)}</span>
-                      </div>
-                    </td>
-                    <td className="px-6 xl:px-8 py-4 whitespace-nowrap">
-                      {getStatusBadge(booking.status)}
-                    </td>
-                    <td className="px-6 xl:px-8 py-4 whitespace-nowrap">
-                      {formatFee(booking)}
-                    </td>
-                    <td className="px-6 xl:px-8 py-4 whitespace-nowrap text-sm text-gray-500">
-                      {formatTimestamp(booking.created_at)}
-                    </td>
-                    <td className="px-6 xl:px-8 py-4 whitespace-nowrap text-right text-sm font-medium">
-                      <div className="flex items-center gap-2 justify-end">
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          onClick={async () => {
-                            setViewDialogOpen(true)
-                            // Don't set selectedBooking from list - wait for fresh data from API
-                            await fetchBookingDetails(booking.id)
-                          }}
-                        >
-                          <Eye className="w-4 h-4 mr-1" />
-                          View
-                        </Button>
-                        <Button
-                          size="sm"
-                          variant="destructive"
-                          onClick={() => handleDeleteBooking(booking.id)}
-                          disabled={saving}
-                        >
-                          <Trash2 className="w-4 h-4 mr-1" />
-                          Delete
-                        </Button>
-                      </div>
-                    </td>
-                  </tr>
-                  )
-                })}
-              </tbody>
-            </table>
-          </div>
-          {/* Page size selector and total count */}
-          <div className="px-6 py-3 bg-gray-50 border-t border-gray-200 flex items-center justify-between">
-            <div className="text-sm text-gray-700">
-              Showing <span className="font-medium">{bookings.length}</span> of <span className="font-medium">{total}</span> bookings
-            </div>
-            <div className="flex items-center gap-2">
-              <span className="text-sm text-gray-700">Items per page:</span>
-              <Select
-                value={pageSize.toString()}
-                onValueChange={(value) => {
-                  setPageSize(parseInt(value))
-                  fetchBookings()
-                }}
-              >
-                <SelectTrigger className="w-20 h-8">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="10">10</SelectItem>
-                  <SelectItem value="25">25</SelectItem>
-                  <SelectItem value="50">50</SelectItem>
-                  <SelectItem value="100">100</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-          </div>
-          {/* Infinite scroll sentinel */}
-          {hasMore && (
-            <div ref={scrollSentinelRef} className="py-4 flex justify-center">
-              {loading && <Loader2 className="w-6 h-6 animate-spin text-gray-400" />}
-            </div>
-          )}
-          {!hasMore && bookings.length > 0 && (
-            <div className="px-6 py-3 bg-gray-50 border-t border-gray-200 text-center text-sm text-gray-500">
-              No more bookings to load
-            </div>
-          )}
-        </div>
-
-          {/* Mobile/Tablet Card View */}
-          <div className="lg:hidden space-y-4">
-            {bookings.map((booking, index) => {
-              const hasNewResponse = booking.user_response && booking.response_date && 
-                (booking.response_date * 1000) > lastCheckedAtRef.current - 300000
-              
-              return (
-                <div
-                  key={booking.id}
-                  className={`bg-white rounded-lg shadow p-4 sm:p-6 ${hasNewResponse ? 'border-l-4 border-l-blue-500' : ''}`}
-                >
-                  <div className="flex items-start justify-between mb-3">
-                    <div className="flex-1">
-                      <div className="flex items-center gap-2 mb-2">
-                        <span className="text-xs font-medium text-gray-500">#{index + 1}</span>
-                        <h3 className="text-base sm:text-lg font-semibold text-gray-900">{booking.name}</h3>
-                        {booking.user_response && (
-                          <Badge variant="outline" className="bg-blue-100 text-blue-800 border-blue-300">
-                            <AlertCircle className="w-3 h-3 mr-1" />
-                            Response
-                          </Badge>
-                        )}
-                      </div>
-                      <div className="mb-2">
-                        <div className="text-xs font-medium text-gray-500 mb-0.5">Booking Reference</div>
-                        <div className="text-sm font-medium text-gray-900">{getBookingReferenceNumber(booking)}</div>
-                      </div>
-                      <div className="flex flex-wrap gap-x-4 gap-y-1 text-sm text-gray-500">
-                        <div className="flex items-center gap-1">
-                          <Mail className="w-3 h-3" />
-                          {booking.email}
-                        </div>
-                        <div className="flex items-center gap-1">
-                          <Phone className="w-3 h-3" />
-                          {booking.phone}
-                        </div>
-                      </div>
-                    </div>
-                    <div className="ml-2">
-                      {getStatusBadge(booking.status)}
-                    </div>
-                  </div>
-
-                  <div className="space-y-2 mb-4">
-                    <div>
-                      <div className="text-xs font-medium text-gray-500 mb-1">Event</div>
-                      <div className="text-sm text-gray-900">{booking.event_type}</div>
-                      {booking.organization_type && (
-                        <div className="text-xs text-gray-500 mt-0.5">{booking.organization_type}</div>
-                      )}
-                      {booking.participants && (
-                        <div className="text-xs text-gray-500 flex items-center gap-1 mt-1">
-                          <Users className="w-3 h-3" />
-                          {booking.participants} participants
-                        </div>
-                      )}
-                    </div>
-
-                    <div>
-                      <div className="text-xs font-medium text-gray-500 mb-1">Date/Time</div>
-                      <div className="text-sm text-gray-900">
-                        {formatDate(booking.start_date)}
-                        {booking.end_date && booking.end_date !== booking.start_date && (
-                          <span> - {formatDate(booking.end_date)}</span>
-                        )}
-                      </div>
-                      <div className="text-sm text-gray-500 flex items-center gap-1 mt-1">
-                        <Clock className="w-3 h-3 flex-shrink-0" />
-                        {formatTimeForDisplay(booking.start_time)} - {formatTimeForDisplay(booking.end_time)}
-                      </div>
-                    </div>
-
-                    <div>
-                      <div className="text-xs font-medium text-gray-500 mb-1">Fee</div>
-                      <div className="text-sm text-gray-900">{formatFee(booking)}</div>
-                    </div>
-
-                    <div>
-                      <div className="text-xs font-medium text-gray-500 mb-1">Created</div>
-                      <div className="text-sm text-gray-500">{formatTimestamp(booking.created_at)}</div>
-                    </div>
-                  </div>
-
-                  <div className="flex gap-2 pt-3 border-t">
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      className="flex-1"
-                      onClick={async () => {
-                        setViewDialogOpen(true)
-                        // Don't set selectedBooking from list - wait for fresh data from API
-                        await fetchBookingDetails(booking.id)
-                      }}
-                    >
-                      <Eye className="w-4 h-4 mr-1" />
-                      View
-                    </Button>
-                    <Button
-                      size="sm"
-                      variant="destructive"
-                      className="flex-1"
-                      onClick={() => handleDeleteBooking(booking.id)}
-                      disabled={saving}
-                    >
-                      <Trash2 className="w-4 h-4 mr-1" />
-                      Delete
-                    </Button>
-                  </div>
-                </div>
-              )
-            })}
-            {/* Page size selector and total count for mobile */}
-            <div className="bg-white rounded-lg shadow px-4 py-3 border-t border-gray-200 flex items-center justify-between">
-              <div className="text-sm text-gray-700">
-                Showing <span className="font-medium">{bookings.length}</span> of <span className="font-medium">{total}</span>
-              </div>
-              <Select
-                value={pageSize.toString()}
-                onValueChange={(value) => {
-                  setPageSize(parseInt(value))
-                  fetchBookings()
-                }}
-              >
-                <SelectTrigger className="w-20 h-8">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="10">10</SelectItem>
-                  <SelectItem value="25">25</SelectItem>
-                  <SelectItem value="50">50</SelectItem>
-                  <SelectItem value="100">100</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-            {/* Infinite scroll sentinel */}
-            {hasMore && (
-              <div ref={scrollSentinelRef} className="py-4 flex justify-center">
-                {loading && <Loader2 className="w-6 h-6 animate-spin text-gray-400" />}
-              </div>
-            )}
-            {!hasMore && bookings.length > 0 && (
-              <div className="bg-white rounded-lg shadow px-4 py-3 text-center text-sm text-gray-500">
-                No more bookings to load
-              </div>
-            )}
-          </div>
-        </>
-      )}
+      <BookingTable
+        bookings={bookings}
+        total={total}
+        loading={loading}
+        hasMore={hasMore}
+        pageSize={pageSize}
+        onPageSizeChange={(size) => {
+          setPageSize(size)
+          fetchBookings()
+        }}
+        onViewBooking={async (bookingId) => {
+          setViewDialogOpen(true)
+          await fetchBookingDetails(bookingId)
+        }}
+        onDeleteBooking={handleDeleteBooking}
+        saving={saving}
+        scrollSentinelRef={scrollSentinelRef}
+        referenceNumberFilter={referenceNumberFilter}
+        nameFilter={nameFilter}
+        emailFilter={emailFilter}
+        phoneFilter={phoneFilter}
+        lastCheckedAt={lastCheckedAtRef.current}
+      />
 
       {/* View Booking Dialog */}
       <Dialog open={viewDialogOpen} onOpenChange={setViewDialogOpen}>

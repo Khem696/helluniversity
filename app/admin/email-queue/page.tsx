@@ -64,6 +64,8 @@ export default function EmailQueuePage() {
   const [emailToDelete, setEmailToDelete] = useState<EmailQueueItem | null>(null)
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false)
   const [deleting, setDeleting] = useState(false)
+  const [cleanupDialogOpen, setCleanupDialogOpen] = useState(false)
+  const [cleaningUp, setCleaningUp] = useState(false)
   const [statusFilter, setStatusFilter] = useState<string>("all")
   const [emailTypeFilter, setEmailTypeFilter] = useState<string>("all")
   const [bookingReferenceFilter, setBookingReferenceFilter] = useState("")
@@ -262,11 +264,8 @@ export default function EmailQueuePage() {
 
   // Cleanup old sent emails
   const handleCleanup = async () => {
-    if (!confirm("Delete all sent emails older than 30 days?")) {
-      return
-    }
-
     try {
+      setCleaningUp(true)
       const response = await fetch(API_PATHS.adminEmailQueue, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -279,6 +278,7 @@ export default function EmailQueuePage() {
         toast.success(`Cleaned up ${responseData.deletedCount || 0} old emails`)
         // Refresh to get updated list after cleanup
         fetchEmails()
+        setCleanupDialogOpen(false)
       } else {
         const errorMsg = typeof json.error === 'string' ? json.error : json.error?.message || JSON.stringify(json.error) || "Failed to cleanup"
         toast.error(errorMsg)
@@ -287,6 +287,8 @@ export default function EmailQueuePage() {
       const errorMsg = error instanceof Error ? error.message : "Failed to cleanup"
       toast.error(errorMsg)
       console.error(error)
+    } finally {
+      setCleaningUp(false)
     }
   }
 
@@ -395,7 +397,7 @@ export default function EmailQueuePage() {
             </>
           )}
         </Button>
-        <Button onClick={handleCleanup} variant="outline" className="w-full sm:w-auto">
+        <Button onClick={() => setCleanupDialogOpen(true)} variant="outline" className="w-full sm:w-auto">
           <Trash className="w-4 h-4 mr-2" />
           <span className="hidden sm:inline">Cleanup Old Sent Emails</span>
           <span className="sm:hidden">Cleanup</span>
@@ -812,6 +814,26 @@ export default function EmailQueuePage() {
         }}
         isLoading={deleting}
         confirmButtonText="Delete Email"
+      />
+
+      {/* Cleanup Confirmation Dialog */}
+      <GenericDeleteConfirmationDialog
+        open={cleanupDialogOpen}
+        onOpenChange={setCleanupDialogOpen}
+        title="Cleanup Old Sent Emails"
+        description="Are you sure you want to delete all sent emails older than 30 days?"
+        itemName="Old Sent Emails"
+        itemDetails={
+          <div className="space-y-1 text-xs">
+            <div>This will permanently delete all emails with status "sent" that are older than 30 days.</div>
+            <div className="text-gray-500 mt-2">This action cannot be undone.</div>
+          </div>
+        }
+        warningMessage="All sent emails older than 30 days will be permanently deleted from the queue. This action cannot be undone."
+        onConfirm={handleCleanup}
+        onCancel={() => setCleanupDialogOpen(false)}
+        isLoading={cleaningUp}
+        confirmButtonText="Cleanup Emails"
       />
     </div>
   )
