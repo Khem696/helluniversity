@@ -3,34 +3,53 @@ import { isProduction } from '@/lib/env'
 
 /**
  * Get the production base URL for robots.txt
- * Robots.txt should use the production domain
+ * Robots.txt should ALWAYS use the production domain, not preview URLs
+ * 
+ * IMPORTANT: This function NEVER uses VERCEL_URL to avoid preview URLs
+ * in robots.txt. Google Search Console only accepts URLs from verified domains.
  */
 function getProductionBaseUrl(): string {
-  // Priority 1: Explicitly set production URL
+  // Priority 1: Explicitly set production URL (required in Vercel)
   if (process.env.NEXT_PUBLIC_BASE_URL) {
-    return process.env.NEXT_PUBLIC_BASE_URL
+    const url = process.env.NEXT_PUBLIC_BASE_URL.trim()
+    // Ensure it's not a Vercel preview URL
+    if (!url.includes('.vercel.app')) {
+      return url
+    }
   }
   
   // Priority 2: Alternative site URL variable
   if (process.env.NEXT_PUBLIC_SITE_URL) {
-    return process.env.NEXT_PUBLIC_SITE_URL
+    const url = process.env.NEXT_PUBLIC_SITE_URL.trim()
+    // Ensure it's not a Vercel preview URL
+    if (!url.includes('.vercel.app')) {
+      return url
+    }
   }
   
-  // Priority 3: Default production URL
-  // Never use VERCEL_URL for robots.txt as it could be a preview URL
-  if (isProduction()) {
-    return 'https://www.huculturehub.com'
+  // Priority 3: Hardcoded production domain (fallback)
+  // NEVER use VERCEL_URL here - it could be a preview URL
+  // This ensures robots.txt always uses production URLs even in preview builds
+  const productionDomain = 'https://www.huculturehub.com'
+  
+  // Log warning if environment variable is not set (helpful for debugging)
+  if (process.env.NODE_ENV !== 'development') {
+    console.warn(
+      '[Robots] NEXT_PUBLIC_BASE_URL not set. Using hardcoded production domain:',
+      productionDomain,
+      'Please set NEXT_PUBLIC_BASE_URL in Vercel environment variables.'
+    )
   }
   
-  // For non-production, still return production URL
-  return 'https://www.huculturehub.com'
+  return productionDomain
 }
-
-const baseUrl = getProductionBaseUrl()
 
 export const dynamic = 'force-static'
 
 export default function robots(): MetadataRoute.Robots {
+  // Always use production URL for robots.txt, never preview URLs
+  const baseUrl = getProductionBaseUrl()
+  
   return {
     rules: [
       {
