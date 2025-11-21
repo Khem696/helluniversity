@@ -2,6 +2,11 @@ import { StudioGalleryPage as StudioGalleryContent } from '@/components/StudioGa
 import { generateMetadata as generateSEOMetadata, getBaseUrl } from '@/lib/seo-utils'
 import { BreadcrumbWrapper } from '@/components/BreadcrumbWrapper'
 
+// Configure route segment to handle RSC requests properly
+// This helps prevent 404s for _rsc parameter requests during client-side navigation
+export const dynamic = 'auto'
+export const revalidate = 3600 // Revalidate every hour
+
 export const metadata = generateSEOMetadata({
   title: 'Studio & Gallery',
   description: 'Explore the Studio and Gallery of Hell University in Mae Taeng, Chiang Mai, Thailand. View our event spaces available for booking, artwork collection, and gallery exhibitions perfect for arranging cultural activities and events.',

@@ -3,6 +3,11 @@ import { generateMetadata as generateSEOMetadata, getBaseUrl } from '@/lib/seo-u
 import { generateAboutPageStructuredData } from '@/lib/structured-data'
 import { BreadcrumbWrapper } from '@/components/BreadcrumbWrapper'
 
+// Configure route segment to handle RSC requests properly
+// This helps prevent 404s for _rsc parameter requests during client-side navigation
+export const dynamic = 'auto'
+export const revalidate = 3600 // Revalidate every hour
+
 export const metadata = generateSEOMetadata({
   title: 'About',
   description: 'Learn about Hell University – a cultural hub in Mae Taeng, Chiang Mai, Thailand. Discover our mission to provide event booking and activity arrangement services for cultural gatherings, workshops, and creative events.',
