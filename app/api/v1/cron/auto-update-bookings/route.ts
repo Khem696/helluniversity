@@ -21,6 +21,10 @@
  * This endpoint should be called periodically (e.g., every hour)
  */
 
+// CRITICAL: Force dynamic execution to prevent caching
+// Cron jobs must execute every time, not serve cached responses
+export const dynamic = 'force-dynamic'
+
 import { NextResponse } from 'next/server'
 import { autoUpdateFinishedBookings } from '@/lib/bookings'
 import { withErrorHandling, successResponse, errorResponse, ErrorCodes } from '@/lib/api-response'
@@ -45,13 +49,33 @@ async function handleAutoUpdate(request: Request) {
     const requestId = crypto.randomUUID()
     const logger = createRequestLogger(requestId, getRequestPath(request))
     
-    await logger.info('Auto-update bookings cron job started')
+    // Log all incoming headers for debugging (before authentication check)
+    const allHeaders: Record<string, string> = {}
+    request.headers.forEach((value, key) => {
+      // Mask sensitive values but show structure
+      if (key.toLowerCase() === 'authorization') {
+        allHeaders[key] = value.substring(0, 20) + '...' + (value.length > 20 ? ` (length: ${value.length})` : '')
+      } else {
+        allHeaders[key] = value
+      }
+    })
+    console.log('[auto-update-bookings] Request received with headers:', allHeaders)
+    console.log('[auto-update-bookings] Request method:', request.method)
+    console.log('[auto-update-bookings] Request URL:', request.url)
+    
+    await logger.info('Auto-update bookings cron job started', {
+      method: request.method,
+      url: request.url,
+      headerCount: Array.from(request.headers.keys()).length,
+    })
     
     // Verify Vercel cron secret
     try {
       verifyCronSecret(request)
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : 'Authentication failed'
+      console.error('[auto-update-bookings] Authentication failed:', errorMessage)
+      console.error('[auto-update-bookings] Available headers:', Object.keys(allHeaders))
       await logger.error(errorMessage, error instanceof Error ? error : new Error(errorMessage))
       return errorResponse(
         errorMessage.includes('not configured') ? ErrorCodes.INTERNAL_ERROR : ErrorCodes.UNAUTHORIZED,

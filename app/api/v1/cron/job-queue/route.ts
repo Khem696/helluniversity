@@ -17,6 +17,10 @@
  * This endpoint should be called by Vercel Cron or similar scheduler
  */
 
+// CRITICAL: Force dynamic execution to prevent caching
+// Cron jobs must execute every time, not serve cached responses
+export const dynamic = 'force-dynamic'
+
 import { NextResponse } from 'next/server'
 import { processJobQueue } from '@/lib/job-queue'
 import { withErrorHandling, successResponse, errorResponse, ErrorCodes } from '@/lib/api-response'

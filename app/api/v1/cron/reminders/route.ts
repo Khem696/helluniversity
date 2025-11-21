@@ -15,6 +15,10 @@
  * Sends reminder emails for upcoming bookings
  */
 
+// CRITICAL: Force dynamic execution to prevent caching
+// Cron jobs must execute every time, not serve cached responses
+export const dynamic = 'force-dynamic'
+
 import { NextResponse } from "next/server"
 import { sendBookingReminders } from "@/lib/booking-reminders"
 import { createRequestLogger } from "@/lib/logger"

@@ -16,6 +16,10 @@
  * Handles status_change emails with status: pending_deposit, confirmed, cancelled
  */
 
+// CRITICAL: Force dynamic execution to prevent caching
+// Cron jobs must execute every time, not serve cached responses
+export const dynamic = 'force-dynamic'
+
 import { NextResponse } from "next/server"
 import { processCriticalStatusEmails } from "@/lib/email-queue"
 import { createRequestLogger } from "@/lib/logger"

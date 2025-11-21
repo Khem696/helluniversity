@@ -15,6 +15,10 @@
  * Sends daily booking digest email to admin
  */
 
+// CRITICAL: Force dynamic execution to prevent caching
+// Cron jobs must execute every time, not serve cached responses
+export const dynamic = 'force-dynamic'
+
 import { NextResponse } from "next/server"
 import { sendDailyBookingDigest } from "@/lib/booking-digest"
 import { createRequestLogger } from "@/lib/logger"

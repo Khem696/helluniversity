@@ -911,21 +911,12 @@ export async function autoUpdateFinishedBookings(): Promise<{
     reason: string
   }> = []
 
-  console.log(`[autoUpdateFinishedBookings] Processing ${result.rows.length} bookings. Current time (Bangkok): ${new Date(now * 1000).toISOString()}`)
-  
   for (const row of result.rows) {
     const bookingRow = row as any
     const startTimestamp = await calculateReservationStartTimestamp(
       bookingRow.start_date,
       bookingRow.start_time
     )
-    
-    // Debug logging for pending/pending_deposit bookings
-    if (bookingRow.status === "pending" || bookingRow.status === "pending_deposit") {
-      const startDateStr = bookingRow.start_date ? new Date(bookingRow.start_date * 1000).toISOString() : 'null'
-      const startTimestampStr = startTimestamp ? new Date(startTimestamp * 1000).toISOString() : 'null'
-      console.log(`[autoUpdateFinishedBookings] ${bookingRow.status} booking ${bookingRow.id}: start_date=${startDateStr}, start_time=${bookingRow.start_time || 'null'}, startTimestamp=${startTimestampStr}, now=${new Date(now * 1000).toISOString()}, shouldCancel=${startTimestamp && startTimestamp < now}`)
-    }
     
     // Check pending, pending_deposit, and paid_deposit bookings - cancel if start date passed
     if (bookingRow.status === "pending" || bookingRow.status === "pending_deposit" || bookingRow.status === "paid_deposit") {
@@ -936,7 +927,6 @@ export async function autoUpdateFinishedBookings(): Promise<{
       if (bookingRow.start_time && startTimestamp) {
         // Has start_time: compare timestamp directly (already in Bangkok timezone)
         shouldCancel = startTimestamp < now
-        console.log(`[autoUpdateFinishedBookings] ${bookingRow.status} booking ${bookingRow.id} with start_time: startTimestamp=${new Date(startTimestamp * 1000).toISOString()}, now=${new Date(now * 1000).toISOString()}, shouldCancel=${shouldCancel}`)
       } else if (bookingRow.start_date) {
         // No start_time: compare dates (if start_date is before today, cancel)
         // Get today's date in Bangkok timezone (at start of day)
@@ -961,11 +951,9 @@ export async function autoUpdateFinishedBookings(): Promise<{
         
         // If start_date (start of day) is before today (start of day), cancel it
         shouldCancel = startDateStartTimestamp < todayStartTimestamp
-        console.log(`[autoUpdateFinishedBookings] ${bookingRow.status} booking ${bookingRow.id} has no start_time: start_date=${new Date(bookingRow.start_date * 1000).toISOString()}, startDateStart=${new Date(startDateStartTimestamp * 1000).toISOString()}, today_start=${new Date(todayStartTimestamp * 1000).toISOString()}, shouldCancel=${shouldCancel}`)
       }
       
       if (shouldCancel) {
-        console.log(`[autoUpdateFinishedBookings] Cancelling ${bookingRow.status} booking ${bookingRow.id} - start date/time has passed`)
         const newStatus = "cancelled"
         const changeReason = bookingRow.status === "pending"
           ? "Automatically cancelled: reservation start date/time has passed without deposit confirmation"
