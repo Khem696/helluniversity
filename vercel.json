@@ -4,7 +4,6 @@
   "framework": "nextjs",
   "env": {
     "STATIC_EXPORT": "false",
-    "NODE_ENV": "production",
     "NEXT_PUBLIC_ENABLE_VERCEL_ANALYTICS": "1"
   },
   "functions": {

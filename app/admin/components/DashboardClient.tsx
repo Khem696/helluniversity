@@ -2,6 +2,7 @@
 
 import { useAdminStats } from "@/hooks/useAdminStats"
 import { DashboardCard } from "./DashboardCard"
+import { DeleteAllBookingsCard } from "./DeleteAllBookingsCard"
 
 /**
  * Client-side dashboard component that uses admin stats hook
@@ -68,6 +69,8 @@ export function DashboardClient() {
         title="Images"
         description="Manage uploaded images"
       />
+
+      <DeleteAllBookingsCard />
     </div>
   )
 }
