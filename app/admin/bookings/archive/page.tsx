@@ -127,6 +127,13 @@ export default function BookingsArchivePage() {
   const [calendarMonth, setCalendarMonth] = useState<Date>(new Date())
   // Unavailable dates for restoration calendar (excludes current booking's dates)
   const [unavailableDatesForRestoration, setUnavailableDatesForRestoration] = useState<Set<string>>(new Set())
+  const [unavailableTimeRangesForRestoration, setUnavailableTimeRangesForRestoration] = useState<Array<{
+    date: string
+    startTime: string | null
+    endTime: string | null
+    startDate: number
+    endDate: number
+  }>>([])
   // Deposit verification
   const [verifyDeposit, setVerifyDeposit] = useState(false)
   // Restoration confirmation dialog
@@ -324,15 +331,19 @@ export default function BookingsArchivePage() {
       
       if (json.success) {
         const unavailableDatesArray = json.data?.unavailableDates || json.unavailableDates || []
+        const unavailableTimeRangesArray = json.data?.unavailableTimeRanges || json.unavailableTimeRanges || []
         setUnavailableDatesForRestoration(new Set(unavailableDatesArray))
+        setUnavailableTimeRangesForRestoration(unavailableTimeRangesArray)
         console.log(`[Archive] Unavailable dates fetched for restoration (excluding booking ${bookingId || 'none'}): ${unavailableDatesArray.length} dates`)
       } else {
         console.error("[Archive] Failed to fetch unavailable dates for restoration:", json)
         setUnavailableDatesForRestoration(new Set())
+        setUnavailableTimeRangesForRestoration([])
       }
     } catch (error) {
       console.error("Failed to fetch unavailable dates for restoration:", error)
       setUnavailableDatesForRestoration(new Set())
+      setUnavailableTimeRangesForRestoration([])
     }
   }, [])
 
@@ -344,6 +355,7 @@ export default function BookingsArchivePage() {
     } else if (!statusDialogOpen) {
       // Clear unavailable dates when dialog closes
       setUnavailableDatesForRestoration(new Set())
+      setUnavailableTimeRangesForRestoration([])
     }
   }, [statusDialogOpen, selectedBooking?.status, selectedBooking?.id, fetchUnavailableDatesForRestoration])
 
@@ -2031,6 +2043,12 @@ export default function BookingsArchivePage() {
                                   }
                                   return isUnavailable
                                 }}
+                                isOccupied={(date) => {
+                                  // Check if date is occupied (has confirmed booking)
+                                  const dateStr = dateToBangkokDateString(date)
+                                  return unavailableDatesForRestoration.has(dateStr)
+                                }}
+                                occupiedTimeRanges={unavailableTimeRangesForRestoration}
                               />
                             </PopoverContent>
                           </Popover>
@@ -2082,6 +2100,12 @@ export default function BookingsArchivePage() {
                                     }
                                     return isUnavailable
                                   }}
+                                  isOccupied={(date) => {
+                                    // Check if date is occupied (has confirmed booking)
+                                    const dateStr = dateToBangkokDateString(date)
+                                    return unavailableDatesForRestoration.has(dateStr)
+                                  }}
+                                  occupiedTimeRanges={unavailableTimeRangesForRestoration}
                                 />
                               </PopoverContent>
                             </Popover>

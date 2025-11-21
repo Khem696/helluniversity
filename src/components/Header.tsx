@@ -1303,6 +1303,12 @@ export function Header() {
                                     }
                                     return isUnavailable
                                   }}
+                                  isOccupied={(date) => {
+                                    // Check if date is occupied (has confirmed booking)
+                                    const dateStr = dateToBangkokDateString(date)
+                                    return unavailableDates.has(dateStr)
+                                  }}
+                                  occupiedTimeRanges={unavailableTimeRanges}
                                 />
                               </PopoverContent>
                             </Popover>
@@ -1384,6 +1390,12 @@ export function Header() {
                                       }
                                       return isUnavailable
                                     }}
+                                    isOccupied={(date) => {
+                                      // Check if date is occupied (has confirmed booking)
+                                      const dateStr = dateToBangkokDateString(date)
+                                      return unavailableDates.has(dateStr)
+                                    }}
+                                    occupiedTimeRanges={unavailableTimeRanges}
                                   />
                                 </PopoverContent>
                               </Popover>

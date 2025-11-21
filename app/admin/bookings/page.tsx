@@ -205,6 +205,13 @@ export default function BookingsPage() {
   const [dateRangeToggle, setDateRangeToggle] = useState<"single" | "multiple">("single")
   // Unavailable dates for date change calendar (excludes current booking's dates)
   const [unavailableDatesForDateChange, setUnavailableDatesForDateChange] = useState<Set<string>>(new Set())
+  const [unavailableTimeRangesForDateChange, setUnavailableTimeRangesForDateChange] = useState<Array<{
+    date: string
+    startTime: string | null
+    endTime: string | null
+    startDate: number
+    endDate: number
+  }>>([])
   const [calendarMonth, setCalendarMonth] = useState<Date>(new Date())
   const [newResponsesCount, setNewResponsesCount] = useState<number>(0)
   const [confirmationDialogOpen, setConfirmationDialogOpen] = useState(false)
@@ -722,16 +729,20 @@ export default function BookingsPage() {
       
       if (json.success) {
         const unavailableDatesArray = json.data?.unavailableDates || json.unavailableDates || []
+        const unavailableTimeRangesArray = json.data?.unavailableTimeRanges || json.unavailableTimeRanges || []
         setUnavailableDatesForDateChange(new Set(unavailableDatesArray))
+        setUnavailableTimeRangesForDateChange(unavailableTimeRangesArray)
         console.log(`[Admin] Unavailable dates fetched for date change (excluding booking ${bookingId || 'none'}): ${unavailableDatesArray.length} dates`)
       } else {
         console.error("[Admin] Failed to fetch unavailable dates for date change:", json)
         setUnavailableDatesForDateChange(new Set())
+        setUnavailableTimeRangesForDateChange([])
       }
-    } catch (error) {
-      console.error("Failed to fetch unavailable dates for date change:", error)
-      setUnavailableDatesForDateChange(new Set())
-    }
+      } catch (error) {
+        console.error("Failed to fetch unavailable dates for date change:", error)
+        setUnavailableDatesForDateChange(new Set())
+        setUnavailableTimeRangesForDateChange([])
+      }
   }, [])
 
   // Fetch unavailable dates when date change dialog opens and initialize date range toggle
@@ -741,12 +752,13 @@ export default function BookingsPage() {
       fetchUnavailableDatesForDateChange(selectedBooking.id)
       // Initialize date range toggle based on current booking
       setDateRangeToggle(selectedBooking.end_date ? "multiple" : "single")
-    } else {
-      // Clear unavailable dates when dialog closes
-      setUnavailableDatesForDateChange(new Set())
-      // Reset date range toggle
-      setDateRangeToggle("single")
-    }
+      } else {
+        // Clear unavailable dates when dialog closes
+        setUnavailableDatesForDateChange(new Set())
+        setUnavailableTimeRangesForDateChange([])
+        // Reset date range toggle
+        setDateRangeToggle("single")
+      }
   }, [selectedAction, selectedBooking?.id, selectedBooking?.status, selectedBooking?.end_date, fetchUnavailableDatesForDateChange])
 
   // Polling integration: Refresh unavailable dates when date change dialog is open
@@ -3075,6 +3087,12 @@ export default function BookingsPage() {
                               }
                               return isUnavailable
                             }}
+                            isOccupied={(date) => {
+                              // Check if date is occupied (has confirmed booking)
+                              const dateStr = dateToBangkokDateString(date)
+                              return unavailableDatesForDateChange.has(dateStr)
+                            }}
+                            occupiedTimeRanges={unavailableTimeRangesForDateChange}
                           />
                         </PopoverContent>
                       </Popover>
@@ -3126,6 +3144,12 @@ export default function BookingsPage() {
                                 }
                                 return isUnavailable
                               }}
+                              isOccupied={(date) => {
+                                // Check if date is occupied (has confirmed booking)
+                                const dateStr = dateToBangkokDateString(date)
+                                return unavailableDatesForDateChange.has(dateStr)
+                              }}
+                              occupiedTimeRanges={unavailableTimeRangesForDateChange}
                             />
                           </PopoverContent>
                         </Popover>

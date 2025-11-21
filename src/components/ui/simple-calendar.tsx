@@ -6,6 +6,14 @@ import { format, startOfMonth, endOfMonth, eachDayOfInterval, isSameMonth, isSam
 import { cn } from "./utils";
 import { buttonVariants } from "./button";
 
+interface OccupiedTimeRange {
+  date: string; // ISO date string (YYYY-MM-DD)
+  startTime: string | null;
+  endTime: string | null;
+  startDate: number; // Unix timestamp for full start
+  endDate: number; // Unix timestamp for full end
+}
+
 interface SimpleCalendarProps {
   selected?: Date;
   onSelect?: (date: Date) => void;
@@ -13,6 +21,8 @@ interface SimpleCalendarProps {
   className?: string;
   month?: Date;
   onMonthChange?: (date: Date) => void;
+  isOccupied?: (date: Date) => boolean; // Optional function to check if date is occupied (distinct from disabled)
+  occupiedTimeRanges?: OccupiedTimeRange[]; // Optional time ranges for occupied dates (for tooltip)
 }
 
 export function SimpleCalendar({
@@ -22,6 +32,8 @@ export function SimpleCalendar({
   className,
   month: controlledMonth,
   onMonthChange,
+  isOccupied,
+  occupiedTimeRanges = [],
 }: SimpleCalendarProps) {
   const [internalMonth, setInternalMonth] = React.useState(new Date());
   const month = controlledMonth || internalMonth;
@@ -124,6 +136,30 @@ export function SimpleCalendar({
             const isCurrentMonth = isSameMonth(date, month);
             const isTodayDate = isToday(date);
             const isDisabled = disabled ? disabled(date) : false;
+            const isOccupiedDate = isOccupied ? isOccupied(date) : false;
+            
+            // Get time ranges for this date (for tooltip)
+            const dateStr = format(date, "yyyy-MM-dd");
+            const dateTimeRanges = occupiedTimeRanges.filter(
+              (range) => range.date === dateStr
+            );
+            
+            // Build tooltip text
+            let tooltipText: string | undefined = undefined;
+            if (isOccupiedDate && dateTimeRanges.length > 0) {
+              const timeInfo = dateTimeRanges
+                .map((range) => {
+                  const start = range.startTime || "All day";
+                  const end = range.endTime || "All day";
+                  return start === end ? start : `${start} - ${end}`;
+                })
+                .join(", ");
+              tooltipText = `Occupied: ${timeInfo}`;
+            } else if (isOccupiedDate) {
+              tooltipText = "This date is occupied";
+            } else if (isDisabled) {
+              tooltipText = "This date is unavailable";
+            }
 
             return (
               <div
@@ -139,18 +175,35 @@ export function SimpleCalendar({
                   disabled={isDisabled}
                   className={cn(
                     buttonVariants({ variant: "ghost" }),
-                    "size-8 p-0 font-normal",
-                    isSelected &&
+                    "size-8 p-0 font-normal relative",
+                    // Selected styling (but not if occupied - occupied takes priority)
+                    isSelected && !isOccupiedDate &&
                       "bg-primary text-primary-foreground hover:bg-primary hover:text-primary-foreground",
+                    // Today styling (but not if selected or disabled)
                     isTodayDate && !isSelected && !isDisabled &&
                       "bg-accent text-accent-foreground",
-                    isDisabled && 
-                      "opacity-40 cursor-not-allowed bg-red-50 hover:bg-red-50 text-red-400 line-through",
+                    // Styling for occupied dates (distinct from other disabled dates)
+                    // Occupied dates always show red styling, even if selected
+                    isOccupiedDate && 
+                      "opacity-60 cursor-not-allowed bg-red-50 hover:bg-red-100 text-red-600",
+                    // Selected AND occupied: show red background with primary border or different styling
+                    isSelected && isOccupiedDate &&
+                      "ring-2 ring-primary ring-offset-1",
+                    // Styling for other disabled dates (past, today, etc.)
+                    isDisabled && !isOccupiedDate &&
+                      "opacity-40 cursor-not-allowed text-muted-foreground",
                     "focus:z-20"
                   )}
-                  title={isDisabled ? "This date is unavailable (occupied)" : undefined}
+                  title={tooltipText}
                 >
                   {format(date, "d")}
+                  {/* Occupied date indicator - small dot in top-right corner */}
+                  {isOccupiedDate && (
+                    <span
+                      className="absolute top-0.5 right-0.5 w-1.5 h-1.5 bg-red-500 rounded-full"
+                      aria-label="Occupied"
+                    />
+                  )}
                 </button>
               </div>
             );
