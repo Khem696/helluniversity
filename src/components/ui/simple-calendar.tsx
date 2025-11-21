@@ -177,45 +177,6 @@ export function SimpleCalendar({
               }
             }
 
-            // Wrap button in tooltip if there's a tooltip message
-            const buttonElement = (
-              <button
-                type="button"
-                onClick={() => handleDateClick(date)}
-                disabled={isDisabled}
-                className={cn(
-                  buttonVariants({ variant: "ghost" }),
-                  "size-8 p-0 font-normal relative",
-                  // Selected styling (but not if occupied - occupied takes priority)
-                  isSelected && !isOccupiedDate &&
-                    "bg-primary text-primary-foreground hover:bg-primary hover:text-primary-foreground",
-                  // Today styling (but not if selected or disabled)
-                  isTodayDate && !isSelected && !isDisabled &&
-                    "bg-accent text-accent-foreground",
-                  // Styling for occupied dates (distinct from other disabled dates)
-                  // Occupied dates always show red styling, even if selected
-                  isOccupiedDate && 
-                    "opacity-60 cursor-not-allowed bg-red-50 hover:bg-red-100 text-red-600",
-                  // Selected AND occupied: show red background with primary border or different styling
-                  isSelected && isOccupiedDate &&
-                    "ring-2 ring-primary ring-offset-1",
-                  // Styling for other disabled dates (past, today, etc.)
-                  isDisabled && !isOccupiedDate &&
-                    "opacity-40 cursor-not-allowed text-muted-foreground",
-                  "focus:z-20"
-                )}
-              >
-                {format(date, "d")}
-                {/* Occupied date indicator - small dot in top-right corner */}
-                {isOccupiedDate && (
-                  <span
-                    className="absolute top-0.5 right-0.5 w-1.5 h-1.5 bg-red-500 rounded-full"
-                    aria-label="Occupied"
-                  />
-                )}
-              </button>
-            );
-
             return (
               <div
                 key={date.toISOString()}
@@ -225,16 +186,90 @@ export function SimpleCalendar({
                 )}
               >
                 {tooltipText ? (
-                  <Tooltip>
+                  <Tooltip delayDuration={200}>
                     <TooltipTrigger asChild>
-                      {buttonElement}
+                      <div className="w-full h-full flex items-center justify-center">
+                        <button
+                          type="button"
+                          onClick={() => handleDateClick(date)}
+                          disabled={isDisabled}
+                          className={cn(
+                            buttonVariants({ variant: "ghost" }),
+                            "size-8 p-0 font-normal relative",
+                            // Selected styling (but not if occupied - occupied takes priority)
+                            isSelected && !isOccupiedDate &&
+                              "bg-primary text-primary-foreground hover:bg-primary hover:text-primary-foreground",
+                            // Today styling (but not if selected or disabled)
+                            isTodayDate && !isSelected && !isDisabled &&
+                              "bg-accent text-accent-foreground",
+                            // Styling for occupied dates (distinct from other disabled dates)
+                            // Occupied dates always show red styling, even if selected
+                            isOccupiedDate && 
+                              "opacity-60 cursor-not-allowed bg-red-50 hover:bg-red-100 text-red-600",
+                            // Selected AND occupied: show red background with primary border or different styling
+                            isSelected && isOccupiedDate &&
+                              "ring-2 ring-primary ring-offset-1",
+                            // Styling for other disabled dates (past, today, etc.)
+                            isDisabled && !isOccupiedDate &&
+                              "opacity-40 cursor-not-allowed text-muted-foreground",
+                            "focus:z-20"
+                          )}
+                        >
+                          {format(date, "d")}
+                          {/* Occupied date indicator - small dot in top-right corner */}
+                          {isOccupiedDate && (
+                            <span
+                              className="absolute top-0.5 right-0.5 w-1.5 h-1.5 bg-red-500 rounded-full"
+                              aria-label="Occupied"
+                            />
+                          )}
+                        </button>
+                      </div>
                     </TooltipTrigger>
-                    <TooltipContent side="top" className="z-50">
-                      <p>{tooltipText}</p>
+                    <TooltipContent 
+                      side="top" 
+                      sideOffset={8}
+                      className="z-[100] bg-gray-900 text-white text-xs font-medium px-3 py-2 shadow-lg max-w-xs"
+                    >
+                      {tooltipText}
                     </TooltipContent>
                   </Tooltip>
                 ) : (
-                  buttonElement
+                  <button
+                    type="button"
+                    onClick={() => handleDateClick(date)}
+                    disabled={isDisabled}
+                    className={cn(
+                      buttonVariants({ variant: "ghost" }),
+                      "size-8 p-0 font-normal relative",
+                      // Selected styling (but not if occupied - occupied takes priority)
+                      isSelected && !isOccupiedDate &&
+                        "bg-primary text-primary-foreground hover:bg-primary hover:text-primary-foreground",
+                      // Today styling (but not if selected or disabled)
+                      isTodayDate && !isSelected && !isDisabled &&
+                        "bg-accent text-accent-foreground",
+                      // Styling for occupied dates (distinct from other disabled dates)
+                      // Occupied dates always show red styling, even if selected
+                      isOccupiedDate && 
+                        "opacity-60 cursor-not-allowed bg-red-50 hover:bg-red-100 text-red-600",
+                      // Selected AND occupied: show red background with primary border or different styling
+                      isSelected && isOccupiedDate &&
+                        "ring-2 ring-primary ring-offset-1",
+                      // Styling for other disabled dates (past, today, etc.)
+                      isDisabled && !isOccupiedDate &&
+                        "opacity-40 cursor-not-allowed text-muted-foreground",
+                      "focus:z-20"
+                    )}
+                  >
+                    {format(date, "d")}
+                    {/* Occupied date indicator - small dot in top-right corner */}
+                    {isOccupiedDate && (
+                      <span
+                        className="absolute top-0.5 right-0.5 w-1.5 h-1.5 bg-red-500 rounded-full"
+                        aria-label="Occupied"
+                      />
+                    )}
+                  </button>
                 )}
               </div>
             );
