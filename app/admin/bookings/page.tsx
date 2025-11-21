@@ -297,6 +297,14 @@ export default function BookingsPage() {
     { value: "Holiday Festive", label: "Holiday Festive" },
     { value: "Other", label: "Other" },
   ]
+
+  // Available statuses for active bookings (exclude finished and cancelled - those are in archive)
+  const availableStatuses = [
+    { value: "pending", label: "Pending" },
+    { value: "pending_deposit", label: "Pending Deposit" },
+    { value: "paid_deposit", label: "Paid Deposit" },
+    { value: "confirmed", label: "Confirmed" },
+  ]
   
   // Build base endpoint with filters (without limit/offset for infinite scroll)
   // Use debounced values for search inputs to prevent refetch on every keystroke
@@ -1606,6 +1614,7 @@ export default function BookingsPage() {
         sortOrder={sortOrder}
         onSortOrderChange={setSortOrder}
         eventTypes={eventTypes}
+        statuses={availableStatuses}
         depositStatusFilter={depositStatusFilter}
         onDepositStatusFilterChange={setDepositStatusFilter}
         onClearAll={() => {

@@ -65,13 +65,17 @@ interface AdvancedBookingFiltersProps {
   
   // Event types
   eventTypes: Array<{ value: string; label: string }>
-  
+
+  // Available statuses (for filtering)
+  statuses?: Array<{ value: string; label: string }>
+
   // Clear all
   onClearAll: () => void
   hasActiveFilters: boolean
 }
 
-const ALL_STATUSES = [
+// Default statuses (for backward compatibility, but should be passed as prop)
+const DEFAULT_STATUSES = [
   { value: "pending", label: "Pending" },
   { value: "pending_deposit", label: "Pending Deposit" },
   { value: "paid_deposit", label: "Paid Deposit" },
@@ -118,12 +122,16 @@ export function AdvancedBookingFilters({
   sortOrder,
   onSortOrderChange,
   eventTypes,
+  statuses,
   onClearAll,
   hasActiveFilters,
 }: AdvancedBookingFiltersProps) {
   const [showMultiStatus, setShowMultiStatus] = useState(false)
   const [isMultiStatusDropdownOpen, setIsMultiStatusDropdownOpen] = useState(false)
   const multiStatusRef = useRef<HTMLDivElement>(null)
+
+  // Use provided statuses or fall back to default
+  const ALL_STATUSES = statuses || DEFAULT_STATUSES
 
   // Sync showMultiStatus with statusFilters - if statusFilters has items, show multi mode
   useEffect(() => {
