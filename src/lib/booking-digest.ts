@@ -79,7 +79,7 @@ export async function sendDailyBookingDigest(): Promise<void> {
                 Daily Booking Digest
               </h1>
               <p style="margin: 10px 0 0 0; color: #e0e7ff; font-size: 14px;">
-                ${new Date().toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}
+                ${new Date().toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric', timeZone: 'Asia/Bangkok' })}
               </p>
             </td>
           </tr>
@@ -178,7 +178,7 @@ export async function sendDailyBookingDigest(): Promise<void> {
 
   const textContent = `
 Daily Booking Digest
-${new Date().toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}
+${new Date().toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric', timeZone: 'Asia/Bangkok' })}
 
 Booking Statistics:
 - Total Bookings: ${statsRow.total || 0}
@@ -205,7 +205,7 @@ Hell University Reservation System
     const result = await emailTransporter.sendMail({
       from: `"Hell University" <${process.env.SMTP_USER}>`,
       to: recipientEmail,
-      subject: `Daily Booking Digest - ${new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}`,
+      subject: `Daily Booking Digest - ${new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', timeZone: 'Asia/Bangkok' })}`,
       html: htmlContent,
       text: textContent,
     })
@@ -291,7 +291,7 @@ export async function sendWeeklyBookingDigest(): Promise<void> {
                 Weekly Booking Digest
               </h1>
               <p style="margin: 10px 0 0 0; color: #e0e7ff; font-size: 14px;">
-                ${weekStart.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })} - ${weekEnd.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
+                ${weekStart.toLocaleDateString('en-US', { month: 'short', day: 'numeric', timeZone: 'Asia/Bangkok' })} - ${weekEnd.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric', timeZone: 'Asia/Bangkok' })}
               </p>
             </td>
           </tr>
@@ -390,7 +390,7 @@ export async function sendWeeklyBookingDigest(): Promise<void> {
 
   const textContent = `
 Weekly Booking Digest
-${weekStart.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })} - ${weekEnd.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
+${weekStart.toLocaleDateString('en-US', { month: 'short', day: 'numeric', timeZone: 'Asia/Bangkok' })} - ${weekEnd.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric', timeZone: 'Asia/Bangkok' })}
 
 Booking Statistics:
 - Total Bookings: ${statsRow.total || 0}
@@ -417,7 +417,7 @@ Hell University Reservation System
     const result = await emailTransporter.sendMail({
       from: `"Hell University" <${process.env.SMTP_USER}>`,
       to: recipientEmail,
-      subject: `Weekly Booking Digest - ${weekStart.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })} to ${weekEnd.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}`,
+      subject: `Weekly Booking Digest - ${weekStart.toLocaleDateString('en-US', { month: 'short', day: 'numeric', timeZone: 'Asia/Bangkok' })} to ${weekEnd.toLocaleDateString('en-US', { month: 'short', day: 'numeric', timeZone: 'Asia/Bangkok' })}`,
       html: htmlContent,
       text: textContent,
     })
