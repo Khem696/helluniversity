@@ -69,7 +69,11 @@ interface FormError {
   retryable?: boolean
 }
 
-export function Header() {
+interface HeaderProps {
+  initialBookingEnabled?: boolean
+}
+
+export function Header({ initialBookingEnabled }: HeaderProps = {}) {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false)
   const headerRef = useRef<HTMLElement | null>(null)
   const [mounted, setMounted] = useState(false)
@@ -108,8 +112,9 @@ export function Header() {
     startDate: number
     endDate: number
   }>>([])
-  const [bookingsEnabled, setBookingsEnabled] = useState<boolean>(false) // Start as false to prevent flash
-  const [bookingStatusLoaded, setBookingStatusLoaded] = useState<boolean>(false) // Track if status has been fetched
+  // Use initial value if provided, otherwise start as false to prevent flash
+  const [bookingsEnabled, setBookingsEnabled] = useState<boolean>(initialBookingEnabled ?? false)
+  const [bookingStatusLoaded, setBookingStatusLoaded] = useState<boolean>(initialBookingEnabled !== undefined) // If initial value provided, mark as loaded
   const [calendarMonth, setCalendarMonth] = useState<Date>(new Date())
 
   // Ensure component is mounted (client-side only)
@@ -118,7 +123,37 @@ export function Header() {
   }, [])
 
   // Fetch booking enabled status and poll for changes
+  // Skip initial fetch if we already have the status from server
   useEffect(() => {
+    // If we already have initial status, only poll for updates
+    if (initialBookingEnabled !== undefined && bookingStatusLoaded) {
+      // Poll every 30 seconds to check for status changes
+      const pollInterval = setInterval(async () => {
+        try {
+          const response = await fetch(API_PATHS.settingsBookingEnabled)
+          const json = await response.json()
+          
+          if (json.success && json.data) {
+            const newStatus = json.data.enabled
+            setBookingsEnabled(newStatus)
+            
+            // If bookings are disabled while dialog is open, close the dialog
+            if (!newStatus && bookingOpen) {
+              setBookingOpen(false)
+              toast.error("Bookings are currently disabled. Please try again later.")
+            }
+          }
+        } catch (error) {
+          console.error("Failed to poll booking status:", error)
+        }
+      }, 30000)
+      
+      return () => {
+        clearInterval(pollInterval)
+      }
+    }
+
+    // If no initial status provided, fetch on mount
     async function fetchBookingStatus() {
       try {
         const response = await fetch(API_PATHS.settingsBookingEnabled)
@@ -147,8 +182,8 @@ export function Header() {
       }
     }
 
-    if (mounted) {
-      // Fetch immediately
+    if (mounted && initialBookingEnabled === undefined) {
+      // Fetch immediately only if we don't have initial status
       fetchBookingStatus()
       
       // Poll every 30 seconds to check for status changes
@@ -158,7 +193,7 @@ export function Header() {
         clearInterval(pollInterval)
       }
     }
-  }, [mounted, bookingOpen])
+  }, [mounted, bookingOpen, initialBookingEnabled, bookingStatusLoaded])
 
   // Fetch unavailable dates when booking dialog opens and refresh periodically
   useEffect(() => {

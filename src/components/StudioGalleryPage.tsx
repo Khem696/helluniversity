@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState, type CSSProperties, lazy, Suspense, useCallback } from "react";
 import { ChevronDown, Loader2 } from "lucide-react";
+import Image from "next/image";
 import { ImageWithFallback } from "./figma/ImageWithFallback";
 import { withBasePath } from "@/lib/utils";
 import { ARTWORK_STUDIO_IMAGES, BUILDING_STUDIO_IMAGES, GALLERY_IMAGES_PUBLIC } from "@/lib/imageManifests";
@@ -561,7 +562,7 @@ export function StudioGalleryPage() {
                       <div className="px-6 sm:px-8 md:px-10 lg:px-5 xl:px-6">
                         <div className="mb-4 sm:mb-6 lg:mb-4 xl:mb-6">
                           <div className="mb-3 sm:mb-4">
-                            <img src={withBasePath('/assets/icons/icon_helluniversity.svg')} alt="Hell University" width={96} height={96} className="w-10 h-10 sm:w-11 sm:h-11 md:w-12 md:h-12 lg:w-16 lg:h-16 3xl:w-[4.5rem] 3xl:h-[4.5rem] 4xl:w-[5rem] 4xl:h-[5rem] 5xl:w-[6rem] 5xl:h-[6rem]" />
+                            <Image src={withBasePath('/assets/icons/icon_helluniversity.svg')} alt="Hell University" width={96} height={96} className="w-10 h-10 sm:w-11 sm:h-11 md:w-12 md:h-12 lg:w-16 lg:h-16 3xl:w-[4.5rem] 3xl:h-[4.5rem] 4xl:w-[5rem] 4xl:h-[5rem] 5xl:w-[6rem] 5xl:h-[6rem]" priority />
                           </div>
                           <h1 className="font-heading" style={{ fontSize: 'clamp(32px, 4vw, 56px)', fontWeight: '900', lineHeight: '0.9', color: '#5a3a2a' }}>
                             Hell<br />University
@@ -684,14 +685,17 @@ export function StudioGalleryPage() {
                 {(viewerMode === "studio" ? allImages : galleryImages).map((src, i) => (
                   <CarouselItem key={src} className="h-full pl-0">
                     <div className="flex items-center justify-center w-full h-full bg-black">
-                      <img
+                      <Image
                         src={src}
                         alt={viewerMode === "studio" ? `Studio artwork and building photos at Hell University cultural hub in Mae Taeng, Chiang Mai, Thailand. Event space available for booking.` : `Gallery exhibition photos at Hell University cultural hub in Mae Taeng, Chiang Mai, Thailand. Cultural events and art displays.`}
+                        width={1920}
+                        height={1080}
                         className="object-contain w-auto h-auto"
                         style={{ maxWidth: 'calc(100vw - 6rem)', maxHeight: 'calc(100vh - 6rem)' }}
+                        priority={i === viewerIndex}
                         loading={i === viewerIndex ? "eager" : "lazy"}
-                        decoding="async"
-                        fetchPriority={i === viewerIndex ? "high" : "auto"}
+                        quality={90}
+                        sizes="100vw"
                       />
                     </div>
                   </CarouselItem>

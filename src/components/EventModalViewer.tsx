@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from "react"
 import Link from "next/link"
+import Image from "next/image"
 import { API_PATHS } from "@/lib/api-config"
 import { X, ChevronLeft, ChevronRight, ExternalLink } from "lucide-react"
 import { trackEventModalOpen, trackViewAllEventPhotos } from "@/lib/analytics"
@@ -191,13 +192,16 @@ export function EventModalViewer({ eventId, isOpen, onClose }: EventModalViewerP
                     {allImages.map((image, index) => (
                       <CarouselItem key={index} className="h-full">
                         <div className="relative w-full h-full flex items-center justify-center bg-black/20 rounded-lg overflow-hidden">
-                          <img
+                          <Image
                             src={image.url}
                             alt={image.title ? `${image.title} - Event photo from ${eventData.title} at Hell University cultural hub in Mae Taeng, Chiang Mai, Thailand` : `${eventData.title} event photo at Hell University cultural hub in Mae Taeng, Chiang Mai, Thailand`}
+                            width={1920}
+                            height={1080}
                             className="max-w-full max-h-full w-auto h-auto object-contain"
+                            priority={index === 0}
                             loading={index === 0 ? "eager" : "lazy"}
-                            decoding="async"
-                            fetchPriority={index === 0 ? "high" : "auto"}
+                            quality={90}
+                            sizes="(max-width: 768px) 100vw, (max-width: 1024px) 90vw, 80vw"
                           />
                           {image.title && (
                             <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/80 to-transparent p-3 sm:p-4">

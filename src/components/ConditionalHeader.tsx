@@ -11,7 +11,11 @@ import { Header } from "./Header"
  * Admin pages have their own separate layout and header
  */
 
-export function ConditionalHeader() {
+interface ConditionalHeaderProps {
+  initialBookingEnabled?: boolean
+}
+
+export function ConditionalHeader({ initialBookingEnabled }: ConditionalHeaderProps) {
   const pathname = usePathname()
   
   useEffect(() => {
@@ -33,6 +37,6 @@ export function ConditionalHeader() {
     return null
   }
   
-  return <Header />
+  return <Header initialBookingEnabled={initialBookingEnabled} />
 }
 

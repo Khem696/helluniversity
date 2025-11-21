@@ -1,6 +1,7 @@
 "use client"
 import { withBasePath } from "@/lib/utils"
 import { useState, useEffect } from "react"
+import Image from "next/image"
 import { Facebook, Twitter, Instagram, ChevronDown } from "lucide-react"
 import { API_PATHS } from "@/lib/api-config"
 import Link from "next/link"
@@ -141,15 +142,15 @@ export function Hero() {
           {/* Portrait Image */}
           <div className="flex items-stretch 4xl:items-center 5xl:items-center justify-start px-4 sm:px-6 min-[769px]:px-8 lg:pl-0 lg:pr-12 3xl:pr-20 4xl:pr-28 5xl:pr-36 pt-[calc(var(--header-h)+1rem)] lg:pt-[calc(var(--header-h)+3rem)] 4xl:pt-0 pb-[clamp(2rem,8vh,5rem)] lg:pb-[clamp(3rem,10vh,6rem)] 4xl:pb-0 relative lg:h-full">
             <div className="relative self-start 4xl:self-center 5xl:self-center w-full lg:w-fit overflow-hidden h-auto max-w-[560px] min-[769px]:max-w-[620px] lg:max-w-[700px] 3xl:max-w-[780px] 4xl:max-w-[880px] 5xl:max-w-[980px]">
-              <img
+              <Image
                 src={withBasePath('/assets/portrait/portrait_kade.png')}
                 alt="Kade Javanalikikorn - Founder of Hell University cultural hub in Mae Taeng, Chiang Mai, Thailand"
-                className="w-full h-auto lg:max-h-[65vh] object-contain object-left grayscale contrast-110"
                 width={1600}
                 height={1800}
-                loading="eager"
-                decoding="async"
-                fetchPriority="high"
+                className="w-full h-auto lg:max-h-[65vh] object-contain object-left grayscale contrast-110"
+                priority
+                quality={90}
+                sizes="(max-width: 768px) 100vw, (max-width: 1024px) 50vw, (max-width: 1280px) 45vw, 40vw"
               />
               
               {/* Quote Overlay */}

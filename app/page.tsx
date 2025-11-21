@@ -1,6 +1,8 @@
 import { Hero } from "@/components/Hero"
-import { EventSliders } from "@/components/EventSliders"
+import { EventSlidersServer } from "@/components/EventSlidersServer"
 import { generateMetadata as generateSEOMetadata, getBaseUrl } from '@/lib/seo-utils'
+import { getEvents } from "@/lib/server-data"
+import { mockEvents, splitEventsByDate } from "@/data/events"
 
 export const metadata = generateSEOMetadata({
   title: 'Home',
@@ -33,12 +35,26 @@ export const metadata = generateSEOMetadata({
   type: 'website',
 })
 
-export default function Home() {
+export default async function Home() {
+  // Fetch events server-side for instant display
+  let pastEvents, currentEvents
+  try {
+    const events = await getEvents()
+    pastEvents = events.pastEvents
+    currentEvents = events.currentEvents
+  } catch (error) {
+    console.error("Failed to fetch events server-side, using mock data:", error)
+    // Fallback to mock data if server fetch fails
+    const { pastEvents: mockPast, currentEvents: mockCurrent } = splitEventsByDate(mockEvents)
+    pastEvents = mockPast
+    currentEvents = mockCurrent
+  }
+
   return (
     <div className="min-h-vp bg-[#f4f1ed] no-horiz-overflow">
       <main id="main-content">
         <Hero />
-        <EventSliders />
+        <EventSlidersServer pastEvents={pastEvents} currentEvents={currentEvents} />
       </main>
     </div>
   )

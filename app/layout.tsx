@@ -10,7 +10,7 @@ import { organizationStructuredData, websiteStructuredData, localBusinessStructu
 import './globals.css'
 import { bodyFont, headingFont, uiFont, comfortaaFont, urbanistFont, acuminAlt } from '@/lib/fonts'
 import { withBasePath } from '@/lib/utils'
-import { ConditionalHeader } from '@/components/ConditionalHeader'
+import { ConditionalHeaderWrapper } from '@/components/ConditionalHeaderWrapper'
 import { Providers } from '@/components/Providers'
 
 
@@ -162,7 +162,7 @@ export default function RootLayout({
           <GlobalErrorHandler />
           <DisableServiceWorker />
           <OverlayScrollbar />
-          <ConditionalHeader />
+          <ConditionalHeaderWrapper />
           {children}
           <Toaster />
         </Providers>
