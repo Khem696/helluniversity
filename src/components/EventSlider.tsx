@@ -163,16 +163,17 @@ export function EventSlider({ events }: EventSliderProps) {
                       className="relative w-full mb-6 sm:mb-8 lg:mb-10 cursor-pointer hover:opacity-90 transition-opacity focus:outline-none focus:ring-2 focus:ring-white/50 rounded-lg overflow-hidden"
                       aria-label={`View details for ${slide.title}`}
                     >
-                      <div className="relative w-full h-auto max-h-[45vh] sm:max-h-[48vh] lg:max-h-[50vh]">
+                      <div className="relative w-full h-auto max-h-[45vh] sm:max-h-[48vh] lg:max-h-[50vh] flex items-center justify-center">
                         <Image
                           src={slide.image}
                           alt={`${slide.title} - Cultural event at Hell University in Mae Taeng, Chiang Mai, Thailand. Book event space and arrange activities.`}
                           width={1600}
                           height={1800}
-                          className="w-full h-auto object-contain object-center"
+                          className="w-full h-auto max-h-[45vh] sm:max-h-[48vh] lg:max-h-[50vh] object-contain object-center"
+                          style={{ maxHeight: 'inherit' }}
                           priority={index === 0}
                           loading={index === 0 ? "eager" : "lazy"}
-                          quality={85}
+                          quality={75}
                           sizes="(max-width: 768px) 100vw, (max-width: 1024px) 90vw, 80vw"
                         />
                       </div>
