@@ -7,17 +7,29 @@
 
 export const dynamic = 'force-dynamic'
 
-export async function GET() {
+export async function GET(request: Request) {
   const timestamp = new Date().toISOString()
+  const userAgent = request.headers.get('user-agent') || 'unknown'
+  const url = new URL(request.url)
   
-  // Use console.log directly (not removed in production)
-  console.log('[cron-health] Health check called at:', timestamp)
+  // Log everything - Vercel cron jobs use user-agent "vercel-cron/1.0"
+  console.log('[cron-health] Health check called:', {
+    timestamp,
+    method: request.method,
+    path: url.pathname,
+    userAgent,
+    isVercelCron: userAgent === 'vercel-cron/1.0',
+    headers: Object.fromEntries(request.headers.entries()),
+  })
   console.error('[cron-health] ERROR level log test at:', timestamp)
   
   return new Response(JSON.stringify({
     status: 'ok',
     timestamp,
     message: 'Cron health check endpoint is accessible',
+    userAgent,
+    isVercelCron: userAgent === 'vercel-cron/1.0',
+    path: url.pathname,
   }), {
     status: 200,
     headers: {

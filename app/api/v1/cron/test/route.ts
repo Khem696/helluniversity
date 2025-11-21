@@ -25,10 +25,14 @@ export async function GET(request: Request) {
     }
   })
   
+  const userAgent = request.headers.get('user-agent') || 'unknown'
+  
   console.log('[cron-test] Test endpoint called:', {
     timestamp,
     method: request.method,
     url: url.pathname,
+    userAgent,
+    isVercelCron: userAgent === 'vercel-cron/1.0',
     headers,
   })
   
@@ -38,6 +42,8 @@ export async function GET(request: Request) {
     timestamp,
     method: request.method,
     path: url.pathname,
+    userAgent: request.headers.get('user-agent') || 'unknown',
+    isVercelCron: userAgent === 'vercel-cron/1.0',
     hasAuthHeader: !!request.headers.get('authorization'),
     hasVercelSignature: !!request.headers.get('x-vercel-signature'),
     headerCount: Array.from(request.headers.keys()).length,
