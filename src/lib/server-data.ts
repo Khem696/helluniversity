@@ -32,16 +32,19 @@ export async function getBookingEnabledStatus(): Promise<boolean> {
 
       if (result.rows.length > 0) {
         const setting = result.rows[0] as any
-        return setting.value === '1' || setting.value === 1 || setting.value === true
+        // Explicitly check for enabled values (1, '1', true)
+        // Everything else (0, '0', false, null, undefined) should be treated as disabled
+        const value = setting.value
+        return value === '1' || value === 1 || value === true
       }
     }
     
-    // Default to enabled if table doesn't exist or setting doesn't exist
-    return true
+    // Default to disabled if table doesn't exist or setting doesn't exist (safer default)
+    return false
   } catch (error) {
-    // If there's any error, default to enabled
+    // If there's any error, default to disabled (safer than showing button when it shouldn't be)
     console.error("Error fetching booking status:", error)
-    return true
+    return false
   }
 }
 

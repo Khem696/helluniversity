@@ -125,10 +125,10 @@ export function Header({ initialBookingEnabled }: HeaderProps = {}) {
   // Fetch booking enabled status and poll for changes
   // Skip initial fetch if we already have the status from server
   useEffect(() => {
-    // If we already have initial status, only poll for updates
-    if (initialBookingEnabled !== undefined && bookingStatusLoaded) {
-      // Poll every 30 seconds to check for status changes
-      const pollInterval = setInterval(async () => {
+    // If we already have initial status, verify it immediately and then poll for updates
+    if (initialBookingEnabled !== undefined && bookingStatusLoaded && mounted) {
+      // Verify status immediately on mount to catch any changes
+      const verifyStatus = async () => {
         try {
           const response = await fetch(API_PATHS.settingsBookingEnabled)
           const json = await response.json()
@@ -137,23 +137,32 @@ export function Header({ initialBookingEnabled }: HeaderProps = {}) {
             const newStatus = json.data.enabled
             setBookingsEnabled(newStatus)
             
-            // If bookings are disabled while dialog is open, close the dialog
+            // If bookings are disabled while dialog is open, close the dialog immediately
             if (!newStatus && bookingOpen) {
               setBookingOpen(false)
               toast.error("Bookings are currently disabled. Please try again later.")
             }
           }
         } catch (error) {
-          console.error("Failed to poll booking status:", error)
+          console.error("Failed to verify booking status:", error)
         }
-      }, 30000)
+      }
+      
+      // Verify immediately
+      verifyStatus()
+      
+      // Poll more frequently when modal is open (every 5 seconds) to catch changes quickly
+      // Poll less frequently when modal is closed (every 30 seconds)
+      const pollInterval = setInterval(verifyStatus, bookingOpen ? 5000 : 30000)
       
       return () => {
         clearInterval(pollInterval)
       }
     }
+  }, [mounted, initialBookingEnabled, bookingStatusLoaded, bookingOpen])
 
-    // If no initial status provided, fetch on mount
+  // If no initial status provided, fetch on mount
+  useEffect(() => {
     async function fetchBookingStatus() {
       try {
         const response = await fetch(API_PATHS.settingsBookingEnabled)
@@ -447,11 +456,42 @@ export function Header({ initialBookingEnabled }: HeaderProps = {}) {
   }
 
   // Reset reCAPTCHA when modal opens (but preserve form data)
-  const handleBookingOpenChange = (open: boolean) => {
+  const handleBookingOpenChange = async (open: boolean) => {
     // Prevent closing the modal when submitting
     if (!open && isSubmitting) {
       return
     }
+    
+    // If opening the modal, verify bookings are still enabled
+    if (open) {
+      try {
+        const response = await fetch(API_PATHS.settingsBookingEnabled)
+        const json = await response.json()
+        
+        if (json.success && json.data) {
+          const currentStatus = json.data.enabled
+          setBookingsEnabled(currentStatus)
+          
+          // If bookings are disabled, don't open the modal
+          if (!currentStatus) {
+            toast.error("Bookings are currently disabled. Please try again later.")
+            return
+          }
+        } else {
+          // If we can't verify, assume disabled for safety
+          setBookingsEnabled(false)
+          toast.error("Unable to verify booking status. Please try again later.")
+          return
+        }
+      } catch (error) {
+        console.error("Failed to verify booking status before opening:", error)
+        // On error, assume disabled for safety
+        setBookingsEnabled(false)
+        toast.error("Unable to verify booking status. Please try again later.")
+        return
+      }
+    }
+    
     setBookingOpen(open)
     
     // Notify breadcrumb component when booking dialog state changes
@@ -485,6 +525,7 @@ export function Header({ initialBookingEnabled }: HeaderProps = {}) {
         retryable: false
       })
       setBookingOpen(false)
+      toast.error("Bookings are currently disabled. Please try again later.")
       return
     }
     
@@ -1674,7 +1715,7 @@ export function Header({ initialBookingEnabled }: HeaderProps = {}) {
                       <div className="flex flex-col items-center space-y-1.5 sm:space-y-2 lg:space-y-1 pt-2 sm:pt-2.5 lg:pt-1.5">
                         <Button
                           type="submit"
-                          disabled={!isRecaptchaVerified || isSubmitting || process.env.NEXT_PUBLIC_USE_STATIC_IMAGES === '1'}
+                          disabled={!isRecaptchaVerified || isSubmitting || !bookingsEnabled || process.env.NEXT_PUBLIC_USE_STATIC_IMAGES === '1'}
                           className="font-comfortaa bg-[#5B9AB8] hover:bg-[#4d8ea7] text-white disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
                           style={{ 
                             padding: 'clamp(0.5rem, 0.6vw, 0.75rem) clamp(1rem, 1.2vw, 1.5rem)',
