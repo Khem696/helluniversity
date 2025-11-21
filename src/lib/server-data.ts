@@ -63,7 +63,6 @@ export async function getEvents(): Promise<{ pastEvents: EventSlide[]; currentEv
           i.blob_url as image_url, i.title as image_title
         FROM events e
         LEFT JOIN images i ON e.image_id = i.id
-        WHERE e.deleted_at IS NULL
         ORDER BY COALESCE(e.end_date, e.event_date, e.start_date) DESC
       `,
       args: [],

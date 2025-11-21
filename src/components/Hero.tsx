@@ -149,7 +149,7 @@ export function Hero() {
                 height={1800}
                 className="w-full h-auto lg:max-h-[65vh] object-contain object-left grayscale contrast-110"
                 priority
-                quality={90}
+                quality={75}
                 sizes="(max-width: 768px) 100vw, (max-width: 1024px) 50vw, (max-width: 1280px) 45vw, 40vw"
               />
               
