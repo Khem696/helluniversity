@@ -144,9 +144,16 @@ export function SimpleCalendar({
               (range) => range.date === dateStr
             );
             
-            // Build tooltip text
+            // Check if date is in the past (for tooltip)
+            const now = new Date();
+            const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+            const dateOnly = new Date(date.getFullYear(), date.getMonth(), date.getDate());
+            const isPastDate = dateOnly < today;
+            
+            // Build tooltip text with specific messages for different disable reasons
             let tooltipText: string | undefined = undefined;
             if (isOccupiedDate && dateTimeRanges.length > 0) {
+              // Occupied with time ranges
               const timeInfo = dateTimeRanges
                 .map((range) => {
                   const start = range.startTime || "All day";
@@ -154,11 +161,19 @@ export function SimpleCalendar({
                   return start === end ? start : `${start} - ${end}`;
                 })
                 .join(", ");
-              tooltipText = `Occupied: ${timeInfo}`;
+              tooltipText = `This date is occupied: ${timeInfo}`;
             } else if (isOccupiedDate) {
+              // Occupied without time ranges
               tooltipText = "This date is occupied";
             } else if (isDisabled) {
-              tooltipText = "This date is unavailable";
+              // Determine specific reason for disabled date
+              if (isPastDate) {
+                tooltipText = "This date has passed";
+              } else if (isTodayDate) {
+                tooltipText = "Today cannot be selected";
+              } else {
+                tooltipText = "This date is unavailable";
+              }
             }
 
             return (
