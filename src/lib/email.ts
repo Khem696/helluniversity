@@ -557,8 +557,6 @@ function generateUserEmailHTML(data: ReservationData): string {
       </div>
     </div>
     
-    <p>We honor each request with thoughtful consideration and will respond within <strong>48 hours</strong> to discuss your vision and craft an extraordinary experience tailored to your unique sensibilities.</p>
-    
     <p>If you have any urgent questions or need to modify your inquiry, please don't hesitate to contact us.</p>
     
     <div class="signature">
@@ -598,8 +596,6 @@ Event Type: ${formattedEventType}
 Date & Time: ${formattedDateRange}
 Number of Participants: ${safeParticipants}
 Organization: ${safeOrganizationType} (${organizationRemark})
-
-We honor each request with thoughtful consideration and will respond within 48 hours to discuss your vision and craft an extraordinary experience tailored to your unique sensibilities.
 
 If you have any urgent questions or need to modify your inquiry, please don't hesitate to contact us.
 

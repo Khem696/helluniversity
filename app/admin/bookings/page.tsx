@@ -1353,8 +1353,8 @@ export default function BookingsPage() {
     }
 
     // Validate status allows fee recording
-    if (selectedBooking.status !== "confirmed" && selectedBooking.status !== "finished") {
-      toast.error("Fee can only be recorded for confirmed or finished bookings")
+    if (selectedBooking.status !== "confirmed" && selectedBooking.status !== "finished" && selectedBooking.status !== "cancelled") {
+      toast.error("Fee can only be recorded for confirmed, finished, or cancelled bookings")
       return
     }
 
@@ -2013,6 +2013,60 @@ export default function BookingsPage() {
                       {((selectedBooking as any).fee_amount ?? (selectedBooking as any).feeAmount) ? "Update Fee" : "Record Fee"}
                     </Button>
                   )}
+                  {((selectedBooking as any).fee_amount ?? (selectedBooking as any).feeAmount) && (
+                    <Button
+                      type="button"
+                      variant="destructive"
+                      size="sm"
+                      onClick={async () => {
+                        if (!selectedBooking) return
+                        
+                        if (!confirm("Are you sure you want to clear the fee for this booking? This action cannot be undone.")) {
+                          return
+                        }
+                        
+                        setSaving(true)
+                        try {
+                          const response = await fetch(buildApiUrl(API_PATHS.adminBooking(selectedBooking.id) + "/fee"), {
+                            method: "PATCH",
+                            headers: {
+                              "Content-Type": "application/json",
+                            },
+                            body: JSON.stringify({
+                              feeAmountOriginal: null,
+                              feeCurrency: null,
+                              changeReason: "Fee cleared by admin",
+                            }),
+                          })
+                          
+                          const json = await response.json()
+                          
+                          if (json.success) {
+                            toast.success("Fee cleared successfully")
+                            // Update selected booking with cleared fee
+                            if (json.data?.booking) {
+                              setSelectedBooking({
+                                ...selectedBooking,
+                                ...json.data.booking,
+                              })
+                            }
+                            // Refresh bookings list
+                            fetchBookings()
+                          } else {
+                            toast.error(json.error?.message || "Failed to clear fee")
+                          }
+                        } catch (error) {
+                          toast.error("Failed to clear fee")
+                          console.error(error)
+                        } finally {
+                          setSaving(false)
+                        }
+                      }}
+                      disabled={saving}
+                    >
+                      Clear Fee
+                    </Button>
+                  )}
                 </div>
                 {(() => {
                   // Handle both camelCase (from formatBooking) and snake_case (from useAdminBookings)
@@ -2115,11 +2169,11 @@ export default function BookingsPage() {
                   ) : (
                     <div className="bg-gray-50 border border-gray-200 rounded p-4">
                       <p className="text-sm text-gray-500 italic">No fee recorded yet</p>
-                      {(selectedBooking.status === "confirmed" || selectedBooking.status === "finished") && (
+                      {(selectedBooking.status === "confirmed" || selectedBooking.status === "finished" || selectedBooking.status === "cancelled") && (
                         <p className="text-xs text-gray-400 mt-2">Click "Record Fee" to add fee information</p>
                       )}
-                      {(selectedBooking.status !== "confirmed" && selectedBooking.status !== "finished") && (
-                        <p className="text-xs text-yellow-600 mt-2">Fee can only be recorded when booking is confirmed or finished</p>
+                      {(selectedBooking.status !== "confirmed" && selectedBooking.status !== "finished" && selectedBooking.status !== "cancelled") && (
+                        <p className="text-xs text-yellow-600 mt-2">Fee can only be recorded when booking is confirmed, finished, or cancelled</p>
                       )}
                     </div>
                   )
@@ -2949,7 +3003,7 @@ export default function BookingsPage() {
             <DialogDescription>
               {selectedBooking?.fee_amount 
                 ? "Update the fee for this booking. Changes will be logged in fee history."
-                : "Record the fee for this booking. Fee can only be recorded for confirmed or finished bookings."}
+                : "Record the fee for this booking. Fee can be recorded for confirmed, finished, or cancelled bookings."}
             </DialogDescription>
           </DialogHeader>
           {selectedBooking && (

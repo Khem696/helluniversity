@@ -79,35 +79,34 @@ export const PATCH = withVersioning(async (
       changeReason 
     } = body
 
-    // Validate required fields
-    if (feeAmountOriginal === undefined || feeAmountOriginal === null) {
-      return errorResponse(
-        ErrorCodes.VALIDATION_ERROR,
-        "feeAmountOriginal is required",
-        undefined,
-        400,
-        { requestId }
-      )
-    }
+    // Check if this is a clear operation (feeAmountOriginal is null)
+    const isClearingFee = feeAmountOriginal === null || feeAmountOriginal === undefined
 
-    if (!feeCurrency || typeof feeCurrency !== 'string') {
-      return errorResponse(
-        ErrorCodes.VALIDATION_ERROR,
-        "feeCurrency is required and must be a string",
-        undefined,
-        400,
-        { requestId }
-      )
-    }
+    // Validate required fields based on operation type
+    if (!isClearingFee) {
+      // Recording/updating fee - feeAmountOriginal and feeCurrency are required
+      if (typeof feeAmountOriginal !== 'number' || isNaN(feeAmountOriginal)) {
+        return errorResponse(
+          ErrorCodes.VALIDATION_ERROR,
+          "feeAmountOriginal must be a number when recording or updating a fee",
+          undefined,
+          400,
+          { requestId }
+        )
+      }
 
-    if (typeof feeAmountOriginal !== 'number' || isNaN(feeAmountOriginal)) {
-      return errorResponse(
-        ErrorCodes.VALIDATION_ERROR,
-        "feeAmountOriginal must be a number",
-        undefined,
-        400,
-        { requestId }
-      )
+      if (!feeCurrency || typeof feeCurrency !== 'string') {
+        return errorResponse(
+          ErrorCodes.VALIDATION_ERROR,
+          "feeCurrency is required and must be a string when recording or updating a fee",
+          undefined,
+          400,
+          { requestId }
+        )
+      }
+    } else {
+      // Clearing fee - feeAmountOriginal should be null, feeCurrency can be null
+      // No additional validation needed for clearing
     }
 
     if (feeAmount !== undefined && feeAmount !== null && (typeof feeAmount !== 'number' || isNaN(feeAmount))) {
@@ -150,19 +149,19 @@ export const PATCH = withVersioning(async (
       await logger.warn("Could not get session for admin action logging", { error: sessionError instanceof Error ? sessionError.message : String(sessionError) })
     }
 
-    // Update fee
+    // Update fee (or clear if feeAmountOriginal is null)
     let updatedBooking
     try {
       updatedBooking = await updateBookingFee(
         id,
-        feeAmountOriginal,
-        feeCurrency,
+        feeAmountOriginal ?? null,
+        feeCurrency ?? null,
         {
           feeConversionRate: feeConversionRate ?? null,
           feeAmount: feeAmount ?? null,
           feeNotes: feeNotes || null,
           changedBy: adminEmail,
-          changeReason: changeReason || null,
+          changeReason: changeReason || (isClearingFee ? "Fee cleared" : null),
           isRestorationChange: false,
         }
       )
@@ -195,11 +194,22 @@ export const PATCH = withVersioning(async (
 
     // Log admin action
     try {
-      const isUpdate = currentBooking.feeAmount !== null && currentBooking.feeAmount !== undefined
-      const actionType = isUpdate ? "update_booking_fee" : "record_booking_fee"
-      const description = isUpdate
-        ? `Updated booking fee from ${currentBooking.feeAmount} THB to ${updatedBooking.feeAmount} THB`
-        : `Recorded booking fee: ${updatedBooking.feeAmount} THB (${updatedBooking.feeAmountOriginal} ${updatedBooking.feeCurrency})`
+      const hadFee = currentBooking.feeAmount !== null && currentBooking.feeAmount !== undefined
+      const hasFee = updatedBooking.feeAmount !== null && updatedBooking.feeAmount !== undefined
+      
+      let actionType: string
+      let description: string
+      
+      if (isClearingFee) {
+        actionType = "clear_booking_fee"
+        description = `Cleared booking fee (was ${currentBooking.feeAmount} THB)`
+      } else if (hadFee) {
+        actionType = "update_booking_fee"
+        description = `Updated booking fee from ${currentBooking.feeAmount} THB to ${updatedBooking.feeAmount} THB`
+      } else {
+        actionType = "record_booking_fee"
+        description = `Recorded booking fee: ${updatedBooking.feeAmount} THB (${updatedBooking.feeAmountOriginal} ${updatedBooking.feeCurrency})`
+      }
       
       await logAdminAction({
         actionType,
@@ -216,23 +226,25 @@ export const PATCH = withVersioning(async (
           newFeeAmountOriginal: updatedBooking.feeAmountOriginal,
           newFeeCurrency: updatedBooking.feeCurrency,
           newFeeConversionRate: updatedBooking.feeConversionRate,
-          changeReason,
+          changeReason: changeReason || (isClearingFee ? "Fee cleared" : null),
         },
       })
     } catch (logError) {
       await logger.error("Failed to log admin action", logError instanceof Error ? logError : new Error(String(logError)), { bookingId: id })
     }
 
-    // Send admin notification
-    try {
-      const { sendAdminFeeChangeNotification } = await import('@/lib/email')
-      await sendAdminFeeChangeNotification(
-        updatedBooking,
-        currentBooking,
-        adminEmail || "Admin"
-      )
-    } catch (emailError) {
-      await logger.error("Failed to send admin fee change notification", emailError instanceof Error ? emailError : new Error(String(emailError)), { bookingId: id })
+    // Send admin notification (only if not clearing, as clearing doesn't need notification)
+    if (!isClearingFee) {
+      try {
+        const { sendAdminFeeChangeNotification } = await import('@/lib/email')
+        await sendAdminFeeChangeNotification(
+          updatedBooking,
+          currentBooking,
+          adminEmail || "Admin"
+        )
+      } catch (emailError) {
+        await logger.error("Failed to send admin fee change notification", emailError instanceof Error ? emailError : new Error(String(emailError)), { bookingId: id })
+      }
     }
 
     // Transform booking to snake_case for frontend consistency

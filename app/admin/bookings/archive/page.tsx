@@ -136,6 +136,14 @@ export default function BookingsArchivePage() {
   }>>([])
   // Deposit verification
   const [verifyDeposit, setVerifyDeposit] = useState(false)
+  // Fee management
+  const [feeDialogOpen, setFeeDialogOpen] = useState(false)
+  const [feeAmountOriginal, setFeeAmountOriginal] = useState("")
+  const [feeCurrency, setFeeCurrency] = useState("THB")
+  const [feeConversionRate, setFeeConversionRate] = useState("")
+  const [feeAmount, setFeeAmount] = useState("")
+  const [feeNotes, setFeeNotes] = useState("")
+  const [feeHistory, setFeeHistory] = useState<any[]>([])
   // Restoration confirmation dialog
   const [restorationDialogOpen, setRestorationDialogOpen] = useState(false)
   const [pendingRestoreStatus, setPendingRestoreStatus] = useState<"pending_deposit" | "paid_deposit" | "confirmed" | null>(null)
@@ -416,6 +424,18 @@ export default function BookingsArchivePage() {
           // Store overlapping bookings and confirmed overlap status
           setOverlappingBookings(json.data.overlappingBookings || [])
           setHasConfirmedOverlap(json.data.hasConfirmedOverlap || false)
+          
+          // Fetch fee history
+          try {
+            const feeHistoryResponse = await fetch(buildApiUrl(API_PATHS.adminBookingFeeHistory(bookingId), { t: Date.now() }))
+            const feeHistoryJson = await feeHistoryResponse.json()
+            if (feeHistoryJson.success && feeHistoryJson.data) {
+              setFeeHistory(feeHistoryJson.data.history || [])
+            }
+          } catch (feeError) {
+            console.error("Failed to load fee history:", feeError)
+            setFeeHistory([])
+          }
         } else {
           toast.error("Booking data not found in response")
         }
@@ -728,6 +748,115 @@ export default function BookingsArchivePage() {
       } else {
         toast.error(errorMessage)
       }
+      console.error(error)
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  // Handle fee update
+  const handleFeeUpdate = async (e: React.FormEvent<HTMLFormElement>) => {
+    e.preventDefault()
+    
+    if (!selectedBooking) {
+      toast.error("No booking selected")
+      return
+    }
+
+    // Validate status allows fee recording
+    if (selectedBooking.status !== "confirmed" && selectedBooking.status !== "finished" && selectedBooking.status !== "cancelled") {
+      toast.error("Fee can only be recorded for confirmed, finished, or cancelled bookings")
+      return
+    }
+
+    // Parse and validate inputs
+    const originalAmount = parseFloat(feeAmountOriginal)
+    if (isNaN(originalAmount) || originalAmount < 0) {
+      toast.error("Please enter a valid original amount")
+      return
+    }
+
+    const currencyUpper = feeCurrency.toUpperCase()
+    let conversionRate: number | null = null
+    let baseAmount: number | null = null
+
+    if (currencyUpper === "THB") {
+      // THB: no conversion needed
+      baseAmount = originalAmount
+    } else {
+      // Foreign currency: need conversion
+      if (feeConversionRate && feeConversionRate.trim() !== "") {
+        const rate = parseFloat(feeConversionRate)
+        if (isNaN(rate) || rate < 0.01 || rate > 10000) {
+          toast.error("Conversion rate must be between 0.01 and 10000")
+          return
+        }
+        conversionRate = rate
+        baseAmount = originalAmount * rate
+      } else if (feeAmount && feeAmount.trim() !== "") {
+        const amount = parseFloat(feeAmount)
+        if (isNaN(amount) || amount < 0) {
+          toast.error("Please enter a valid base amount (THB)")
+          return
+        }
+        baseAmount = amount
+        conversionRate = amount / originalAmount
+        if (conversionRate < 0.01 || conversionRate > 10000) {
+          toast.error("Calculated conversion rate is outside reasonable range")
+          return
+        }
+      } else {
+        toast.error("Either conversion rate or base amount (THB) must be provided for non-THB currency")
+        return
+      }
+    }
+
+    setSaving(true)
+    try {
+      const response = await fetch(buildApiUrl(API_PATHS.adminBooking(selectedBooking.id) + "/fee"), {
+        method: "PATCH",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          feeAmountOriginal: originalAmount,
+          feeCurrency: currencyUpper,
+          feeConversionRate: conversionRate,
+          feeAmount: baseAmount,
+          feeNotes: feeNotes.trim() || null,
+        }),
+      })
+
+      const json = await response.json()
+
+      if (json.success) {
+        const hasFee = (selectedBooking as any).fee_amount ?? (selectedBooking as any).feeAmount
+        toast.success(hasFee ? "Fee updated successfully" : "Fee recorded successfully")
+        setFeeDialogOpen(false)
+        // Update selected booking with new fee data
+        if (json.data?.booking) {
+          setSelectedBooking({
+            ...selectedBooking,
+            ...json.data.booking,
+          })
+        }
+        // Refresh bookings list
+        fetchBookings()
+        // Refresh fee history
+        try {
+          const feeHistoryResponse = await fetch(buildApiUrl(API_PATHS.adminBookingFeeHistory(selectedBooking.id), { t: Date.now() }))
+          const feeHistoryJson = await feeHistoryResponse.json()
+          if (feeHistoryJson.success && feeHistoryJson.data) {
+            setFeeHistory(feeHistoryJson.data.history || [])
+          }
+        } catch (feeError) {
+          console.error("Failed to refresh fee history:", feeError)
+        }
+      } else {
+        toast.error(json.error?.message || "Failed to update fee")
+      }
+    } catch (error) {
+      toast.error("Failed to update fee")
       console.error(error)
     } finally {
       setSaving(false)
@@ -1729,6 +1858,188 @@ export default function BookingsArchivePage() {
                 )}
               </div>
 
+              {/* Fee Management */}
+              <div>
+                <div className="flex items-center justify-between mb-3">
+                  <h3 className="text-lg font-semibold">Fee Information</h3>
+                  <div className="flex items-center gap-2">
+                    {(selectedBooking.status === "confirmed" || selectedBooking.status === "finished" || selectedBooking.status === "cancelled") && (
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        onClick={() => {
+                          if (!selectedBooking) return
+                          const currentFeeAmount = (selectedBooking as any).fee_amount ?? (selectedBooking as any).feeAmount
+                          if (currentFeeAmount) {
+                            const feeAmountOrig = (selectedBooking as any).fee_amount_original ?? (selectedBooking as any).feeAmountOriginal
+                            const feeCurr = (selectedBooking as any).fee_currency ?? (selectedBooking as any).feeCurrency
+                            const feeConvRate = (selectedBooking as any).fee_conversion_rate ?? (selectedBooking as any).feeConversionRate
+                            const feeNotesVal = (selectedBooking as any).fee_notes ?? (selectedBooking as any).feeNotes
+                            
+                            setFeeAmountOriginal(feeAmountOrig?.toString() || "")
+                            setFeeCurrency(feeCurr || "THB")
+                            setFeeConversionRate(feeConvRate?.toString() || "")
+                            setFeeAmount(currentFeeAmount.toString())
+                            setFeeNotes(feeNotesVal || "")
+                          } else {
+                            setFeeAmountOriginal("")
+                            setFeeCurrency("THB")
+                            setFeeConversionRate("")
+                            setFeeAmount("")
+                            setFeeNotes("")
+                          }
+                          setFeeDialogOpen(true)
+                        }}
+                        disabled={saving}
+                      >
+                        {((selectedBooking as any).fee_amount ?? (selectedBooking as any).feeAmount) ? "Update Fee" : "Record Fee"}
+                      </Button>
+                    )}
+                    {((selectedBooking as any).fee_amount ?? (selectedBooking as any).feeAmount) && (
+                      <Button
+                        type="button"
+                        variant="destructive"
+                        size="sm"
+                        onClick={async () => {
+                          if (!selectedBooking) return
+                          
+                          if (!confirm("Are you sure you want to clear the fee for this booking? This action cannot be undone.")) {
+                            return
+                          }
+                          
+                          setSaving(true)
+                          try {
+                            const response = await fetch(buildApiUrl(API_PATHS.adminBooking(selectedBooking.id) + "/fee"), {
+                              method: "PATCH",
+                              headers: {
+                                "Content-Type": "application/json",
+                              },
+                              body: JSON.stringify({
+                                feeAmountOriginal: null,
+                                feeCurrency: null,
+                                changeReason: "Fee cleared by admin",
+                              }),
+                            })
+                            
+                            const json = await response.json()
+                            
+                            if (json.success) {
+                              toast.success("Fee cleared successfully")
+                              // Update selected booking with cleared fee
+                              if (json.data?.booking) {
+                                setSelectedBooking({
+                                  ...selectedBooking,
+                                  ...json.data.booking,
+                                })
+                              }
+                              // Refresh bookings list
+                              fetchBookings()
+                            } else {
+                              toast.error(json.error?.message || "Failed to clear fee")
+                            }
+                          } catch (error) {
+                            toast.error("Failed to clear fee")
+                            console.error(error)
+                          } finally {
+                            setSaving(false)
+                          }
+                        }}
+                        disabled={saving}
+                      >
+                        Clear Fee
+                      </Button>
+                    )}
+                  </div>
+                </div>
+                {(() => {
+                  const feeAmount = (selectedBooking as any).fee_amount ?? (selectedBooking as any).feeAmount
+                  const feeAmountOriginal = (selectedBooking as any).fee_amount_original ?? (selectedBooking as any).feeAmountOriginal
+                  const feeCurrency = (selectedBooking as any).fee_currency ?? (selectedBooking as any).feeCurrency
+                  const feeConversionRate = (selectedBooking as any).fee_conversion_rate ?? (selectedBooking as any).feeConversionRate
+                  const feeRateDate = (selectedBooking as any).fee_rate_date ?? (selectedBooking as any).feeRateDate
+                  const feeNotes = (selectedBooking as any).fee_notes ?? (selectedBooking as any).feeNotes
+                  const feeRecordedAt = (selectedBooking as any).fee_recorded_at ?? (selectedBooking as any).feeRecordedAt
+                  const feeRecordedBy = (selectedBooking as any).fee_recorded_by ?? (selectedBooking as any).feeRecordedBy
+                  
+                  let feeNum: number | null = null
+                  if (feeAmount != null && feeAmount !== undefined) {
+                    if (typeof feeAmount === 'string') {
+                      feeNum = parseFloat(feeAmount)
+                    } else if (typeof feeAmount === 'number') {
+                      feeNum = feeAmount
+                    } else {
+                      feeNum = Number(feeAmount)
+                    }
+                  }
+                  const hasFee = feeNum !== null && !isNaN(feeNum) && feeNum > 0
+                  
+                  return hasFee ? (
+                    <div className="bg-yellow-50 border border-yellow-200 rounded p-4">
+                      <div className="space-y-2">
+                        <div>
+                          <Label>Base Amount (THB)</Label>
+                          <div className="text-sm font-medium text-gray-900">
+                            {Number(feeAmount).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} THB
+                          </div>
+                        </div>
+                        {feeCurrency && feeCurrency.toUpperCase() !== "THB" && feeAmountOriginal && (
+                          <>
+                            <div>
+                              <Label>Original Amount</Label>
+                              <div className="text-sm text-gray-900">
+                                {feeAmountOriginal.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} {feeCurrency}
+                              </div>
+                            </div>
+                            {feeConversionRate && (
+                              <div>
+                                <Label>Conversion Rate</Label>
+                                <div className="text-sm text-gray-900">
+                                  {feeConversionRate.toFixed(4)}
+                                </div>
+                              </div>
+                            )}
+                            {feeRateDate && (
+                              <div>
+                                <Label>Rate Date</Label>
+                                <div className="text-sm text-gray-500">
+                                  {formatTimestamp(feeRateDate)}
+                                </div>
+                              </div>
+                            )}
+                          </>
+                        )}
+                        {feeNotes && (
+                          <div>
+                            <Label>Notes</Label>
+                            <div className="text-sm text-gray-900">{feeNotes}</div>
+                          </div>
+                        )}
+                        {feeRecordedAt && (
+                          <div>
+                            <Label>Recorded</Label>
+                            <div className="text-sm text-gray-500">
+                              {formatTimestamp(feeRecordedAt)}
+                              {feeRecordedBy && ` by ${feeRecordedBy}`}
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="bg-gray-50 border border-gray-200 rounded p-4">
+                      <p className="text-sm text-gray-500 italic">No fee recorded yet</p>
+                      {(selectedBooking.status === "confirmed" || selectedBooking.status === "finished" || selectedBooking.status === "cancelled") && (
+                        <p className="text-xs text-gray-400 mt-2">Click "Record Fee" to add fee information</p>
+                      )}
+                      {(selectedBooking.status !== "confirmed" && selectedBooking.status !== "finished" && selectedBooking.status !== "cancelled") && (
+                        <p className="text-xs text-yellow-600 mt-2">Fee can only be recorded when booking is confirmed, finished, or cancelled</p>
+                      )}
+                    </div>
+                  )
+                })()}
+              </div>
+
               {/* Admin Notes */}
               {selectedBooking.admin_notes && (
                 <div>
@@ -2219,6 +2530,176 @@ export default function BookingsArchivePage() {
                     )}
                   </Button>
                 )}
+              </div>
+            </form>
+          )}
+        </DialogContent>
+      </Dialog>
+
+      {/* Fee Recording/Update Dialog */}
+      <Dialog 
+        open={feeDialogOpen} 
+        onOpenChange={(open) => {
+          setFeeDialogOpen(open)
+          if (!open) {
+            // Reset form when dialog closes
+            setFeeAmountOriginal("")
+            setFeeCurrency("THB")
+            setFeeConversionRate("")
+            setFeeAmount("")
+            setFeeNotes("")
+          }
+        }}
+      >
+        <DialogContent className="max-w-2xl w-[95vw] sm:w-full">
+          <DialogHeader>
+            <DialogTitle>{((selectedBooking as any)?.fee_amount ?? (selectedBooking as any)?.feeAmount) ? "Update Fee" : "Record Fee"}</DialogTitle>
+            <DialogDescription>
+              {((selectedBooking as any)?.fee_amount ?? (selectedBooking as any)?.feeAmount)
+                ? "Update the fee for this booking. Changes will be logged in fee history."
+                : "Record the fee for this booking. Fee can be recorded for confirmed, finished, or cancelled bookings."}
+            </DialogDescription>
+          </DialogHeader>
+          {selectedBooking && (
+            <form onSubmit={handleFeeUpdate} className="space-y-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div>
+                  <Label htmlFor="fee_amount_original">Original Amount *</Label>
+                  <Input
+                    id="fee_amount_original"
+                    type="number"
+                    step="0.01"
+                    min="0"
+                    value={feeAmountOriginal}
+                    onChange={(e) => setFeeAmountOriginal(e.target.value)}
+                    placeholder="0.00"
+                    required
+                    disabled={saving}
+                  />
+                </div>
+                <div>
+                  <Label htmlFor="fee_currency">Currency *</Label>
+                  <Select value={feeCurrency} onValueChange={setFeeCurrency} disabled={saving}>
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="THB">THB (Thai Baht)</SelectItem>
+                      <SelectItem value="USD">USD (US Dollar)</SelectItem>
+                      <SelectItem value="EUR">EUR (Euro)</SelectItem>
+                      <SelectItem value="GBP">GBP (British Pound)</SelectItem>
+                      <SelectItem value="JPY">JPY (Japanese Yen)</SelectItem>
+                      <SelectItem value="CNY">CNY (Chinese Yuan)</SelectItem>
+                      <SelectItem value="SGD">SGD (Singapore Dollar)</SelectItem>
+                      <SelectItem value="MYR">MYR (Malaysian Ringgit)</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+              </div>
+
+              {feeCurrency.toUpperCase() !== "THB" && (
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  <div>
+                    <Label htmlFor="fee_conversion_rate">Conversion Rate</Label>
+                    <Input
+                      id="fee_conversion_rate"
+                      type="number"
+                      step="0.0001"
+                      min="0.01"
+                      max="10000"
+                      value={feeConversionRate}
+                      onChange={(e) => setFeeConversionRate(e.target.value)}
+                      placeholder="Auto-calculated if base amount provided"
+                      disabled={saving}
+                    />
+                    <p className="text-xs text-gray-500 mt-1">
+                      Rate: 1 {feeCurrency} = ? THB
+                    </p>
+                  </div>
+                  <div>
+                    <Label htmlFor="fee_amount">Base Amount (THB)</Label>
+                    <Input
+                      id="fee_amount"
+                      type="number"
+                      step="0.01"
+                      min="0"
+                      value={feeAmount}
+                      onChange={(e) => setFeeAmount(e.target.value)}
+                      placeholder="Auto-calculated if rate provided"
+                      disabled={saving}
+                    />
+                    <p className="text-xs text-gray-500 mt-1">
+                      Calculated: {feeAmountOriginal && feeConversionRate 
+                        ? (parseFloat(feeAmountOriginal) * parseFloat(feeConversionRate)).toFixed(2)
+                        : feeAmount || "0.00"} THB
+                    </p>
+                  </div>
+                </div>
+              )}
+
+              {feeCurrency.toUpperCase() === "THB" && (
+                <div>
+                  <Label htmlFor="fee_amount_thb">Base Amount (THB)</Label>
+                  <Input
+                    id="fee_amount_thb"
+                    type="number"
+                    step="0.01"
+                    min="0"
+                    value={feeAmount}
+                    onChange={(e) => setFeeAmount(e.target.value)}
+                    placeholder="Same as original amount"
+                    disabled
+                    className="bg-gray-50"
+                  />
+                  <p className="text-xs text-gray-500 mt-1">
+                    For THB, base amount equals original amount
+                  </p>
+                </div>
+              )}
+
+              <div>
+                <Label htmlFor="fee_notes">Notes (Optional)</Label>
+                <Textarea
+                  id="fee_notes"
+                  value={feeNotes}
+                  onChange={(e) => setFeeNotes(e.target.value)}
+                  placeholder="Additional notes about the fee"
+                  rows={3}
+                  disabled={saving}
+                />
+              </div>
+
+              <div className="flex flex-col sm:flex-row justify-end gap-2">
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() => {
+                    setFeeDialogOpen(false)
+                    setFeeAmountOriginal("")
+                    setFeeCurrency("THB")
+                    setFeeConversionRate("")
+                    setFeeAmount("")
+                    setFeeNotes("")
+                  }}
+                  disabled={saving}
+                  className="w-full sm:w-auto"
+                >
+                  Cancel
+                </Button>
+                <Button
+                  type="submit"
+                  disabled={saving}
+                  className="w-full sm:w-auto"
+                >
+                  {saving ? (
+                    <>
+                      <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                      Processing...
+                    </>
+                  ) : (
+                    ((selectedBooking as any).fee_amount ?? (selectedBooking as any).feeAmount) ? "Update Fee" : "Record Fee"
+                  )}
+                </Button>
               </div>
             </form>
           )}

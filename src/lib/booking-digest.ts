@@ -253,7 +253,7 @@ export async function sendWeeklyBookingDigest(): Promise<void> {
   // Optimized: Uses idx_bookings_created_at index for filtering and ordering
   const recentBookings = await db.execute({
     sql: `
-      SELECT id, name, email, event_type, status, created_at
+      SELECT id, name, email, event_type, status, created_at, reference_number
       FROM bookings
       WHERE created_at >= ?
       ORDER BY created_at DESC
@@ -338,12 +338,14 @@ export async function sendWeeklyBookingDigest(): Promise<void> {
               <h3 style="margin: 30px 0 10px 0; color: #1f2937; font-size: 16px;">Recent Bookings (Last 7 Days)</h3>
               <table width="100%" cellpadding="10" cellspacing="0" style="border-collapse: collapse; margin-bottom: 20px;">
                 <tr style="background-color: #f9fafb; font-weight: bold;">
+                  <td style="border: 1px solid #e5e7eb;">Reference</td>
                   <td style="border: 1px solid #e5e7eb;">Name</td>
                   <td style="border: 1px solid #e5e7eb;">Event Type</td>
                   <td style="border: 1px solid #e5e7eb;">Status</td>
                 </tr>
                 ${recentBookings.rows.map((row: any) => `
                   <tr>
+                    <td style="border: 1px solid #e5e7eb; font-family: monospace; font-size: 12px; color: #6b7280;">${row.reference_number || 'N/A'}</td>
                     <td style="border: 1px solid #e5e7eb;">${row.name}</td>
                     <td style="border: 1px solid #e5e7eb;">${row.event_type}</td>
                     <td style="border: 1px solid #e5e7eb;">
@@ -404,7 +406,7 @@ New Bookings:
 - This Week: ${statsRow.new_week || 0} booking${(statsRow.new_week || 0) !== 1 ? 's' : ''}
 - Last Week: ${statsRow.new_last_week || 0} booking${(statsRow.new_last_week || 0) !== 1 ? 's' : ''}
 
-${recentBookings.rows.length > 0 ? `Recent Bookings (Last 7 Days):\n${recentBookings.rows.map((row: any) => `- ${row.name} (${row.event_type}) - ${row.status}`).join('\n')}\n` : ''}
+${recentBookings.rows.length > 0 ? `Recent Bookings (Last 7 Days):\n${recentBookings.rows.map((row: any) => `- ${row.reference_number || 'N/A'}: ${row.name} (${row.event_type}) - ${row.status}`).join('\n')}\n` : ''}
 
 This is an automated weekly digest of your booking system.
 

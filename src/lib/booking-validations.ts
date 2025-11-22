@@ -1098,23 +1098,34 @@ export async function validateProposedDates(
 
 /**
  * Validate fee data
- * Fee can only be recorded/updated when status is "confirmed" or "finished"
+ * Fee can be recorded/updated when status is "confirmed", "finished", or "cancelled"
+ * Fee can be cleared (null) for any booking that currently has a fee
  */
 export function validateFee(
   feeAmountOriginal: number | null | undefined,
   feeCurrency: string | null | undefined,
   feeConversionRate: number | null | undefined,
   feeAmount: number | null | undefined,
-  status: string
+  status: string,
+  currentFeeAmount?: number | null | undefined // Optional: current fee amount to check if clearing is valid
 ): { valid: boolean; reason?: string } {
-  // Fee can only be set for confirmed or finished bookings
-  if (feeAmountOriginal !== null && feeAmountOriginal !== undefined) {
-    if (status !== "confirmed" && status !== "finished") {
-      return {
-        valid: false,
-        reason: "Fee can only be recorded for confirmed or finished bookings"
-      }
+  // Allow clearing fee (null) if booking currently has a fee
+  if (feeAmountOriginal === null || feeAmountOriginal === undefined) {
+    // This is a clear operation - check if booking has a fee to clear
+    if (currentFeeAmount !== null && currentFeeAmount !== undefined && currentFeeAmount > 0) {
+      return { valid: true } // Valid to clear existing fee
     }
+    // If no current fee, clearing is a no-op but still valid
+    return { valid: true }
+  }
+  
+  // Fee can be set for confirmed, finished, or cancelled bookings
+  if (status !== "confirmed" && status !== "finished" && status !== "cancelled") {
+    return {
+      valid: false,
+      reason: "Fee can only be recorded for confirmed, finished, or cancelled bookings"
+    }
+  }
     
     // Validate amounts are non-negative
     if (feeAmountOriginal < 0) {
@@ -1165,7 +1176,6 @@ export function validateFee(
         }
       }
     }
-  }
   
   return { valid: true }
 }

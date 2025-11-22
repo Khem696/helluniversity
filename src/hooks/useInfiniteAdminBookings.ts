@@ -68,7 +68,13 @@ export function useInfiniteAdminBookings(
       params.set('limit', pageSize.toString())
       params.set('offset', (pageParam as number).toString())
       
-      const url = baseEndpoint.split('?')[0] + '?' + params.toString()
+      // Ensure base path has trailing slash to prevent 308 redirects
+      let basePath = baseEndpoint.split('?')[0]
+      if (!basePath.endsWith('/')) {
+        basePath += '/'
+      }
+      
+      const url = basePath + '?' + params.toString()
       const response = await fetch(url)
       const json = await response.json()
       

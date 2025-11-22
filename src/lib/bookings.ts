@@ -1747,12 +1747,14 @@ export async function getBookingStatusHistory(
 
 /**
  * Update booking fee
- * Handles fee recording and updates with conversion rate tracking
+ * Handles fee recording, updates, and clearing with conversion rate tracking
+ * 
+ * To clear a fee, pass null for feeAmountOriginal and feeCurrency
  */
 export async function updateBookingFee(
   bookingId: string,
-  feeAmountOriginal: number,
-  feeCurrency: string,
+  feeAmountOriginal: number | null,
+  feeCurrency: string | null,
   options?: {
     feeConversionRate?: number | null
     feeAmount?: number | null
@@ -1779,25 +1781,128 @@ export async function updateBookingFee(
     }
 
     const currentBooking = currentResult.rows[0] as any
+    const currentFeeAmount = currentBooking.fee_amount != null ? Number(currentBooking.fee_amount) : null
     
-    // Validate status allows fee recording/updating
+    // Validate status allows fee recording/updating/clearing
     const validation = validateFee(
       feeAmountOriginal,
       feeCurrency,
       options?.feeConversionRate ?? null,
       options?.feeAmount ?? null,
-      currentBooking.status
+      currentBooking.status,
+      currentFeeAmount
     )
     
     if (!validation.valid) {
       throw new Error(validation.reason || "Fee validation failed")
     }
 
+    const now = getBangkokTime()
+    
+    // Handle fee clearing (null feeAmountOriginal)
+    if (feeAmountOriginal === null || feeAmountOriginal === undefined) {
+      // Clear all fee fields
+      const updateFields: string[] = ["updated_at = ?"]
+      const updateArgs: any[] = [now]
+      
+      updateFields.push("fee_amount = NULL")
+      updateFields.push("fee_amount_original = NULL")
+      updateFields.push("fee_currency = NULL")
+      updateFields.push("fee_conversion_rate = NULL")
+      updateFields.push("fee_rate_date = NULL")
+      updateFields.push("fee_recorded_at = NULL")
+      updateFields.push("fee_recorded_by = NULL")
+      
+      if (options?.feeNotes !== undefined) {
+        updateFields.push("fee_notes = ?")
+        updateArgs.push(options.feeNotes || null)
+      } else {
+        updateFields.push("fee_notes = NULL")
+      }
+      
+      // Validate field names
+      const { validateFieldNames, ALLOWED_BOOKING_FIELDS } = await import('./sql-field-validation')
+      const fieldValidation = validateFieldNames(updateFields, ALLOWED_BOOKING_FIELDS)
+      
+      if (!fieldValidation.valid) {
+        throw new Error(
+          `Invalid field names in update: ${fieldValidation.errors?.join(', ')}`
+        )
+      }
+      
+      // Update booking
+      const originalUpdatedAt = currentBooking.updated_at
+      const updateResult = await db.execute({
+        sql: `UPDATE bookings SET ${updateFields.join(", ")} WHERE id = ? AND updated_at = ?`,
+        args: [...updateArgs, bookingId, originalUpdatedAt],
+      })
+      
+      if (updateResult.rowsAffected === 0) {
+        throw new Error(
+          "Booking was modified by another process. Please refresh the page and try again."
+        )
+      }
+      
+      // Record in fee history (clearing fee)
+      const historyId = randomUUID()
+      await db.execute({
+        sql: `
+          INSERT INTO booking_fee_history (
+            id, booking_id,
+            old_fee_amount, old_fee_amount_original, old_fee_currency,
+            old_fee_conversion_rate, old_fee_rate_date, old_fee_notes,
+            new_fee_amount, new_fee_amount_original, new_fee_currency,
+            new_fee_conversion_rate, new_fee_rate_date, new_fee_notes,
+            changed_by, change_reason, booking_status_at_change, is_restoration_change, created_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `,
+        args: [
+          historyId,
+          bookingId,
+          currentFeeAmount,
+          currentBooking.fee_amount_original != null ? Number(currentBooking.fee_amount_original) : null,
+          currentBooking.fee_currency || null,
+          currentBooking.fee_conversion_rate != null ? Number(currentBooking.fee_conversion_rate) : null,
+          currentBooking.fee_rate_date || null,
+          currentBooking.fee_notes || null,
+          null, // new_fee_amount
+          null, // new_fee_amount_original
+          null, // new_fee_currency
+          null, // new_fee_conversion_rate
+          null, // new_fee_rate_date
+          options?.feeNotes || null, // new_fee_notes
+          options?.changedBy || "Admin",
+          options?.changeReason || "Fee cleared",
+          currentBooking.status,
+          options?.isRestorationChange ? 1 : 0,
+          now,
+        ],
+      })
+      
+      // Fetch updated booking
+      const result = await db.execute({
+        sql: "SELECT * FROM bookings WHERE id = ?",
+        args: [bookingId],
+      })
+      
+      const updatedBooking = formatBooking(result.rows[0] as any)
+      
+      // Invalidate cache
+      await invalidateCache(CacheKeys.booking(bookingId))
+      await invalidateCache('bookings:list')
+      
+      return updatedBooking
+    }
+    
+    // Handle fee recording/updating (non-null feeAmountOriginal)
+    if (!feeCurrency) {
+      throw new Error("feeCurrency is required when recording or updating a fee")
+    }
+    
     // Calculate missing values
     let finalFeeAmount: number
     let finalConversionRate: number | null = null
     let finalRateDate: number | null = null
-    const now = getBangkokTime()
     const currencyUpper = feeCurrency.toUpperCase()
     
     if (currencyUpper === "THB") {
