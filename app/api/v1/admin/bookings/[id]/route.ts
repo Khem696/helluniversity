@@ -321,20 +321,27 @@ export const PATCH = withVersioning(async (
       // Date changes are allowed for:
       // 1. Confirmed bookings (date change only, no status change)
       // 2. Restoring from cancelled to confirmed (handled separately below)
+      // 3. Changing status TO confirmed in the same request (e.g., pending_deposit -> confirmed with date change)
       const isRestoringToConfirmed = status && 
         status !== currentBooking.status && 
         status === "confirmed" && 
         (currentBooking.status === "cancelled" || currentBooking.status === "finished")
       
-      if (currentBooking.status !== "confirmed" && !isRestoringToConfirmed) {
-        await logger.warn('Date change rejected: booking not confirmed and not restoring to confirmed', { 
+      // CRITICAL: Allow date change if status is being changed TO "confirmed" in the same request
+      // This handles cases like: pending_deposit -> confirmed with date change
+      const isChangingToConfirmed = status && 
+        status !== currentBooking.status && 
+        status === "confirmed"
+      
+      if (currentBooking.status !== "confirmed" && !isRestoringToConfirmed && !isChangingToConfirmed) {
+        await logger.warn('Date change rejected: booking not confirmed and not changing to confirmed', { 
           bookingId: id, 
           currentStatus: currentBooking.status,
           targetStatus: status 
         })
         return errorResponse(
           ErrorCodes.VALIDATION_ERROR,
-          "Date changes are only allowed for confirmed bookings or when restoring to confirmed status.",
+          "Date changes are only allowed for confirmed bookings or when changing status to confirmed.",
           undefined,
           400,
           { requestId }

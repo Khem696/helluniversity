@@ -458,6 +458,7 @@ export default function BookingsPage() {
         setSelectedBooking(null)
       } else if (viewDialogOpen) {
         // For other status changes, refresh booking details in view dialog
+        // This ensures we get the latest data including status history
         fetchBookingDetails(selectedBooking?.id || "")
       }
     },
@@ -1267,6 +1268,7 @@ export default function BookingsPage() {
           setSelectedBooking(null)
         } else if (viewDialogOpen) {
           // For other status changes, refresh booking details in view dialog
+          // This ensures we get the latest data including status history
           fetchBookingDetails(selectedBooking.id)
         }
       } else {
