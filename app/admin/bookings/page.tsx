@@ -213,6 +213,32 @@ export default function BookingsPage() {
     viewDialogOpenRef.current = viewDialogOpen
   }, [viewDialogOpen])
   
+  // CRITICAL: Refetch booking details when dialog opens to ensure fresh data
+  // This prevents stale status from being displayed when opening dialog after status change
+  // Use a ref to track the last fetched booking ID to prevent unnecessary refetches
+  const lastFetchedBookingIdRef = useRef<string | null>(null)
+  useEffect(() => {
+    if (viewDialogOpen && selectedBooking?.id) {
+      // Only refetch if this is a different booking or if we haven't fetched this one yet
+      // This prevents infinite loops while ensuring fresh data when dialog opens
+      if (lastFetchedBookingIdRef.current !== selectedBooking.id) {
+        lastFetchedBookingIdRef.current = selectedBooking.id
+        // Always refetch when dialog opens to ensure we have the latest data
+        // This is especially important after status changes
+        // Add small delay to ensure backend cache invalidation completes
+        const fetchFreshData = async () => {
+          // Small delay to ensure cache invalidation from previous status update completes
+          await new Promise(resolve => setTimeout(resolve, 50))
+          await fetchBookingDetails(selectedBooking.id)
+        }
+        fetchFreshData()
+      }
+    } else if (!viewDialogOpen) {
+      // Reset ref when dialog closes
+      lastFetchedBookingIdRef.current = null
+    }
+  }, [viewDialogOpen, selectedBooking?.id]) // Depend on both to refetch when booking changes
+  
   // Fix accessibility issue: When nested dialogs open, blur focused elements in underlying dialogs
   // This prevents aria-hidden violation when a dialog is hidden behind another dialog
   useEffect(() => {
@@ -622,10 +648,12 @@ export default function BookingsPage() {
                 description: `Event: ${booking.event_type}`,
                 action: {
                   label: "View",
-                  onClick: () => {
-                    setSelectedBooking(booking)
+                  onClick: async () => {
+                    // CRITICAL: Don't set selectedBooking from list - it might be stale
+                    // Wait for fresh data from API
+                    setLoadingBookingDetails(true)
                     setViewDialogOpen(true)
-                    fetchBookingDetails(booking.id)
+                    await fetchBookingDetails(booking.id)
                   },
                 },
                 duration: 5000,
@@ -651,10 +679,12 @@ export default function BookingsPage() {
                     description: "A deposit evidence has been uploaded and requires verification.",
                     action: {
                       label: "View",
-                      onClick: () => {
-                        setSelectedBooking(booking)
+                      onClick: async () => {
+                        // CRITICAL: Don't set selectedBooking from list - it might be stale
+                        // Wait for fresh data from API
+                        setLoadingBookingDetails(true)
                         setViewDialogOpen(true)
-                        fetchBookingDetails(booking.id)
+                        await fetchBookingDetails(booking.id)
                       },
                     },
                     duration: 8000,
@@ -666,10 +696,12 @@ export default function BookingsPage() {
                   description: `Status changed from "${lastKnown.status}" to "${booking.status}"`,
                   action: {
                     label: "View",
-                    onClick: () => {
-                      setSelectedBooking(booking)
+                    onClick: async () => {
+                      // CRITICAL: Don't set selectedBooking from list - it might be stale
+                      // Wait for fresh data from API
+                      setLoadingBookingDetails(true)
                       setViewDialogOpen(true)
-                      fetchBookingDetails(booking.id)
+                      await fetchBookingDetails(booking.id)
                     },
                   },
                   duration: 5000,
@@ -804,6 +836,9 @@ export default function BookingsPage() {
           console.log('[fetchBookingDetails] Received booking data:', {
             bookingId,
             hasBooking: !!booking,
+            status: booking?.status,
+            oldStatus: selectedBooking?.status,
+            statusChanged: selectedBooking?.status !== booking?.status,
             fee_amount: booking?.fee_amount,
             feeAmount: booking?.feeAmount,
             fee_currency: booking?.fee_currency,
@@ -848,6 +883,21 @@ export default function BookingsPage() {
       setLoadingBookingDetails(false)
     }
   }
+  
+  // Helper function to refresh booking details dialog after admin actions
+  // This ensures the dialog always shows the latest status and data
+  const refreshBookingDetailsDialog = useCallback(async (bookingId: string) => {
+    if (!viewDialogOpen || !bookingId) return
+    
+    // Reset the ref to force refetch
+    lastFetchedBookingIdRef.current = null
+    
+    // Add small delay to ensure backend cache invalidation completes
+    await new Promise(resolve => setTimeout(resolve, 150))
+    
+    // Fetch fresh data
+    await fetchBookingDetails(bookingId)
+  }, [viewDialogOpen, fetchBookingDetails])
 
   // Handle delete booking - open confirmation dialog
   const handleDeleteBooking = (bookingId: string) => {
@@ -1269,10 +1319,10 @@ export default function BookingsPage() {
         if (isCancelled || isRestoration) {
           setViewDialogOpen(false)
           setSelectedBooking(null)
-        } else if (viewDialogOpen) {
-          // For other status changes, refresh booking details in view dialog
-          // This ensures we get the latest data including status history
-          fetchBookingDetails(selectedBooking.id)
+        } else if (viewDialogOpen && selectedBooking?.id) {
+          // CRITICAL: Always refresh booking details after any admin update action
+          // This ensures the dialog shows the latest status and data
+          await refreshBookingDetailsDialog(selectedBooking.id)
         }
       } else {
           // Rollback on error
@@ -1462,8 +1512,11 @@ export default function BookingsPage() {
           }
         }
         
-        // Refresh booking details to get latest data including fee history
-        await fetchBookingDetails(selectedBooking.id)
+        // CRITICAL: Always refresh booking details after fee update
+        // This ensures the dialog shows the latest fee data and status
+        if (viewDialogOpen) {
+          await refreshBookingDetailsDialog(selectedBooking.id)
+        }
         
         // Invalidate and refetch bookings list to ensure fresh data
         // Trigger invalidation event for React Query cache
@@ -1683,7 +1736,14 @@ export default function BookingsPage() {
           fetchBookings()
         }}
         onViewBooking={async (bookingId) => {
+          // CRITICAL: Don't set selectedBooking from list - it might be stale
+          // Clear any existing selectedBooking to prevent showing stale data
+          // Wait for fresh data from API before opening dialog
+          setSelectedBooking(null) // Clear stale data first
+          setLoadingBookingDetails(true)
           setViewDialogOpen(true)
+          // Reset the ref so useEffect will refetch
+          lastFetchedBookingIdRef.current = null
           await fetchBookingDetails(bookingId)
         }}
         onDeleteBooking={handleDeleteBooking}

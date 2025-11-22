@@ -58,8 +58,20 @@ export const GET = withVersioning(async (
       return authError
     }
 
+    // CRITICAL: Check for cache-busting parameter to bypass cache
+    // Frontend sends ?t=timestamp to ensure fresh data after status updates
+    const url = new URL(request.url)
+    const bypassCache = url.searchParams.has('t') || url.searchParams.has('_refresh')
+    
     // Use getBookingById which includes caching
     // Cache will be invalidated automatically when booking is updated
+    // But if cache-busting is requested, invalidate cache first to ensure fresh data
+    if (bypassCache) {
+      const { invalidateCache, CacheKeys } = await import('@/lib/cache')
+      await invalidateCache(CacheKeys.booking(id))
+      await logger.debug('Cache invalidated due to cache-busting parameter', { bookingId: id })
+    }
+    
     const booking = await getBookingById(id)
     
     if (!booking) {
