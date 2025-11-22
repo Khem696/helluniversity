@@ -910,6 +910,7 @@ export const PATCH = withVersioning(async (
         
         await sendBookingStatusNotification(updatedBooking, updatedBooking.status, {
           changeReason: dateChangeReason,
+          skipDuplicateCheck: true, // CRITICAL: Always send date change emails, even if multiple changes occur
         })
         await logger.info('Date change notification email sent successfully', { bookingId: id })
       } catch (emailError) {

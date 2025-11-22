@@ -1928,6 +1928,12 @@ export default function BookingsPage() {
                 <h3 className="text-lg font-semibold mb-3">Contact Information</h3>
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                   <div>
+                    <Label>Reference Number</Label>
+                    <div className="text-sm text-gray-900 font-semibold text-blue-600">
+                      {getBookingReferenceNumber(selectedBooking)}
+                    </div>
+                  </div>
+                  <div>
                     <Label>Name</Label>
                     <div className="text-sm text-gray-900">{selectedBooking.name}</div>
                   </div>
