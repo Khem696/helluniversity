@@ -200,7 +200,7 @@ export function EventModalViewer({ eventId, isOpen, onClose }: EventModalViewerP
                             className="max-w-full max-h-full w-auto h-auto object-contain"
                             priority={index === 0}
                             loading={index === 0 ? "eager" : "lazy"}
-                            quality={90}
+                            quality={75}
                             sizes="(max-width: 768px) 100vw, (max-width: 1024px) 90vw, 80vw"
                           />
                           {image.title && (
