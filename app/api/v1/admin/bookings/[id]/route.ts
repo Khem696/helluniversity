@@ -1354,6 +1354,20 @@ export const PATCH = withVersioning(async (
                             isRestoration ||
                             isCriticalStatusChange
     
+    // CRITICAL: Log email sending decision for debugging
+    await logger.debug('Email sending decision', {
+      bookingId: id,
+      shouldSendEmail,
+      isCriticalStatusChange,
+      isRestoration,
+      hasToken: !!updatedBooking.responseToken,
+      actualStatus,
+      oldStatus: currentBooking.status,
+      isOtherChannelVerification,
+      changeReason: finalChangeReason,
+      transition: `${currentBooking.status} -> ${actualStatus}`
+    })
+    
     if (shouldSendEmail) {
       try {
         // Send response token for pending_deposit status (deposit upload link)
@@ -1400,12 +1414,24 @@ export const PATCH = withVersioning(async (
           // Admin can manually send token link if needed
         }
         
-        // Enhance changeReason for restoration emails
-        let enhancedChangeReason = changeReason
-        if (isRestoration && !changeReason?.toLowerCase().includes('restored') && !changeReason?.toLowerCase().includes('restoration')) {
-          enhancedChangeReason = changeReason 
-            ? `${changeReason}\n\nYour booking has been restored from cancelled status.`
+        // Enhance changeReason for restoration emails and other channel confirmations
+        // CRITICAL: Use finalChangeReason which includes "other channel" text if applicable
+        let enhancedChangeReason = finalChangeReason || changeReason
+        if (isRestoration && !enhancedChangeReason?.toLowerCase().includes('restored') && !enhancedChangeReason?.toLowerCase().includes('restoration')) {
+          enhancedChangeReason = enhancedChangeReason 
+            ? `${enhancedChangeReason}\n\nYour booking has been restored from cancelled status.`
             : 'Your booking has been restored from cancelled status.'
+        }
+        
+        // CRITICAL: Ensure "other channel" confirmation emails have proper messaging
+        // This handles pending_deposit -> confirmed via other channel
+        if (actualStatus === "confirmed" && 
+            currentBooking.status === "pending_deposit" && 
+            isOtherChannelVerification &&
+            !enhancedChangeReason?.toLowerCase().includes('other channel')) {
+          enhancedChangeReason = enhancedChangeReason 
+            ? `${enhancedChangeReason}\n\nDeposit verified through other channels (phone, in-person, etc.).`
+            : 'Deposit verified through other channels (phone, in-person, etc.). Your booking has been confirmed.'
         }
         
         // CRITICAL: Skip duplicate check for critical status changes to ensure user always gets notified

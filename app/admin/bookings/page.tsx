@@ -456,10 +456,13 @@ export default function BookingsPage() {
       if (isCancelled || isRestoration) {
         setViewDialogOpen(false)
         setSelectedBooking(null)
-      } else if (viewDialogOpen) {
+      } else if (viewDialogOpen && selectedBooking?.id) {
         // For other status changes, refresh booking details in view dialog
-        // This ensures we get the latest data including status history
-        fetchBookingDetails(selectedBooking?.id || "")
+        // CRITICAL: Add delay to ensure cache is invalidated and database is updated
+        // This prevents stale status from being displayed
+        setTimeout(() => {
+          fetchBookingDetails(selectedBooking.id)
+        }, 100) // Small delay to ensure backend cache invalidation completes
       }
     },
   })
