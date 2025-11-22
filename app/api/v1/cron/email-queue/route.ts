@@ -50,10 +50,13 @@ export const GET = withVersioning(async (request: Request) => {
       )
     }
 
-    // Process critical status change emails (pending_deposit/confirmed/cancelled)
+    // Process critical emails:
+    // 1. Critical status change emails (pending_deposit/confirmed/cancelled)
+    // 2. User confirmation emails (booking creation confirmation)
+    // 3. Admin notification emails (booking creation notification)
     const startTime = Date.now()
     const limit = CRON_LIMITS.EMAIL_QUEUE
-    await logger.info('Processing critical status emails', {
+    await logger.info('Processing critical emails (status changes, user confirmations, admin notifications)', {
       limit,
       timeout: `${CRON_TIMEOUT_MS}ms`,
       timestamp: new Date().toISOString(),
@@ -91,7 +94,7 @@ export const GET = withVersioning(async (request: Request) => {
       
       return successResponse(
         {
-          message: "Critical status email queue processed (pending_deposit/confirmed/cancelled)",
+          message: "Critical email queue processed (status changes, user confirmations, admin notifications)",
           result: {
             processed: result.processed,
             sent: result.sent,

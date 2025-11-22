@@ -642,7 +642,7 @@ export async function sendAdminNotification(data: ReservationData, bookingId?: s
   } catch (error) {
     // Queue email for retry
     const errorMessage = error instanceof Error ? error.message : 'Unknown error'
-    console.error('Failed to send admin notification, queuing for retry:', errorMessage)
+    console.error(`[sendAdminNotification] ❌ Failed to send admin notification, queuing for retry:`, errorMessage)
     
     try {
       await addEmailToQueue(
@@ -651,17 +651,17 @@ export async function sendAdminNotification(data: ReservationData, bookingId?: s
         mailOptions.subject as string,
         mailOptions.html as string,
         mailOptions.text as string,
-        { bookingData: data, replyTo: data.email }
+        { bookingData: data, replyTo: data.email, bookingId: bookingId }
       )
-      console.log('Admin notification queued for retry')
+      console.log(`[sendAdminNotification] ✅ Admin notification queued for retry`)
+      // Don't throw error if email was successfully queued - it will be sent by the queue processor
+      // Return normally so calling function knows it was queued (not sent, but will be sent)
+      return
     } catch (queueError) {
-      console.error('Failed to queue admin notification:', queueError)
-      // Re-throw original error if queueing fails
+      console.error(`[sendAdminNotification] ❌ Failed to queue admin notification for retry:`, queueError)
+      // Only throw if queueing also fails - this is a critical error
       throw error
     }
-    
-    // Re-throw original error
-    throw error
   }
 }
 
@@ -680,16 +680,18 @@ export async function sendUserConfirmation(data: ReservationData, bookingId?: st
     html: generateUserEmailHTML(data),
   }
 
+  console.log(`[sendUserConfirmation] Attempting to send user confirmation email to ${data.email} (booking: ${bookingId || 'N/A'})`)
+  
   try {
     const emailTransporter = await getTransporter()
     const result = await emailTransporter.sendMail(mailOptions)
     
     // Log successful send (nodemailer v7 returns messageId)
-    console.log('User confirmation email sent:', result.messageId)
+    console.log(`[sendUserConfirmation] ✅ User confirmation email sent successfully: ${result.messageId} to ${data.email}`)
   } catch (error) {
     // Queue email for retry
     const errorMessage = error instanceof Error ? error.message : 'Unknown error'
-    console.error('Failed to send user confirmation, queuing for retry:', errorMessage)
+    console.error(`[sendUserConfirmation] ❌ Failed to send user confirmation to ${data.email} (booking: ${bookingId || 'N/A'}), queuing for retry:`, errorMessage)
     
     try {
       await addEmailToQueue(
@@ -698,17 +700,17 @@ export async function sendUserConfirmation(data: ReservationData, bookingId?: st
         mailOptions.subject as string,
         mailOptions.html as string,
         mailOptions.text as string,
-        { bookingData: data }
+        { bookingData: data, bookingId: bookingId }
       )
-      console.log('User confirmation queued for retry')
+      console.log(`[sendUserConfirmation] ✅ User confirmation queued for retry to ${data.email}`)
+      // Don't throw error if email was successfully queued - it will be sent by the queue processor
+      // Return normally so calling function knows it was queued (not sent, but will be sent)
+      return
     } catch (queueError) {
-      console.error('Failed to queue user confirmation:', queueError)
-      // Re-throw original error if queueing fails
+      console.error(`[sendUserConfirmation] ❌ Failed to queue user confirmation for retry:`, queueError)
+      // Only throw if queueing also fails - this is a critical error
       throw error
     }
-    
-    // Re-throw original error
-    throw error
   }
 }
 
@@ -726,13 +728,15 @@ export async function sendReservationEmails(
   let userSent = false
 
   // Send admin notification FIRST - MUST succeed before sending user email
+  // Note: If email fails but gets queued, sendAdminNotification returns normally (doesn't throw)
+  // This allows user email to still be sent even if admin email was queued
   try {
     console.error('='.repeat(60))
     console.error('STEP 1: Attempting to send admin notification email...')
     console.error('='.repeat(60))
     await sendAdminNotification(data, bookingReference)
     adminSent = true
-    console.error('✅ Admin notification sent successfully')
+    console.error('✅ Admin notification sent or queued successfully')
     console.error('='.repeat(60))
   } catch (error) {
     // Handle different types of errors
@@ -791,15 +795,16 @@ export async function sendReservationEmails(
     return result
   }
   
-  // Only execute if admin email succeeded
-  console.error('✅ Admin email succeeded, proceeding to send user email...')
+  // Only execute if admin email succeeded or was queued
+  // Note: If user email fails but gets queued, sendUserConfirmation returns normally (doesn't throw)
+  console.error('✅ Admin email succeeded or queued, proceeding to send user email...')
   try {
     console.error('='.repeat(60))
     console.error('STEP 2: Attempting to send user confirmation email...')
     console.error('='.repeat(60))
     await sendUserConfirmation(data, bookingReference)
     userSent = true
-    console.error('✅ User confirmation sent successfully')
+    console.error('✅ User confirmation sent or queued successfully')
     console.error('='.repeat(60))
   } catch (error) {
     // Handle different types of errors

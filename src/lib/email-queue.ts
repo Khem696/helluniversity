@@ -205,13 +205,16 @@ export async function getPendingCriticalStatusEmails(limit: number = 20): Promis
     // Don't throw - cleanup failure shouldn't block email processing
   })
 
-  // Get all pending status_change emails
+  // CRITICAL: Process all critical email types:
+  // 1. status_change emails with critical statuses (pending_deposit, confirmed, cancelled)
+  // 2. user_confirmation emails (user booking confirmation - must be sent)
+  // 3. admin_notification emails (admin booking notification - must be sent)
   // Optimized: Uses idx_email_queue_critical (status, email_type, created_at) index
   const result = await db.execute({
     sql: `
       SELECT * FROM email_queue
       WHERE status = 'pending'
-        AND email_type = 'status_change'
+        AND email_type IN ('status_change', 'user_confirmation', 'admin_notification')
         AND (next_retry_at IS NULL OR next_retry_at <= ?)
         AND retry_count < max_retries
       ORDER BY created_at ASC
@@ -220,36 +223,51 @@ export async function getPendingCriticalStatusEmails(limit: number = 20): Promis
     args: [now, limit * 2], // Get more to filter by metadata
   })
 
-  // Filter to only include emails with critical statuses in metadata
+  // Filter emails based on type
   // Critical statuses: pending_deposit, confirmed, cancelled
   const criticalEmails: EmailQueueItem[] = []
   
   for (const row of result.rows) {
     const email = formatEmailQueueItem(row)
     
-    // Parse metadata to check status
-    let metadata: any = {}
-    if (email.metadata) {
-      if (typeof email.metadata === 'string') {
-        try {
-          metadata = JSON.parse(email.metadata)
-        } catch {
-          // Skip if metadata can't be parsed
-          continue
-        }
-      } else {
-        metadata = email.metadata
-      }
-    }
-    
-    // Only include if status is one of the critical statuses
-    const criticalStatuses = ['pending_deposit', 'confirmed', 'cancelled']
-    if (criticalStatuses.includes(metadata.status)) {
+    // CRITICAL: Always include user_confirmation and admin_notification emails
+    // These are essential for booking creation and must be sent
+    if (email.emailType === 'user_confirmation' || email.emailType === 'admin_notification') {
       criticalEmails.push(email)
       
       // Stop when we reach the limit
       if (criticalEmails.length >= limit) {
         break
+      }
+      continue
+    }
+    
+    // For status_change emails, check metadata for critical statuses
+    if (email.emailType === 'status_change') {
+      // Parse metadata to check status
+      let metadata: any = {}
+      if (email.metadata) {
+        if (typeof email.metadata === 'string') {
+          try {
+            metadata = JSON.parse(email.metadata)
+          } catch {
+            // Skip if metadata can't be parsed
+            continue
+          }
+        } else {
+          metadata = email.metadata
+        }
+      }
+      
+      // Only include if status is one of the critical statuses
+      const criticalStatuses = ['pending_deposit', 'confirmed', 'cancelled']
+      if (criticalStatuses.includes(metadata.status)) {
+        criticalEmails.push(email)
+        
+        // Stop when we reach the limit
+        if (criticalEmails.length >= limit) {
+          break
+        }
       }
     }
   }
@@ -586,7 +604,7 @@ export async function processCriticalStatusEmails(limit: number = 20): Promise<{
     errors: [] as string[],
   }
 
-  console.log(`Processing ${pendingEmails.length} critical status change emails (pending_deposit/confirmed/cancelled)`)
+  console.log(`Processing ${pendingEmails.length} critical emails (status changes, user confirmations, admin notifications)`)
 
   for (const email of pendingEmails) {
     try {
@@ -622,7 +640,14 @@ export async function processCriticalStatusEmails(limit: number = 20): Promise<{
       await markEmailSent(email.id)
       results.sent++
       
-      console.log(`Critical status email ${email.id} sent successfully: ${result.messageId} (Status: ${metadata.status})`)
+      // Log based on email type
+      if (email.emailType === 'user_confirmation') {
+        console.log(`User confirmation email ${email.id} sent successfully: ${result.messageId}`)
+      } else if (email.emailType === 'admin_notification') {
+        console.log(`Admin notification email ${email.id} sent successfully: ${result.messageId}`)
+      } else {
+        console.log(`Critical status email ${email.id} sent successfully: ${result.messageId} (Status: ${metadata.status || 'N/A'})`)
+      }
     } catch (error) {
       // IMPROVED: Safely extract and sanitize error message
       // Removes sensitive information before logging/queuing
@@ -655,9 +680,9 @@ export async function processCriticalStatusEmails(limit: number = 20): Promise<{
       
       if (email.retryCount + 1 >= email.maxRetries) {
         results.failed++
-        console.error(`Critical status email ${email.id} failed after ${email.retryCount + 1} retries`)
+        console.error(`${email.emailType} email ${email.id} failed after ${email.retryCount + 1} retries`)
       } else {
-        console.error(`Critical status email ${email.id} failed, scheduled for retry: ${errorMessage}`)
+        console.error(`${email.emailType} email ${email.id} failed, scheduled for retry: ${errorMessage}`)
       }
     }
   }
