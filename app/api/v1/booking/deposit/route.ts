@@ -313,10 +313,12 @@ export const POST = withVersioning(async (request: Request) => {
       })
 
       // Send user notification for deposit upload
+      // CRITICAL: This is a critical status change - user needs confirmation that deposit was uploaded
       try {
         await sendBookingStatusNotification(updatedBooking, "paid_deposit", {
           changeReason: "Your deposit evidence has been uploaded successfully. Our admin team will review it and confirm your booking shortly.",
           responseToken: updatedBooking.responseToken, // Token for future access if needed
+          skipDuplicateCheck: true, // Always send confirmation - user needs to know deposit was received
         })
         await logger.info('User notification sent for deposit upload', { bookingId: booking.id })
       } catch (userEmailError) {

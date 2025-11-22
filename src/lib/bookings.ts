@@ -635,7 +635,7 @@ export async function listBookings(options?: {
       feeAmountOriginal: bookings[0].feeAmountOriginal,
       hasFee: !!(bookings[0].feeAmount && Number(bookings[0].feeAmount) > 0),
     } : null,
-    bookingsWithFee: bookings.filter(b => b.feeAmount && Number(b.feeAmount) > 0).length,
+    bookingsWithFee: bookings.filter((b: Booking) => b.feeAmount && Number(b.feeAmount) > 0).length,
   })
 
   // Apply overlap filter if enabled
@@ -646,7 +646,7 @@ export async function listBookings(options?: {
     // Check each booking for overlaps (in parallel for better performance)
     const { createBangkokTimestamp } = await import('./timezone')
     const overlapChecks = await Promise.all(
-      bookings.map(async (booking) => {
+      bookings.map(async (booking: Booking) => {
         // formatBooking returns dates as YYYY-MM-DD strings, convert to Unix timestamps
         const startDate = booking.startDate 
           ? createBangkokTimestamp(booking.startDate, booking.startTime || null)
@@ -667,13 +667,13 @@ export async function listBookings(options?: {
     
     // Filter to only bookings with overlaps
     bookings = overlapChecks
-      .filter(check => check.overlapCount > 0)
-      .map(check => check.booking)
+      .filter((check: { booking: Booking; overlapCount: number }) => check.overlapCount > 0)
+      .map((check: { booking: Booking; overlapCount: number }) => check.booking)
     
     // Re-apply sorting after filtering (in case order changed)
     const sortBy = options?.sortBy || "created_at"
     const sortOrder = options?.sortOrder || "DESC"
-    bookings.sort((a, b) => {
+    bookings.sort((a: Booking, b: Booking) => {
       let aVal: any, bVal: any
       switch (sortBy) {
         case "created_at":
@@ -1046,11 +1046,12 @@ export async function autoUpdateFinishedBookings(): Promise<{
             })
 
             // Send cancellation email to user
-            // Fix #7: Duplicate prevention is handled in sendBookingStatusNotification
+            // CRITICAL: Always send cancellation notification - user needs to know booking was cancelled
             try {
               const emailBooking = { ...fullBooking, status: "cancelled" as const }
               await sendBookingStatusNotification(emailBooking, "cancelled", {
                 changeReason: changeReason,
+                skipDuplicateCheck: true, // Always send - user needs to know booking was cancelled
               })
               console.log(`Cancellation email sent to user for booking ${bookingRow.id} (pending/postponed - start date passed)`)
             } catch (emailError) {
@@ -1169,10 +1170,12 @@ export async function autoUpdateFinishedBookings(): Promise<{
             })
 
             // Send finished email to user
+            // CRITICAL: Always send finished notification - user should know booking is complete
             try {
               const emailBooking = { ...fullBooking, status: "finished" as const }
               await sendBookingStatusNotification(emailBooking, "finished", {
                 changeReason: changeReason,
+                skipDuplicateCheck: true, // Always send - user needs to know booking is finished
               })
               console.log(`Finished email sent to user for booking ${bookingRow.id}`)
             } catch (emailError) {
@@ -1399,9 +1402,10 @@ export async function updateBookingStatus(
     // Token is needed for:
     // 1. pending_deposit status (user can upload deposit)
     // 2. paid_deposit status (user can access booking details via token)
+    const isPendingToPendingDeposit = finalStatus === "pending_deposit" && oldStatus === "pending"
     const needsNewToken = 
       // Generate for pending_deposit if coming from pending (admin accepts booking)
-      (finalStatus === "pending_deposit" && oldStatus === "pending") ||
+      isPendingToPendingDeposit ||
       // Generate for pending_deposit if restoring from cancelled (archive restoration)
       (finalStatus === "pending_deposit" && oldStatus === "cancelled") ||
       // Generate for paid_deposit if restoring from cancelled (archive restoration - user needs token to access booking details)
@@ -1410,6 +1414,11 @@ export async function updateBookingStatus(
       !currentBooking.response_token ||
       // Generate if existing token is expired
       (currentBooking.token_expires_at && currentBooking.token_expires_at < now)
+    
+    // CRITICAL: Log token generation decision for pending -> pending_deposit transitions
+    if (isPendingToPendingDeposit) {
+      console.log(`[updateBookingStatus] pending -> pending_deposit: needsNewToken=${needsNewToken}, hasExistingToken=${!!currentBooking.response_token}, tokenExpired=${currentBooking.token_expires_at ? currentBooking.token_expires_at < now : 'N/A'}`)
+    }
     
     // Prevent rapid token regeneration: if token was recently generated and status hasn't changed, preserve it
     if (tokenRecentlyGenerated && oldStatus === finalStatus && currentBooking.response_token && currentBooking.token_expires_at && currentBooking.token_expires_at > now) {
@@ -1421,6 +1430,10 @@ export async function updateBookingStatus(
     } 
     else if (needsNewToken && (finalStatus === "pending_deposit" || finalStatus === "pending" || finalStatus === "paid_deposit")) {
       // Generate new token with collision handling
+      // CRITICAL: For pending -> pending_deposit, this MUST generate a token
+      if (isPendingToPendingDeposit) {
+        console.log(`[updateBookingStatus] Generating new token for pending -> pending_deposit transition (booking ${bookingId})`)
+      }
       responseToken = await generateUniqueResponseToken(db)
       updateFields.push("response_token = ?")
       updateArgs.push(responseToken)
@@ -1689,12 +1702,35 @@ export async function updateBookingStatus(
     }
 
     // Fetch updated booking
+    // CRITICAL: Ensure we get the latest data including any newly generated tokens
     const result = await db.execute({
       sql: "SELECT * FROM bookings WHERE id = ?",
       args: [bookingId],
     })
 
+    if (result.rows.length === 0) {
+      throw new Error(`Booking ${bookingId} not found after update`)
+    }
+
     const updatedBooking = formatBooking(result.rows[0] as any)
+    
+    // CRITICAL: Verify token is present for pending_deposit status
+    // Log error if token is missing (should never happen for pending -> pending_deposit)
+    if (finalStatus === "pending_deposit" && !updatedBooking.responseToken) {
+      console.error(`[updateBookingStatus] CRITICAL: Token missing for pending_deposit booking ${bookingId}`, {
+        bookingId,
+        oldStatus,
+        finalStatus,
+        wasTokenGenerated: !!responseToken,
+        generatedToken: responseToken || '(null)',
+        dbToken: (result.rows[0] as any).response_token || '(null)',
+        updateFields: updateFields.filter(f => f.includes('response_token')),
+        needsNewToken: (finalStatus === "pending_deposit" && oldStatus === "pending") ||
+                       (finalStatus === "pending_deposit" && oldStatus === "cancelled") ||
+                       !currentBooking.response_token ||
+                       (currentBooking.token_expires_at && currentBooking.token_expires_at < now),
+      })
+    }
     
     // Invalidate cache for this booking
     await invalidateCache(CacheKeys.booking(bookingId))

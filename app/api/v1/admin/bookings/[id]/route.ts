@@ -1326,11 +1326,12 @@ export const PATCH = withVersioning(async (
       (actualStatus === "pending_deposit" || actualStatus === "paid_deposit" || actualStatus === "confirmed")
     
     // Determine if this is a critical status change that should always send email
-    // Critical changes: pending_deposit -> paid_deposit, paid_deposit -> confirmed, any restoration, any cancellation
+    // Critical changes: pending -> pending_deposit, pending_deposit -> paid_deposit, pending_deposit -> confirmed, paid_deposit -> confirmed, any restoration, any cancellation
     const isCriticalStatusChange = 
-      (currentBooking.status === "pending_deposit" && actualStatus === "paid_deposit") ||
-      (currentBooking.status === "paid_deposit" && actualStatus === "confirmed") ||
       (currentBooking.status === "pending" && actualStatus === "pending_deposit") ||
+      (currentBooking.status === "pending_deposit" && actualStatus === "paid_deposit") ||
+      (currentBooking.status === "pending_deposit" && actualStatus === "confirmed") ||
+      (currentBooking.status === "paid_deposit" && actualStatus === "confirmed") ||
       (actualStatus === "cancelled") || // Always send cancellation emails (user needs to know booking is cancelled)
       isRestoration
     
@@ -1340,28 +1341,56 @@ export const PATCH = withVersioning(async (
     // 1. If there's a response token (pending_deposit, paid_deposit with token) -> send email
     // 2. If status is not "pending" (all restoration statuses are not pending) -> send email
     // 3. If it's a restoration (explicit check to ensure restoration emails are always sent) -> send email
+    // 4. If it's a critical status change (pending -> pending_deposit, etc.) -> always send email
     const shouldSendEmail = updatedBooking.responseToken || 
                             actualStatus !== "pending" || 
-                            isRestoration
+                            isRestoration ||
+                            isCriticalStatusChange
     
     if (shouldSendEmail) {
       try {
         // Send response token for pending_deposit status (deposit upload link)
         // Also send token for paid_deposit if this is a restoration (user needs to access booking details)
+        // CRITICAL: For pending -> pending_deposit, token MUST be present
         const tokenToUse = actualStatus === "pending_deposit" 
           ? updatedBooking.responseToken 
           : (actualStatus === "paid_deposit" && isRestoration && updatedBooking.responseToken)
           ? updatedBooking.responseToken
           : undefined
         
-        // Log warning if token is missing for pending_deposit status
-        if (actualStatus === "pending_deposit" && !tokenToUse) {
-          await logger.warn(`WARNING: No token available for pending_deposit booking`, { 
-            bookingId: id, 
-            actualStatus, 
-            hasResponseToken: !!updatedBooking.responseToken,
-            responseToken: updatedBooking.responseToken || '(null)'
+        // CRITICAL: Log detailed info for pending_deposit status to help debug token issues
+        if (actualStatus === "pending_deposit") {
+          await logger.debug('Token check for pending_deposit email', {
+            bookingId: id,
+            oldStatus: currentBooking.status,
+            actualStatus,
+            hasToken: !!tokenToUse,
+            tokenPrefix: tokenToUse ? tokenToUse.substring(0, 8) + '...' : '(null)',
+            updatedBookingHasToken: !!updatedBooking.responseToken,
+            isCriticalStatusChange,
+            isPendingToPendingDeposit: currentBooking.status === "pending" && actualStatus === "pending_deposit"
           })
+        }
+        
+        // Log warning if token is missing for pending_deposit status
+        // CRITICAL: For pending -> pending_deposit, token should always be generated
+        // If token is missing, this is a critical error that needs investigation
+        if (actualStatus === "pending_deposit" && !tokenToUse) {
+          await logger.error(
+            `CRITICAL: No token available for pending_deposit booking - email will be sent without deposit link`,
+            new Error(`Token missing for pending_deposit booking`),
+            { 
+              bookingId: id, 
+              actualStatus,
+              oldStatus: currentBooking.status,
+              hasResponseToken: !!updatedBooking.responseToken,
+              responseToken: updatedBooking.responseToken || '(null)',
+              isCriticalStatusChange,
+              isPendingToPendingDeposit: currentBooking.status === "pending" && actualStatus === "pending_deposit"
+            }
+          )
+          // Still send email even without token - user needs to know booking was accepted
+          // Admin can manually send token link if needed
         }
         
         // Enhance changeReason for restoration emails
@@ -1374,9 +1403,11 @@ export const PATCH = withVersioning(async (
         
         // CRITICAL: Skip duplicate check for critical status changes to ensure user always gets notified
         // This is especially important for:
-        // 1. paid_deposit -> confirmed (deposit verification confirmation)
-        // 2. Restoration emails (user needs to know booking is active again)
-        // 3. pending_deposit -> paid_deposit (deposit upload confirmation)
+        // 1. pending -> pending_deposit (admin accepts booking)
+        // 2. pending_deposit -> paid_deposit (deposit upload confirmation)
+        // 3. pending_deposit -> confirmed (admin confirms via other channel)
+        // 4. paid_deposit -> confirmed (deposit verification confirmation)
+        // 5. Restoration emails (user needs to know booking is active again)
         await sendBookingStatusNotification(updatedBooking, actualStatus, {
           changeReason: enhancedChangeReason,
           responseToken: tokenToUse,
