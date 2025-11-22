@@ -34,6 +34,7 @@ export const ALLOWED_BOOKING_FIELDS = new Set([
   'biography',
   'special_requests',
   'organization_type',
+  'admin_notes',
   'fee_amount',
   'fee_amount_original',
   'fee_currency',
