@@ -1625,6 +1625,12 @@ export async function sendAdminUserResponseNotification(
               <div style="background-color: #f9fafb; border-left: 4px solid ${responseInfo.color}; padding: 20px; margin: 20px 0; border-radius: 4px;">
                 <h3 style="margin: 0 0 15px 0; color: #111827; font-size: 18px;">Reservation Details</h3>
                 <table width="100%" cellpadding="5" cellspacing="0">
+                  ${booking.referenceNumber ? `
+                  <tr>
+                    <td style="color: #6b7280; font-size: 14px; width: 120px;">Reference Number:</td>
+                    <td style="color: ${responseInfo.color}; font-size: 14px; font-weight: 600;">${sanitizeHTML(booking.referenceNumber)}</td>
+                  </tr>
+                  ` : ''}
                   <tr>
                     <td style="color: #6b7280; font-size: 14px; width: 120px;">Name:</td>
                     <td style="color: #111827; font-size: 14px; font-weight: 500;">${sanitizeHTML(booking.name)}</td>
@@ -1686,12 +1692,15 @@ export async function sendAdminUserResponseNotification(
 </html>
   `
 
+  // CRITICAL: Always start subject with booking reference number for easy identification
+  const referenceNumber = booking.referenceNumber || booking.id
   const textContent = `
 ${responseInfo.title}
 
 ${responseInfo.message}
 
 RESERVATION DETAILS:
+Reference Number: ${referenceNumber}
 Name: ${booking.name}
 Email: ${booking.email}
 Phone: ${booking.phone || 'N/A'}
@@ -1707,9 +1716,6 @@ Please review this response in the admin dashboard.
 Best regards,
 Hell University Reservation System
   `.trim()
-
-  // CRITICAL: Always start subject with booking reference number for easy identification
-  const referenceNumber = booking.referenceNumber || booking.id
   const mailOptions: nodemailer.SendMailOptions = {
     from: `"Hell University Reservation System" <${process.env.SMTP_USER}>`,
     to: recipientEmail,
@@ -1831,7 +1837,7 @@ export async function sendAdminAutoUpdateNotification(
                   return `
                   <div style="background-color: #ffffff; padding: 15px; margin: 10px 0; border-radius: 4px; border: 1px solid #a7f3d0;">
                     <p style="margin: 0 0 5px 0; color: #111827; font-size: 14px; font-weight: 500;">
-                      ${sanitizeHTML(booking.name)} - ${sanitizeHTML(formattedEventType)}
+                      ${sanitizeHTML(booking.referenceNumber || booking.id)} - ${sanitizeHTML(booking.name)} - ${sanitizeHTML(formattedEventType)}
                     </p>
                     <p style="margin: 0; color: #6b7280; font-size: 12px;">
                       ${sanitizeHTML(formattedDateRange)}
@@ -1862,7 +1868,7 @@ export async function sendAdminAutoUpdateNotification(
                   return `
                   <div style="background-color: #ffffff; padding: 15px; margin: 10px 0; border-radius: 4px; border: 1px solid #fecaca;">
                     <p style="margin: 0 0 5px 0; color: #111827; font-size: 14px; font-weight: 500;">
-                      ${sanitizeHTML(booking.name)} - ${sanitizeHTML(formattedEventType)}
+                      ${sanitizeHTML(booking.referenceNumber || booking.id)} - ${sanitizeHTML(booking.name)} - ${sanitizeHTML(formattedEventType)}
                     </p>
                     <p style="margin: 0; color: #6b7280; font-size: 12px;">
                       ${sanitizeHTML(formattedDateRange)}
@@ -1907,7 +1913,8 @@ ${finishedBookings.length > 0 ? `FINISHED BOOKINGS (${finishedBookings.length}):
     startTime: booking.startTime,
     endTime: booking.endTime,
   } as ReservationData)
-  return `- ${booking.name} - ${formattedEventType} (${formattedDateRange})`
+  const referenceNumber = booking.referenceNumber || booking.id
+  return `- ${referenceNumber} - ${booking.name} - ${formattedEventType} (${formattedDateRange})`
 }).join('\n')}\n\n` : ''}
 
 ${cancelledBookings.length > 0 ? `CANCELLED BOOKINGS (${cancelledBookings.length}):\n${cancelledBookings.map(({ booking }) => {
@@ -1919,7 +1926,8 @@ ${cancelledBookings.length > 0 ? `CANCELLED BOOKINGS (${cancelledBookings.length
     startTime: booking.startTime,
     endTime: booking.endTime,
   } as ReservationData)
-  return `- ${booking.name} - ${formattedEventType} (${formattedDateRange})`
+  const referenceNumber = booking.referenceNumber || booking.id
+  return `- ${referenceNumber} - ${booking.name} - ${formattedEventType} (${formattedDateRange})`
 }).join('\n')}\n\n` : ''}
 
 All updated bookings have been moved to the archive and are no longer visible in the main bookings list.
@@ -2128,6 +2136,12 @@ export async function sendAdminStatusChangeNotification(
               <div style="background-color: #f9fafb; border-left: 4px solid ${statusInfo.color}; padding: 20px; margin: 20px 0; border-radius: 4px;">
                 <h3 style="margin: 0 0 15px 0; color: #111827; font-size: 18px;">Booking Details</h3>
                 <table width="100%" cellpadding="5" cellspacing="0">
+                  ${booking.referenceNumber ? `
+                  <tr>
+                    <td style="color: #6b7280; font-size: 14px; width: 120px;">Reference Number:</td>
+                    <td style="color: ${statusInfo.color}; font-size: 14px; font-weight: 600;">${sanitizeHTML(booking.referenceNumber)}</td>
+                  </tr>
+                  ` : ''}
                   <tr>
                     <td style="color: #6b7280; font-size: 14px; width: 120px;">Name:</td>
                     <td style="color: #111827; font-size: 14px; font-weight: 500;">${sanitizeHTML(booking.name)}</td>
@@ -2218,11 +2232,13 @@ export async function sendAdminStatusChangeNotification(
 </html>
   `.trim()
 
+  const referenceNumber = booking.referenceNumber || booking.id
   let textContent = `${statusInfo.title}
 
 ${statusInfo.message}
 
 BOOKING DETAILS:
+Reference Number: ${referenceNumber}
 Name: ${booking.name}
 Email: ${booking.email}
 Phone: ${booking.phone || 'N/A'}
@@ -2271,7 +2287,6 @@ Hell University Reservation System
   `.trim()
 
   // CRITICAL: Always start subject with booking reference number for easy identification
-  const referenceNumber = booking.referenceNumber || booking.id
   const mailOptions: nodemailer.SendMailOptions = {
     from: `"Hell University Reservation System" <${process.env.SMTP_USER}>`,
     to: recipientEmail,
@@ -2535,6 +2550,12 @@ export async function sendAdminCheckInNotification(booking: Booking): Promise<vo
               <div style="background-color: #f9fafb; border-left: 4px solid #10b981; padding: 20px; margin: 20px 0; border-radius: 4px;">
                 <h3 style="margin: 0 0 15px 0; color: #111827; font-size: 18px;">Booking Details</h3>
                 <table width="100%" cellpadding="5" cellspacing="0">
+                  ${booking.referenceNumber ? `
+                  <tr>
+                    <td style="color: #6b7280; font-size: 14px; width: 120px;">Reference Number:</td>
+                    <td style="color: #10b981; font-size: 14px; font-weight: 600;">${sanitizeHTML(booking.referenceNumber)}</td>
+                  </tr>
+                  ` : ''}
                   <tr>
                     <td style="color: #6b7280; font-size: 14px; width: 120px;">Name:</td>
                     <td style="color: #111827; font-size: 14px; font-weight: 500;">${sanitizeHTML(booking.name)}</td>
@@ -2580,11 +2601,13 @@ export async function sendAdminCheckInNotification(booking: Booking): Promise<vo
 </html>
   `.trim()
 
+  const referenceNumber = booking.referenceNumber || booking.id
   const textContent = `User Checked In
 
 A user has confirmed their check-in for their reservation.
 
 BOOKING DETAILS:
+Reference Number: ${referenceNumber}
 Name: ${booking.name}
 Email: ${booking.email}
 Phone: ${booking.phone || 'N/A'}
@@ -2599,7 +2622,6 @@ Hell University Reservation System
   `.trim()
 
   // CRITICAL: Always start subject with booking reference number for easy identification
-  const referenceNumber = booking.referenceNumber || booking.id
   const mailOptions: nodemailer.SendMailOptions = {
     from: `"Hell University Reservation System" <${process.env.SMTP_USER}>`,
     to: recipientEmail,
@@ -2694,6 +2716,12 @@ export async function sendAdminBookingDeletionNotification(
               <div style="background-color: #f9fafb; border-left: 4px solid #ef4444; padding: 20px; margin: 20px 0; border-radius: 4px;">
                 <h3 style="margin: 0 0 15px 0; color: #111827; font-size: 18px;">Deleted Booking Details</h3>
                 <table width="100%" cellpadding="5" cellspacing="0">
+                  ${booking.referenceNumber ? `
+                  <tr>
+                    <td style="color: #6b7280; font-size: 14px; width: 120px;">Reference Number:</td>
+                    <td style="color: #ef4444; font-size: 14px; font-weight: 600;">${sanitizeHTML(booking.referenceNumber)}</td>
+                  </tr>
+                  ` : ''}
                   <tr>
                     <td style="color: #6b7280; font-size: 14px; width: 120px;">Name:</td>
                     <td style="color: #111827; font-size: 14px; font-weight: 500;">${sanitizeHTML(booking.name)}</td>
@@ -2745,11 +2773,13 @@ export async function sendAdminBookingDeletionNotification(
 </html>
   `.trim()
 
+  const referenceNumber = booking.referenceNumber || booking.id
   const textContent = `Booking Deleted
 
 A booking has been deleted from the system.
 
 DELETED BOOKING DETAILS:
+Reference Number: ${referenceNumber}
 Name: ${booking.name}
 Email: ${booking.email}
 Phone: ${booking.phone || 'N/A'}
@@ -2765,7 +2795,6 @@ Hell University Reservation System
   `.trim()
 
   // CRITICAL: Always start subject with booking reference number for easy identification
-  const referenceNumber = booking.referenceNumber || booking.id
   const mailOptions: nodemailer.SendMailOptions = {
     from: `"Hell University Reservation System" <${process.env.SMTP_USER}>`,
     to: recipientEmail,
