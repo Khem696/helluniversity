@@ -16,6 +16,7 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { AlertTriangle, Trash2 } from "lucide-react"
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group"
 import { toast } from "react-hot-toast"
+import { API_PATHS } from "@/lib/api-config"
 
 interface DeleteAllBookingsDialogProps {
   open: boolean
@@ -45,7 +46,7 @@ export function DeleteAllBookingsDialog({
 
     setIsLoading(true)
     try {
-      const response = await fetch("/api/admin/bookings/delete-all", {
+      const response = await fetch(API_PATHS.adminBookingsDeleteAll, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",

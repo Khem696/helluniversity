@@ -21,11 +21,14 @@ const API_BASE = '/api'
 /**
  * Get versioned API path
  * @param path - API path without /api prefix (e.g., 'booking' or 'admin/bookings')
- * @returns Full versioned API path (e.g., '/api/v1/booking')
+ * @returns Full versioned API path with trailing slash (e.g., '/api/v1/booking/')
+ * 
+ * Note: Trailing slashes are required because next.config.js has trailingSlash: true
+ * This prevents 308 redirects on every API call.
  * 
  * @example
- * getApiPath('booking') => '/api/v1/booking'
- * getApiPath('admin/bookings') => '/api/v1/admin/bookings'
+ * getApiPath('booking') => '/api/v1/booking/'
+ * getApiPath('admin/bookings') => '/api/v1/admin/bookings/'
  */
 export function getApiPath(path: string): string {
   // Remove leading slash if present
@@ -33,7 +36,9 @@ export function getApiPath(path: string): string {
   // Remove /api prefix if present (for convenience)
   const withoutApiPrefix = cleanPath.startsWith('api/') ? cleanPath.slice(4) : cleanPath
   
-  return `${API_BASE}/${API_VERSION}/${withoutApiPrefix}`
+  // Add trailing slash to match Next.js trailingSlash: true configuration
+  // This prevents 308 redirects on API calls
+  return `${API_BASE}/${API_VERSION}/${withoutApiPrefix}/`
 }
 
 /**
@@ -57,6 +62,7 @@ export const API_PATHS = {
   adminBookingFee: (id: string) => getApiPath(`admin/bookings/${id}/fee`),
   adminBookingFeeHistory: (id: string) => getApiPath(`admin/bookings/${id}/fee/history`),
   adminBookingExport: getApiPath('admin/bookings/export'),
+  adminBookingsDeleteAll: getApiPath('admin/bookings/delete-all'),
   
   // Admin Deposit APIs
   adminDepositImage: (bookingId: string) => getApiPath(`admin/deposit/${bookingId}/image`),
@@ -123,13 +129,13 @@ export type ApiPathKey = keyof typeof API_PATHS
 
 /**
  * Helper to build query string for API calls
- * @param basePath - Base API path
+ * @param basePath - Base API path (should already have trailing slash from getApiPath)
  * @param params - Query parameters object
  * @returns Full URL with query string
  * 
  * @example
  * buildApiUrl(API_PATHS.adminBookings, { status: 'pending', limit: 10 })
- * => '/api/v1/admin/bookings?status=pending&limit=10'
+ * => '/api/v1/admin/bookings/?status=pending&limit=10'
  */
 export function buildApiUrl(
   basePath: string,
@@ -148,6 +154,7 @@ export function buildApiUrl(
   }
   
   const queryString = searchParams.toString()
+  // basePath already has trailing slash, so query string goes after it
   return queryString ? `${basePath}?${queryString}` : basePath
 }
 

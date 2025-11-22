@@ -1,3 +1,14 @@
+/**
+ * Admin Bulk Delete Bookings API v1
+ * 
+ * Versioned endpoint for admin bulk booking deletion
+ * 
+ * POST /api/v1/admin/bookings/delete-all - Delete all active or archive bookings
+ * - Requires Google Workspace authentication
+ * - Deletes all active or archive bookings
+ * - Body: { type: "active" | "archive" }
+ */
+
 import { NextResponse } from "next/server"
 import { getTursoClient } from "@/lib/turso"
 import { logAdminAction } from "@/lib/bookings"
@@ -10,15 +21,8 @@ import { deleteImage } from "@/lib/blob"
 import { enqueueJob } from "@/lib/job-queue"
 import { createRequestLogger } from "@/lib/logger"
 import { withErrorHandling, successResponse, errorResponse, unauthorizedResponse, forbiddenResponse, ErrorCodes } from "@/lib/api-response"
-
-/**
- * Admin Bulk Delete Bookings API
- * 
- * POST /api/admin/bookings/delete-all
- * - Requires Google Workspace authentication
- * - Deletes all active or archive bookings
- * - Body: { type: "active" | "archive" }
- */
+import { withVersioning } from "@/lib/api-version-wrapper"
+import { getRequestPath } from "@/lib/api-versioning"
 
 async function checkAuth(requestId: string) {
   try {
@@ -32,10 +36,10 @@ async function checkAuth(requestId: string) {
   return null
 }
 
-export const POST = async (request: Request) => {
+export const POST = withVersioning(async (request: Request) => {
   return withErrorHandling(async () => {
     const requestId = crypto.randomUUID()
-    const endpoint = "/api/admin/bookings/delete-all"
+    const endpoint = getRequestPath(request)
     const logger = createRequestLogger(requestId, endpoint)
     
     await logger.info('Admin bulk delete bookings request')
@@ -242,6 +246,6 @@ export const POST = async (request: Request) => {
       },
       { requestId }
     )
-  }, { endpoint: "/api/admin/bookings/delete-all" })
-}
+  }, { endpoint: getRequestPath(request) })
+})
 
