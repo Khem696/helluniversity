@@ -13,16 +13,12 @@
   },
   "crons": [
     {
-      "path": "/api/v1/cron/health/",
-      "schedule": "*/2 * * * *"
-    },
-    {
       "path": "/api/v1/cron/daily-digest/",
-      "schedule": "0 9 * * *"
+      "schedule": "0 2 * * *"
     },
     {
       "path": "/api/v1/cron/weekly-digest/",
-      "schedule": "0 9 * * 1"
+      "schedule": "0 2 * * 1"
     },
     {
       "path": "/api/v1/cron/reminders/",
