@@ -257,7 +257,7 @@ function sanitizeUserInput(input: string | null | undefined): string {
 }
 
 // Generate HTML email template for admin notification
-function generateAdminEmailHTML(data: ReservationData): string {
+function generateAdminEmailHTML(data: ReservationData, referenceNumber?: string): string {
   const formattedDateRange = formatDateRange(data)
   const formattedEventType = formatEventType(data.eventType, data.otherEventType)
   const organizationRemark = data.organizationType === "Tailor Event" ? "Organized by HU" : "Organized by Client"
@@ -344,6 +344,12 @@ function generateAdminEmailHTML(data: ReservationData): string {
   <div class="content">
     <div class="section">
       <div class="section-title">Booking Details</div>
+      ${referenceNumber ? `
+      <div class="field">
+        <span class="field-label">Reference Number:</span>
+        <span class="field-value" style="font-weight: bold; color: #5B9AB8;">${sanitizeHTML(referenceNumber)}</span>
+      </div>
+      ` : ''}
       <div class="field">
         <span class="field-label">Name:</span>
         <span class="field-value">${sanitizeHTML(data.name)}</span>
@@ -432,7 +438,7 @@ function generateAdminEmailHTML(data: ReservationData): string {
 }
 
 // Generate plain text version for admin notification
-function generateAdminEmailText(data: ReservationData): string {
+function generateAdminEmailText(data: ReservationData, referenceNumber?: string): string {
   const formattedDateRange = formatDateRange(data)
   const formattedEventType = formatEventType(data.eventType, data.otherEventType)
   const organizationRemark = data.organizationType === "Tailor Event" ? "Organized by HU" : "Organized by Client"
@@ -444,7 +450,7 @@ NEW RESERVATION INQUIRY - HELL UNIVERSITY
 
 BOOKING DETAILS:
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-Name: ${data.name}
+${referenceNumber ? `Reference Number: ${referenceNumber}\n` : ''}Name: ${data.name}
 Email: ${data.email}
 Phone: ${data.phone}
 Number of Participants: ${safeParticipants}
@@ -468,7 +474,7 @@ Received: ${new Date().toLocaleString('en-US', {
 }
 
 // Generate HTML email template for user auto-reply
-function generateUserEmailHTML(data: ReservationData): string {
+function generateUserEmailHTML(data: ReservationData, referenceNumber?: string): string {
   const formattedDateRange = formatDateRange(data)
   const formattedEventType = formatEventType(data.eventType, data.otherEventType)
   const organizationRemark = data.organizationType === "Tailor Event" ? "Organized by HU" : "Organized by Client"
@@ -543,6 +549,11 @@ function generateUserEmailHTML(data: ReservationData): string {
     
     <div class="summary">
       <h3 style="margin-top: 0; color: #5a3a2a;">Your Inquiry Summary:</h3>
+      ${referenceNumber ? `
+      <div class="summary-item">
+        <span class="summary-label">Reference Number:</span> <strong style="color: #3e82bb;">${sanitizeHTML(referenceNumber)}</strong>
+      </div>
+      ` : ''}
       <div class="summary-item">
         <span class="summary-label">Event Type:</span> ${sanitizeHTML(formattedEventType)}
       </div>
@@ -576,7 +587,7 @@ function generateUserEmailHTML(data: ReservationData): string {
 }
 
 // Generate plain text version for user auto-reply
-function generateUserEmailText(data: ReservationData): string {
+function generateUserEmailText(data: ReservationData, referenceNumber?: string): string {
   const formattedDateRange = formatDateRange(data)
   const formattedEventType = formatEventType(data.eventType, data.otherEventType)
   const organizationRemark = data.organizationType === "Tailor Event" ? "Organized by HU" : "Organized by Client"
@@ -592,7 +603,7 @@ Thank you for your reservation inquiry with Hell University! We have received yo
 
 YOUR INQUIRY SUMMARY:
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-Event Type: ${formattedEventType}
+${referenceNumber ? `Reference Number: ${referenceNumber}\n` : ''}Event Type: ${formattedEventType}
 Date & Time: ${formattedDateRange}
 Number of Participants: ${safeParticipants}
 Organization: ${safeOrganizationType} (${organizationRemark})
@@ -622,15 +633,17 @@ export async function sendAdminNotification(data: ReservationData, bookingId?: s
   const formattedEventType = formatEventType(data.eventType, data.otherEventType)
   const formattedDateRange = formatDateRange(data)
   // CRITICAL: Always start subject with booking reference number for easy identification
-  const referencePrefix = bookingId ? `[${bookingId}] ` : ''
+  // Use referenceNumber if provided, otherwise fall back to bookingId
+  const referenceNumber = bookingId || undefined
+  const referencePrefix = referenceNumber ? `[${referenceNumber}] ` : ''
 
   const mailOptions: nodemailer.SendMailOptions = {
     from: `"Hell University Reservation System" <${process.env.SMTP_USER}>`,
     to: recipientEmail,
     replyTo: data.email,
     subject: `${referencePrefix}New Reservation Inquiry - ${formattedEventType} - ${formattedDateRange.substring(0, 50)}`,
-    text: generateAdminEmailText(data),
-    html: generateAdminEmailHTML(data),
+    text: generateAdminEmailText(data, referenceNumber),
+    html: generateAdminEmailHTML(data, referenceNumber),
   }
 
   try {
@@ -671,13 +684,15 @@ export async function sendAdminNotification(data: ReservationData, bookingId?: s
  */
 export async function sendUserConfirmation(data: ReservationData, bookingId?: string): Promise<void> {
   // CRITICAL: Always start subject with booking reference number for easy identification
-  const referencePrefix = bookingId ? `[${bookingId}] ` : ''
+  // Use referenceNumber if provided, otherwise fall back to bookingId
+  const referenceNumber = bookingId || undefined
+  const referencePrefix = referenceNumber ? `[${referenceNumber}] ` : ''
   const mailOptions: nodemailer.SendMailOptions = {
     from: `"Hell University" <${process.env.SMTP_USER}>`,
     to: data.email,
     subject: `${referencePrefix}Reservation Inquiry Received - Hell University`,
-    text: generateUserEmailText(data),
-    html: generateUserEmailHTML(data),
+    text: generateUserEmailText(data, referenceNumber),
+    html: generateUserEmailHTML(data, referenceNumber),
   }
 
   console.log(`[sendUserConfirmation] Attempting to send user confirmation email to ${data.email} (booking: ${bookingId || 'N/A'})`)
@@ -1009,6 +1024,12 @@ function generateStatusChangeEmailHTML(
               <div style="background-color: #f9fafb; border-left: 4px solid ${statusInfo.color}; padding: 20px; margin: 20px 0; border-radius: 4px;">
                 <h3 style="margin: 0 0 15px 0; color: #111827; font-size: 18px;">Reservation Details</h3>
                 <table width="100%" cellpadding="5" cellspacing="0">
+                  ${booking.referenceNumber ? `
+                  <tr>
+                    <td style="color: #6b7280; font-size: 14px; width: 120px;">Reference Number:</td>
+                    <td style="color: ${statusInfo.color}; font-size: 14px; font-weight: 600;">${sanitizeHTML(booking.referenceNumber)}</td>
+                  </tr>
+                  ` : ''}
                   <tr>
                     <td style="color: #6b7280; font-size: 14px; width: 120px;">Event Type:</td>
                     <td style="color: #111827; font-size: 14px; font-weight: 500;">${sanitizeHTML(formattedEventType)}</td>
@@ -1302,9 +1323,11 @@ function generateStatusChangeEmailText(
     endTime: booking.endTime,
   } as ReservationData)
 
+  const referenceNumber = booking.referenceNumber || booking.id
   let text = `Dear ${booking.name},\n\n`
   text += `${message}\n\n`
   text += `RESERVATION DETAILS:\n`
+  text += `Reference Number: ${referenceNumber}\n`
   text += `Event Type: ${formattedEventType}\n`
   text += `Date & Time: ${formattedDateRange}\n\n`
 
