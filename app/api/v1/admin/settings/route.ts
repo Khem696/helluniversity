@@ -275,6 +275,35 @@ export const PATCH = withVersioning(async (request: Request) => {
 
       await logger.info('Setting updated', { key, value, updatedBy })
 
+      // Broadcast SSE event if bookings_enabled setting was updated
+      if (key === 'bookings_enabled') {
+        try {
+          // Use relative path for dynamic import to avoid TypeScript resolution issues
+          const { broadcastBookingEnabledStatus } = await import('../../settings/booking-enabled/stream/route')
+          const enabled = value === '1' || value === 1 || value === true
+          
+          // Log before broadcast
+          const streamModule = await import('../../settings/booking-enabled/stream/route')
+          const clientCount = streamModule.getSSEClientCount?.() ?? 'unknown'
+          await logger.info('About to broadcast booking enabled status change via SSE', { 
+            enabled,
+            // Get client count from the module - use nullish coalescing to distinguish between 0 and undefined
+            clientCount
+          })
+          
+          // Broadcast the change
+          broadcastBookingEnabledStatus(enabled)
+          
+          await logger.info('Broadcasted booking enabled status change via SSE', { enabled })
+        } catch (broadcastError) {
+          await logger.warn('Failed to broadcast booking enabled status change', {
+            error: broadcastError instanceof Error ? broadcastError.message : String(broadcastError),
+            stack: broadcastError instanceof Error ? broadcastError.stack : undefined
+          })
+          // Don't fail the request if broadcast fails
+        }
+      }
+
       // Return updated setting
       const result = await db.execute({
         sql: `SELECT key, value, description, updated_at, updated_by FROM settings WHERE key = ?`,

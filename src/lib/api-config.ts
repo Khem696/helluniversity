@@ -107,6 +107,7 @@ export const API_PATHS = {
   imagesProxy: getApiPath('images/proxy'),
   imagesOptimize: getApiPath('images/optimize'),
   settingsBookingEnabled: getApiPath('settings/booking-enabled'),
+  settingsBookingEnabledStream: getApiPath('settings/booking-enabled/stream'),
   
   // AI Space APIs
   aiSpace: getApiPath('ai-space'),
