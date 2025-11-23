@@ -262,20 +262,20 @@ export default function EmailQueuePage() {
     }
   }
 
-  // Cleanup old sent emails
+  // Cleanup all sent emails
   const handleCleanup = async () => {
     try {
       setCleaningUp(true)
       const response = await fetch(API_PATHS.adminEmailQueue, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action: "cleanup", daysOld: 30 }),
+        body: JSON.stringify({ action: "cleanup" }),
       })
       const json = await response.json()
       if (json.success) {
         // API returns { success: true, data: { deletedCount: ... } }
         const responseData = json.data || json
-        toast.success(`Cleaned up ${responseData.deletedCount || 0} old emails`)
+        toast.success(`Cleaned up ${responseData.deletedCount || 0} sent emails`)
         // Refresh to get updated list after cleanup
         fetchEmails()
         setCleanupDialogOpen(false)
@@ -399,7 +399,7 @@ export default function EmailQueuePage() {
         </Button>
         <Button onClick={() => setCleanupDialogOpen(true)} variant="outline" className="w-full sm:w-auto">
           <Trash className="w-4 h-4 mr-2" />
-          <span className="hidden sm:inline">Cleanup Old Sent Emails</span>
+          <span className="hidden sm:inline">Cleanup All Sent Emails</span>
           <span className="sm:hidden">Cleanup</span>
         </Button>
         <Button onClick={fetchEmails} variant="outline" className="w-full sm:w-auto">
@@ -820,16 +820,16 @@ export default function EmailQueuePage() {
       <GenericDeleteConfirmationDialog
         open={cleanupDialogOpen}
         onOpenChange={setCleanupDialogOpen}
-        title="Cleanup Old Sent Emails"
-        description="Are you sure you want to delete all sent emails older than 30 days?"
-        itemName="Old Sent Emails"
+        title="Cleanup All Sent Emails"
+        description="Are you sure you want to delete all sent emails?"
+        itemName="All Sent Emails"
         itemDetails={
           <div className="space-y-1 text-xs">
-            <div>This will permanently delete all emails with status "sent" that are older than 30 days.</div>
+            <div>This will permanently delete all emails with status "sent" from the queue.</div>
             <div className="text-gray-500 mt-2">This action cannot be undone.</div>
           </div>
         }
-        warningMessage="All sent emails older than 30 days will be permanently deleted from the queue. This action cannot be undone."
+        warningMessage="All sent emails will be permanently deleted from the queue. This action cannot be undone."
         onConfirm={handleCleanup}
         onCancel={() => setCleanupDialogOpen(false)}
         isLoading={cleaningUp}

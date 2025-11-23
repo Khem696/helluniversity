@@ -1715,9 +1715,13 @@ export async function updateBookingStatus(
     const updatedBooking = formatBooking(result.rows[0] as any)
     
     // CRITICAL: Verify token is present for pending_deposit status
-    // Log error if token is missing (should never happen for pending -> pending_deposit)
-    if (finalStatus === "pending_deposit" && !updatedBooking.responseToken) {
-      console.error(`[updateBookingStatus] CRITICAL: Token missing for pending_deposit booking ${bookingId}`, {
+    // For transitions that require a token (pending -> pending_deposit, cancelled -> pending_deposit),
+    // throw an error if token is missing to ensure transaction rollback
+    const requiresToken = (finalStatus === "pending_deposit" && oldStatus === "pending") ||
+                          (finalStatus === "pending_deposit" && oldStatus === "cancelled")
+    
+    if (requiresToken && !updatedBooking.responseToken) {
+      const errorDetails = {
         bookingId,
         oldStatus,
         finalStatus,
@@ -1725,10 +1729,29 @@ export async function updateBookingStatus(
         generatedToken: responseToken || '(null)',
         dbToken: (result.rows[0] as any).response_token || '(null)',
         updateFields: updateFields.filter(f => f.includes('response_token')),
-        needsNewToken: (finalStatus === "pending_deposit" && oldStatus === "pending") ||
-                       (finalStatus === "pending_deposit" && oldStatus === "cancelled") ||
-                       !currentBooking.response_token ||
-                       (currentBooking.token_expires_at && currentBooking.token_expires_at < now),
+        needsNewToken: true,
+      }
+      console.error(`[updateBookingStatus] CRITICAL: Token missing for pending_deposit booking ${bookingId}`, errorDetails)
+      
+      // CRITICAL: Throw error to cause transaction rollback
+      // This ensures the booking status is not updated if token generation failed
+      throw new Error(
+        `Failed to generate deposit upload token for booking ${bookingId}. ` +
+        `Token generation is required for ${oldStatus} -> ${finalStatus} transition. ` +
+        `This error will cause the transaction to roll back, preventing invalid state.`
+      )
+    }
+    
+    // Log warning (non-critical) for other cases where token might be missing
+    // This handles edge cases but doesn't require transaction rollback
+    if (finalStatus === "pending_deposit" && !updatedBooking.responseToken && !requiresToken) {
+      console.warn(`[updateBookingStatus] Token missing for pending_deposit booking ${bookingId} (non-critical)`, {
+        bookingId,
+        oldStatus,
+        finalStatus,
+        wasTokenGenerated: !!responseToken,
+        generatedToken: responseToken || '(null)',
+        dbToken: (result.rows[0] as any).response_token || '(null)',
       })
     }
     

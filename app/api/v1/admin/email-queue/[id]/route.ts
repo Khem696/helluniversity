@@ -99,27 +99,95 @@ export const POST = withVersioning(async (
       return authError
     }
 
-    const result = await retryEmail(id)
+    // Get admin info from session
+    let adminEmail: string | undefined
+    let adminName: string | undefined
+    try {
+      const { getAuthSession } = await import('@/lib/auth')
+      const session = await getAuthSession()
+      if (session?.user) {
+        adminEmail = session.user.email || undefined
+        adminName = session.user.name || undefined
+      }
+    } catch (sessionError) {
+      await logger.warn("Could not get session for admin action logging", { error: sessionError instanceof Error ? sessionError.message : String(sessionError) })
+    }
 
-    if (!result.success) {
-      await logger.warn('Email retry failed', { emailId: id, error: result.error })
-      return errorResponse(
-        ErrorCodes.VALIDATION_ERROR,
-        result.error || "Failed to retry email",
-        undefined,
-        400,
-        { requestId }
-      )
+    // CRITICAL: Acquire action lock to prevent concurrent retries
+    let actionLockId: string | null = null
+    if (adminEmail) {
+      try {
+        const { acquireActionLock, releaseActionLock } = await import('@/lib/action-lock')
+        actionLockId = await acquireActionLock('email', id, 'retry', adminEmail, adminName)
+        
+        if (!actionLockId) {
+          await logger.warn('Action lock acquisition failed: another admin is performing this action', {
+            emailId: id,
+            action: 'retry',
+            adminEmail
+          })
+          return errorResponse(
+            ErrorCodes.CONFLICT,
+            "Another admin is currently performing this action on this email. Please wait a moment and try again.",
+            undefined,
+            409,
+            { requestId }
+          )
+        }
+        await logger.debug('Action lock acquired', { emailId: id, action: 'retry', lockId: actionLockId })
+      } catch (lockError) {
+        await logger.warn('Failed to acquire action lock, falling back to optimistic locking', {
+          error: lockError instanceof Error ? lockError.message : String(lockError),
+          emailId: id
+        })
+      }
     }
     
-    await logger.info('Email retried successfully', { emailId: id })
+    // Ensure lock is released even if retry fails
+    const releaseLock = async () => {
+      if (actionLockId && adminEmail) {
+        try {
+          const { releaseActionLock } = await import('@/lib/action-lock')
+          await releaseActionLock(actionLockId, adminEmail)
+          await logger.debug('Action lock released', { emailId: id, lockId: actionLockId })
+        } catch (releaseError) {
+          await logger.warn('Failed to release action lock', {
+            error: releaseError instanceof Error ? releaseError.message : String(releaseError),
+            emailId: id,
+            lockId: actionLockId
+          })
+        }
+      }
+    }
 
-    return successResponse(
-      {
-        message: "Email retried successfully",
-      },
-      { requestId }
-    )
+    try {
+      const result = await retryEmail(id)
+
+      if (!result.success) {
+        await releaseLock()
+        await logger.warn('Email retry failed', { emailId: id, error: result.error })
+        return errorResponse(
+          ErrorCodes.VALIDATION_ERROR,
+          result.error || "Failed to retry email",
+          undefined,
+          400,
+          { requestId }
+        )
+      }
+      
+      await logger.info('Email retried successfully', { emailId: id })
+      await releaseLock()
+
+      return successResponse(
+        {
+          message: "Email retried successfully",
+        },
+        { requestId }
+      )
+    } catch (error) {
+      await releaseLock()
+      throw error
+    }
   }, { endpoint: getRequestPath(request) })
 })
 
@@ -144,9 +212,75 @@ export const DELETE = withVersioning(async (
       return authError
     }
 
-    await deleteEmail(id)
+    // Get admin info from session
+    let adminEmail: string | undefined
+    let adminName: string | undefined
+    try {
+      const { getAuthSession } = await import('@/lib/auth')
+      const session = await getAuthSession()
+      if (session?.user) {
+        adminEmail = session.user.email || undefined
+        adminName = session.user.name || undefined
+      }
+    } catch (sessionError) {
+      await logger.warn("Could not get session for admin action logging", { error: sessionError instanceof Error ? sessionError.message : String(sessionError) })
+    }
+
+    // CRITICAL: Acquire action lock to prevent concurrent deletions
+    let actionLockId: string | null = null
+    if (adminEmail) {
+      try {
+        const { acquireActionLock, releaseActionLock } = await import('@/lib/action-lock')
+        actionLockId = await acquireActionLock('email', id, 'delete', adminEmail, adminName)
+        
+        if (!actionLockId) {
+          await logger.warn('Action lock acquisition failed: another admin is performing this action', {
+            emailId: id,
+            action: 'delete',
+            adminEmail
+          })
+          return errorResponse(
+            ErrorCodes.CONFLICT,
+            "Another admin is currently performing this action on this email. Please wait a moment and try again.",
+            undefined,
+            409,
+            { requestId }
+          )
+        }
+        await logger.debug('Action lock acquired', { emailId: id, action: 'delete', lockId: actionLockId })
+      } catch (lockError) {
+        await logger.warn('Failed to acquire action lock, falling back to optimistic locking', {
+          error: lockError instanceof Error ? lockError.message : String(lockError),
+          emailId: id
+        })
+      }
+    }
     
-    await logger.info('Email deleted successfully', { emailId: id })
+    // Ensure lock is released even if deletion fails
+    const releaseLock = async () => {
+      if (actionLockId && adminEmail) {
+        try {
+          const { releaseActionLock } = await import('@/lib/action-lock')
+          await releaseActionLock(actionLockId, adminEmail)
+          await logger.debug('Action lock released', { emailId: id, lockId: actionLockId })
+        } catch (releaseError) {
+          await logger.warn('Failed to release action lock', {
+            error: releaseError instanceof Error ? releaseError.message : String(releaseError),
+            emailId: id,
+            lockId: actionLockId
+          })
+        }
+      }
+    }
+
+    try {
+      await deleteEmail(id)
+      await logger.info('Email deleted successfully', { emailId: id })
+      await releaseLock()
+    } catch (error) {
+      await releaseLock()
+      throw error
+    }
 
     return successResponse(
       {
@@ -201,46 +335,117 @@ export const PATCH = withVersioning(async (
     
     await logger.debug('Email update action', { emailId: id, action })
 
-    if (action === "cancel") {
+    // Get admin info from session
+    let adminEmail: string | undefined
+    let adminName: string | undefined
+    try {
+      const { getAuthSession } = await import('@/lib/auth')
+      const session = await getAuthSession()
+      if (session?.user) {
+        adminEmail = session.user.email || undefined
+        adminName = session.user.name || undefined
+      }
+    } catch (sessionError) {
+      await logger.warn("Could not get session for admin action logging", { error: sessionError instanceof Error ? sessionError.message : String(sessionError) })
+    }
+
+    // CRITICAL: Acquire action lock to prevent concurrent actions
+    let actionLockId: string | null = null
+    if (adminEmail) {
+      try {
+        const { acquireActionLock, releaseActionLock } = await import('@/lib/action-lock')
+        const actionType = action || 'update'
+        actionLockId = await acquireActionLock('email', id, actionType, adminEmail, adminName)
+        
+        if (!actionLockId) {
+          await logger.warn('Action lock acquisition failed: another admin is performing this action', {
+            emailId: id,
+            action: actionType,
+            adminEmail
+          })
+          return errorResponse(
+            ErrorCodes.CONFLICT,
+            "Another admin is currently performing this action on this email. Please wait a moment and try again.",
+            undefined,
+            409,
+            { requestId }
+          )
+        }
+        await logger.debug('Action lock acquired', { emailId: id, action: actionType, lockId: actionLockId })
+      } catch (lockError) {
+        await logger.warn('Failed to acquire action lock, falling back to optimistic locking', {
+          error: lockError instanceof Error ? lockError.message : String(lockError),
+          emailId: id
+        })
+      }
+    }
+    
+    // Ensure lock is released even if action fails
+    const releaseLock = async () => {
+      if (actionLockId && adminEmail) {
+        try {
+          const { releaseActionLock } = await import('@/lib/action-lock')
+          await releaseActionLock(actionLockId, adminEmail)
+          await logger.debug('Action lock released', { emailId: id, lockId: actionLockId })
+        } catch (releaseError) {
+          await logger.warn('Failed to release action lock', {
+            error: releaseError instanceof Error ? releaseError.message : String(releaseError),
+            emailId: id,
+            lockId: actionLockId
+          })
+        }
+      }
+    }
+
+    try {
+      if (action === "cancel") {
       await logger.info('Cancelling email', { emailId: id })
       await cancelEmail(id)
-      await logger.info('Email cancelled successfully', { emailId: id })
-      return successResponse(
-        {
-          message: "Email cancelled successfully",
-        },
-        { requestId }
-      )
-    } else if (action === "retry") {
-      await logger.info('Retrying email', { emailId: id })
-      const result = await retryEmail(id)
-      if (!result.success) {
-        await logger.warn('Email retry failed', { emailId: id, error: result.error })
-        return errorResponse(
-          ErrorCodes.VALIDATION_ERROR,
-          result.error || "Failed to retry email",
-          undefined,
-          400,
+        await logger.info('Email cancelled successfully', { emailId: id })
+        await releaseLock()
+        return successResponse(
+          {
+            message: "Email cancelled successfully",
+          },
+          { requestId }
+        )
+      } else if (action === "retry") {
+        await logger.info('Retrying email', { emailId: id })
+        const result = await retryEmail(id)
+        if (!result.success) {
+          await releaseLock()
+          await logger.warn('Email retry failed', { emailId: id, error: result.error })
+          return errorResponse(
+            ErrorCodes.VALIDATION_ERROR,
+            result.error || "Failed to retry email",
+            undefined,
+            400,
+            { requestId }
+          )
+        }
+        await logger.info('Email retried successfully', { emailId: id })
+        await releaseLock()
+        return successResponse(
+          {
+            message: "Email retried successfully",
+          },
           { requestId }
         )
       }
-      await logger.info('Email retried successfully', { emailId: id })
-      return successResponse(
-        {
-          message: "Email retried successfully",
-        },
+
+      await releaseLock()
+      await logger.warn('Invalid action provided', { emailId: id, action })
+      return errorResponse(
+        ErrorCodes.VALIDATION_ERROR,
+        "Invalid action. Expected 'cancel' or 'retry'",
+        undefined,
+        400,
         { requestId }
       )
+    } catch (error) {
+      await releaseLock()
+      throw error
     }
-
-    await logger.warn('Invalid action provided', { emailId: id, action })
-    return errorResponse(
-      ErrorCodes.VALIDATION_ERROR,
-      "Invalid action. Expected 'cancel' or 'retry'",
-      undefined,
-      400,
-      { requestId }
-    )
   }, { endpoint: getRequestPath(request) })
 })
 

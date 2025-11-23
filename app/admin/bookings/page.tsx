@@ -65,6 +65,7 @@ import { SearchInputWithHistory } from "@/components/admin/SearchInputWithHistor
 import { FilterPresetsDialog } from "@/components/admin/FilterPresetsDialog"
 import { AdvancedBookingFilters } from "@/components/admin/AdvancedBookingFilters"
 import { useBookingActions } from "@/hooks/useBookingActions"
+import { useActionLocks } from "@/hooks/useActionLocks"
 import { getAvailableActions, mapActionToStatus, type ActionDefinition } from "@/lib/booking-state-machine"
 import { calculateStartTimestamp } from "@/lib/booking-validations"
 import { getBangkokTime } from "@/lib/timezone"
@@ -976,6 +977,19 @@ export default function BookingsPage() {
     return mapActionToStatus(action as any, currentStatus as any) || currentStatus
   }
 
+  // Check action locks for selected booking and action
+  const { 
+    lockStatus: actionLockStatus, 
+    isLockedByOther: isActionLockedByOther,
+    isLockedByMe: isActionLockedByMe,
+  } = useActionLocks({
+    resourceType: 'booking',
+    resourceId: selectedBooking?.id,
+    action: selectedAction || undefined,
+    pollInterval: 3000, // Poll every 3 seconds for lock status
+    enabled: !!selectedBooking && !!selectedAction && statusDialogOpen,
+  })
+
   // Handle action update with validation
   const handleActionUpdate = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault()
@@ -983,6 +997,15 @@ export default function BookingsPage() {
 
     if (!selectedAction) {
       toast.error("Please select an action")
+      return
+    }
+
+    // CRITICAL: Check if action is locked by another admin
+    if (isActionLockedByOther) {
+      const lockedBy = actionLockStatus.lockedBy || "another admin"
+      toast.error(`This action is currently being performed by ${lockedBy}. Please wait a moment and try again.`, {
+        duration: 5000,
+      })
       return
     }
 
@@ -1037,6 +1060,15 @@ export default function BookingsPage() {
   // Execute action directly (after confirmation if needed)
   const executeActionDirectly = async (actionDef: ActionDefinition) => {
     if (!selectedBooking) return
+
+    // CRITICAL: Double-check lock status before executing
+    if (isActionLockedByOther) {
+      const lockedBy = actionLockStatus.lockedBy || "another admin"
+      toast.error(`This action is currently being performed by ${lockedBy}. Please wait a moment and try again.`, {
+        duration: 5000,
+      })
+      return
+    }
 
     setSaving(true)
     const form = document.querySelector('form[onSubmit]') as HTMLFormElement
@@ -2389,6 +2421,29 @@ export default function BookingsPage() {
                   </AlertDescription>
                 </Alert>
               )}
+              
+              {/* Show lock status warning if action is locked by another admin */}
+              {isActionLockedByOther && (
+                <Alert variant="destructive" className="bg-orange-50 border-orange-200">
+                  <AlertCircle className="h-4 w-4" />
+                  <AlertTitle className="text-orange-900">🔒 Action Locked by Another Admin</AlertTitle>
+                  <AlertDescription className="text-orange-800">
+                    This action is currently being performed by {actionLockStatus.lockedBy || "another admin"}. 
+                    Please wait a moment and try again. The page will automatically update when the lock is released.
+                  </AlertDescription>
+                </Alert>
+              )}
+              
+              {/* Show lock status info if action is locked by current admin */}
+              {isActionLockedByMe && (
+                <Alert variant="default" className="bg-blue-50 border-blue-200">
+                  <AlertCircle className="h-4 w-4" />
+                  <AlertTitle className="text-blue-900">🔒 Action Locked by You</AlertTitle>
+                  <AlertDescription className="text-blue-800">
+                    You have an active lock on this action. You can proceed with the action.
+                  </AlertDescription>
+                </Alert>
+              )}
               {(selectedBooking.status as string) === "checked-in" ? (
                 <div className="space-y-4">
                 <div className="bg-yellow-50 border border-yellow-200 text-yellow-800 p-4 rounded">
@@ -3031,9 +3086,11 @@ export default function BookingsPage() {
                   disabled={
                     saving || 
                     !selectedAction || 
+                    isActionLockedByOther || // Disable if locked by another admin
                     (selectedBooking.status === "pending_deposit" && selectedAction !== "reject_deposit" && selectedAction !== "cancel")
                   }
                   className="w-full sm:w-auto"
+                  title={isActionLockedByOther ? `This action is locked by ${actionLockStatus.lockedBy || "another admin"}` : undefined}
                 >
                   {saving ? (
                     <>

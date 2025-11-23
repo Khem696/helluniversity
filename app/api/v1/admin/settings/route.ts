@@ -171,13 +171,64 @@ export const PATCH = withVersioning(async (request: Request) => {
       )
     }
 
-    const db = getTursoClient()
-    const now = Math.floor(Date.now() / 1000)
-
-    // Get session for updated_by
+    // Get admin info from session
     const { auth } = await import("@/lib/auth-config")
     const session = await auth()
     const updatedBy = session?.user?.email || session?.user?.name || "system"
+    const adminEmail = session?.user?.email || undefined
+    const adminName = session?.user?.name || undefined
+
+    // CRITICAL: Acquire action lock for settings updates (especially bookings_enabled)
+    // Use 'dashboard' resource type with the setting key as resource ID
+    let actionLockId: string | null = null
+    if (adminEmail) {
+      try {
+        const { acquireActionLock, releaseActionLock } = await import('@/lib/action-lock')
+        const actionType = `update_setting_${key}`
+        actionLockId = await acquireActionLock('dashboard', key, actionType, adminEmail, adminName)
+        
+        if (!actionLockId) {
+          await logger.warn('Action lock acquisition failed: another admin is performing this action', {
+            settingKey: key,
+            action: actionType,
+            adminEmail
+          })
+          return errorResponse(
+            ErrorCodes.CONFLICT,
+            `Another admin is currently updating the "${key}" setting. Please wait a moment and try again.`,
+            undefined,
+            409,
+            { requestId }
+          )
+        }
+        await logger.debug('Action lock acquired', { settingKey: key, action: actionType, lockId: actionLockId })
+      } catch (lockError) {
+        await logger.warn('Failed to acquire action lock, falling back to optimistic locking', {
+          error: lockError instanceof Error ? lockError.message : String(lockError),
+          settingKey: key
+        })
+      }
+    }
+    
+    // Ensure lock is released even if update fails
+    const releaseLock = async () => {
+      if (actionLockId && adminEmail) {
+        try {
+          const { releaseActionLock } = await import('@/lib/action-lock')
+          await releaseActionLock(actionLockId, adminEmail)
+          await logger.debug('Action lock released', { settingKey: key, lockId: actionLockId })
+        } catch (releaseError) {
+          await logger.warn('Failed to release action lock', {
+            error: releaseError instanceof Error ? releaseError.message : String(releaseError),
+            settingKey: key,
+            lockId: actionLockId
+          })
+        }
+      }
+    }
+
+    const db = getTursoClient()
+    const now = Math.floor(Date.now() / 1000)
 
     // Check if settings table exists
     const tableCheck = await db.execute({
@@ -187,6 +238,7 @@ export const PATCH = withVersioning(async (request: Request) => {
 
     if (tableCheck.rows.length === 0) {
       await logger.warn('Settings table does not exist')
+      await releaseLock() // CRITICAL: Release lock before returning
       return errorResponse(
         ErrorCodes.NOT_FOUND,
         'Settings table does not exist. Please initialize the database first.',
@@ -204,6 +256,7 @@ export const PATCH = withVersioning(async (request: Request) => {
 
     if (existing.rows.length === 0) {
       await logger.warn('Setting not found', { key })
+      await releaseLock() // CRITICAL: Release lock before returning
       return errorResponse(
         ErrorCodes.NOT_FOUND,
         `Setting '${key}' not found`,
@@ -213,32 +266,39 @@ export const PATCH = withVersioning(async (request: Request) => {
       )
     }
 
-    // Update setting
-    await db.execute({
-      sql: `UPDATE settings SET value = ?, updated_at = ?, updated_by = ? WHERE key = ?`,
-      args: [String(value), now, updatedBy, key],
-    })
+    try {
+      // Update setting
+      await db.execute({
+        sql: `UPDATE settings SET value = ?, updated_at = ?, updated_by = ? WHERE key = ?`,
+        args: [String(value), now, updatedBy, key],
+      })
 
-    await logger.info('Setting updated', { key, value, updatedBy })
+      await logger.info('Setting updated', { key, value, updatedBy })
 
-    // Return updated setting
-    const result = await db.execute({
-      sql: `SELECT key, value, description, updated_at, updated_by FROM settings WHERE key = ?`,
-      args: [key],
-    })
+      // Return updated setting
+      const result = await db.execute({
+        sql: `SELECT key, value, description, updated_at, updated_by FROM settings WHERE key = ?`,
+        args: [key],
+      })
 
-    const setting = result.rows[0] as any
+      const setting = result.rows[0] as any
 
-    return successResponse(
-      {
-        key: setting.key,
-        value: setting.value,
-        description: setting.description,
-        updated_at: setting.updated_at,
-        updated_by: setting.updated_by,
-      },
-      { requestId }
-    )
+      await releaseLock()
+
+      return successResponse(
+        {
+          key: setting.key,
+          value: setting.value,
+          description: setting.description,
+          updated_at: setting.updated_at,
+          updated_by: setting.updated_by,
+        },
+        { requestId }
+      )
+    } catch (error) {
+      await releaseLock()
+      throw error
+    }
   }, { endpoint: getRequestPath(request) })
 })
 

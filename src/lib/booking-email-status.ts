@@ -238,6 +238,10 @@ export async function createBookingWithEmailStatus(
     let emailStatus: { adminSent: boolean; userSent: boolean; errors: string[] } | undefined
     let emailsQueued = false
     
+    // Track which emails actually succeeded (not just queued) to prevent duplicate queueing
+    let adminActuallySent = false
+    let userActuallySent = false
+    
     try {
       emailStatus = await sendReservationEmails({
         name: bookingData.name,
@@ -257,28 +261,163 @@ export async function createBookingWithEmailStatus(
         specialRequests: bookingData.specialRequests,
       }, bookingResult.referenceNumber)
       
-      // Check if emails succeeded
-      if (!emailStatus.adminSent || !emailStatus.userSent) {
+      // CRITICAL: Track which emails actually succeeded (not just queued)
+      // emailStatus.adminSent/userSent can be true if email was sent OR queued
+      // The key insight: if adminSent/userSent = true, the email was either:
+      //   1. Sent successfully (no error, not in queue)
+      //   2. Queued successfully (no error, in queue)
+      // If adminSent/userSent = false OR there's an error, the email failed
+      //
+      // We cannot reliably distinguish "sent" vs "queued" from emailStatus alone.
+      // However, if adminSent/userSent = true, we should NOT queue again because:
+      //   - If it was sent: no need to queue
+      //   - If it was queued: already in queue, duplicate detection will prevent re-queueing
+      //
+      // The only case where we need to queue is when adminSent/userSent = false
+      // (email failed to send AND failed to queue)
+      
+      const hasAdminError = emailStatus.errors.some(err => err.toLowerCase().includes('admin notification'))
+      const hasUserError = emailStatus.errors.some(err => err.toLowerCase().includes('user confirmation'))
+      
+      // An email actually succeeded if:
+      // 1. It was marked as sent (adminSent/userSent = true) - meaning it was either sent OR queued
+      // 2. AND there's no error message for that specific email
+      // If adminSent/userSent = true but there's an error, it means sending failed but queueing might have succeeded
+      // In that case, we should check if it's already queued before queueing again
+      adminActuallySent = emailStatus.adminSent && !hasAdminError
+      userActuallySent = emailStatus.userSent && !hasUserError
+      
+      // Check if emails actually succeeded (not just marked as sent)
+      // CRITICAL: Use adminActuallySent/userActuallySent instead of emailStatus.adminSent/userSent
+      // This ensures we queue emails even if they were marked as sent but had errors
+      if (!adminActuallySent || !userActuallySent) {
         await logger.warn('Step 2: Email sending failed, queueing for retry', {
           adminSent: emailStatus.adminSent,
           userSent: emailStatus.userSent,
+          adminActuallySent,
+          userActuallySent,
           errors: emailStatus.errors
         })
         
         // STEP 3: Queue failed emails for retry
+        // CRITICAL: Only queue emails that actually failed (not already queued)
         await logger.info('Step 3: Queueing failed emails for retry')
         
         try {
-          // Queue admin notification if it failed
-          if (!emailStatus.adminSent) {
-            await queueAdminNotificationEmail(bookingData, bookingResult.referenceNumber, bookingResult.bookingId)
-            await logger.info('Admin notification email queued for retry')
+          // Import database client once for queue checks
+          const { getTursoClient } = await import('./turso')
+          const db = getTursoClient()
+          const now = Math.floor(Date.now() / 1000)
+          
+          // Queue admin notification if it didn't actually succeed
+          // adminActuallySent is false if: email wasn't sent OR email was sent but had an error
+          // CRITICAL: Check if email is already queued before queueing again
+          // This prevents duplicate queueing when email was queued but adminSent=true
+          if (!adminActuallySent) {
+            // Check if already queued (to avoid duplicates)
+            let alreadyQueued = false
+            
+            try {
+              const queueCheck = await db.execute({
+                sql: `
+                  SELECT id, metadata FROM email_queue 
+                  WHERE email_type = 'admin_notification'
+                    AND recipient_email = ?
+                    AND status IN ('pending', 'processing')
+                    AND created_at > ?
+                  LIMIT 50
+                `,
+                args: [
+                  process.env.RESERVATION_EMAIL || process.env.SMTP_USER || '',
+                  now - 300
+                ]
+              })
+              
+              for (const row of queueCheck.rows) {
+                const item = row as any
+                if (!item.metadata) continue
+                try {
+                  const parsedMetadata = typeof item.metadata === 'string' 
+                    ? JSON.parse(item.metadata) 
+                    : item.metadata
+                  if (parsedMetadata.bookingId === String(bookingResult.bookingId)) {
+                    alreadyQueued = true
+                    break
+                  }
+                } catch {
+                  continue
+                }
+              }
+            } catch (error) {
+              // If check fails, proceed with queueing (duplicate detection in addEmailToQueue will handle it)
+              await logger.warn('Failed to check if admin email already queued, proceeding with queue', {
+                error: error instanceof Error ? error.message : String(error)
+              })
+            }
+            
+            if (!alreadyQueued) {
+              await queueAdminNotificationEmail(bookingData, bookingResult.referenceNumber, bookingResult.bookingId)
+              await logger.info('Admin notification email queued for retry')
+            } else {
+              await logger.info('Admin notification email already queued, skipping duplicate queue')
+            }
+          } else {
+            await logger.info('Admin notification email already sent successfully, skipping duplicate queue')
           }
           
-          // Queue user confirmation if it failed
-          if (!emailStatus.userSent) {
-            await queueUserConfirmationEmail(bookingData, bookingResult.referenceNumber, bookingResult.bookingId)
-            await logger.info('User confirmation email queued for retry')
+          // Queue user confirmation if it didn't actually succeed
+          // userActuallySent is false if: email wasn't sent OR email was sent but had an error
+          // CRITICAL: Check if email is already queued before queueing again
+          if (!userActuallySent) {
+            // Check if already queued (to avoid duplicates)
+            let alreadyQueued = false
+            
+            try {
+              const queueCheck = await db.execute({
+                sql: `
+                  SELECT id, metadata FROM email_queue 
+                  WHERE email_type = 'user_confirmation'
+                    AND recipient_email = ?
+                    AND status IN ('pending', 'processing')
+                    AND created_at > ?
+                  LIMIT 50
+                `,
+                args: [
+                  bookingData.email,
+                  now - 300
+                ]
+              })
+              
+              for (const row of queueCheck.rows) {
+                const item = row as any
+                if (!item.metadata) continue
+                try {
+                  const parsedMetadata = typeof item.metadata === 'string' 
+                    ? JSON.parse(item.metadata) 
+                    : item.metadata
+                  if (parsedMetadata.bookingId === String(bookingResult.bookingId)) {
+                    alreadyQueued = true
+                    break
+                  }
+                } catch {
+                  continue
+                }
+              }
+            } catch (error) {
+              // If check fails, proceed with queueing (duplicate detection in addEmailToQueue will handle it)
+              await logger.warn('Failed to check if user email already queued, proceeding with queue', {
+                error: error instanceof Error ? error.message : String(error)
+              })
+            }
+            
+            if (!alreadyQueued) {
+              await queueUserConfirmationEmail(bookingData, bookingResult.referenceNumber, bookingResult.bookingId)
+              await logger.info('User confirmation email queued for retry')
+            } else {
+              await logger.info('User confirmation email already queued, skipping duplicate queue')
+            }
+          } else {
+            await logger.info('User confirmation email already sent successfully, skipping duplicate queue')
           }
           
           emailsQueued = true
@@ -294,27 +433,96 @@ export async function createBookingWithEmailStatus(
         await logger.info('Step 2 complete: Both emails sent successfully')
       }
       
+      // CRITICAL: Update emailStatus with validated success flags
+      // This ensures the return statement uses accurate values that account for errors
+      // The original emailStatus.adminSent/userSent may be true even if errors occurred
+      if (emailStatus) {
+        // Save original values for logging before updating
+        const originalAdminSent = emailStatus.adminSent
+        const originalUserSent = emailStatus.userSent
+        const originalErrors = emailStatus.errors
+        
+        // Update with validated values
+        emailStatus = {
+          adminSent: adminActuallySent,
+          userSent: userActuallySent,
+          errors: originalErrors // Preserve original errors array
+        }
+        
+        await logger.debug('Updated emailStatus with validated success flags', {
+          originalAdminSent,
+          originalUserSent,
+          validatedAdminSent: adminActuallySent,
+          validatedUserSent: userActuallySent
+        })
+      }
+      
     } catch (emailError) {
       await logger.error('Step 2: Email sending exception, queueing for retry', 
         emailError instanceof Error ? emailError : new Error(String(emailError))
       )
       
-      // Queue both emails for retry (we don't know which one failed)
+      // CRITICAL: If emailStatus exists, recalculate adminActuallySent/userActuallySent from it
+      // This handles cases where sendReservationEmails partially succeeded before throwing
+      // If emailStatus doesn't exist, assume both emails failed (both are false)
+      if (emailStatus) {
+        // Recalculate success status from emailStatus (may have been set before exception)
+        const hasAdminError = emailStatus.errors.some(err => err.toLowerCase().includes('admin notification'))
+        const hasUserError = emailStatus.errors.some(err => err.toLowerCase().includes('user confirmation'))
+        adminActuallySent = emailStatus.adminSent && !hasAdminError
+        userActuallySent = emailStatus.userSent && !hasUserError
+        
+        await logger.debug('Recalculated email success status from emailStatus after exception', {
+          adminSent: emailStatus.adminSent,
+          userSent: emailStatus.userSent,
+          adminActuallySent,
+          userActuallySent,
+          hasAdminError,
+          hasUserError
+        })
+      } else {
+        // emailStatus is undefined - exception occurred before sendReservationEmails returned
+        // Assume both emails failed (both remain false)
+        await logger.warn('emailStatus is undefined after exception - assuming both emails failed', {
+          adminActuallySent,
+          userActuallySent
+        })
+      }
+      
+      // CRITICAL: Only queue emails that didn't actually succeed
+      // If admin email succeeded before exception, don't queue it again
       try {
-        await queueAdminNotificationEmail(bookingData, bookingResult.referenceNumber, bookingResult.bookingId)
-        await queueUserConfirmationEmail(bookingData, bookingResult.referenceNumber, bookingResult.bookingId)
+        if (!adminActuallySent) {
+          await queueAdminNotificationEmail(bookingData, bookingResult.referenceNumber, bookingResult.bookingId)
+          await logger.info('Admin notification email queued for retry after exception')
+        } else {
+          await logger.info('Admin notification email already sent, skipping duplicate queue after exception')
+        }
+        
+        if (!userActuallySent) {
+          await queueUserConfirmationEmail(bookingData, bookingResult.referenceNumber, bookingResult.bookingId)
+          await logger.info('User confirmation email queued for retry after exception')
+        } else {
+          await logger.info('User confirmation email already sent, skipping duplicate queue after exception')
+        }
+        
         emailsQueued = true
-        await logger.info('Both emails queued for retry after exception')
+        await logger.info('Failed emails queued for retry after exception')
       } catch (queueError) {
         await logger.error('Failed to queue emails after exception', 
           queueError instanceof Error ? queueError : new Error(String(queueError))
         )
       }
       
+      // CRITICAL: Preserve original errors array and append exception message
+      // This ensures we don't lose error context from sendReservationEmails
+      const originalErrors = emailStatus?.errors || []
+      const exceptionMessage = emailError instanceof Error ? emailError.message : String(emailError)
+      
       emailStatus = {
-        adminSent: false,
-        userSent: false,
-        errors: [emailError instanceof Error ? emailError.message : String(emailError)]
+        adminSent: adminActuallySent,
+        userSent: userActuallySent,
+        errors: [...originalErrors, `Exception during email processing: ${exceptionMessage}`]
       }
     }
     

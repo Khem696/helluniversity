@@ -84,6 +84,67 @@ export const PATCH = withVersioning(async (
       hasAiSelected: ai_selected !== undefined
     })
 
+    // Get admin info from session
+    let adminEmail: string | undefined
+    let adminName: string | undefined
+    try {
+      const { getAuthSession } = await import('@/lib/auth')
+      const session = await getAuthSession()
+      if (session?.user) {
+        adminEmail = session.user.email || undefined
+        adminName = session.user.name || undefined
+      }
+    } catch (sessionError) {
+      await logger.warn("Could not get session for admin action logging", { error: sessionError instanceof Error ? sessionError.message : String(sessionError) })
+    }
+
+    // CRITICAL: Acquire action lock to prevent concurrent modifications
+    let actionLockId: string | null = null
+    if (adminEmail) {
+      try {
+        const { acquireActionLock, releaseActionLock } = await import('@/lib/action-lock')
+        actionLockId = await acquireActionLock('image', id, 'update', adminEmail, adminName)
+        
+        if (!actionLockId) {
+          await logger.warn('Action lock acquisition failed: another admin is performing this action', {
+            imageId: id,
+            action: 'update',
+            adminEmail
+          })
+          return errorResponse(
+            ErrorCodes.CONFLICT,
+            "Another admin is currently performing this action on this image. Please wait a moment and try again.",
+            undefined,
+            409,
+            { requestId }
+          )
+        }
+        await logger.debug('Action lock acquired', { imageId: id, action: 'update', lockId: actionLockId })
+      } catch (lockError) {
+        await logger.warn('Failed to acquire action lock, falling back to optimistic locking', {
+          error: lockError instanceof Error ? lockError.message : String(lockError),
+          imageId: id
+        })
+      }
+    }
+    
+    // Ensure lock is released even if update fails
+    const releaseLock = async () => {
+      if (actionLockId && adminEmail) {
+        try {
+          const { releaseActionLock } = await import('@/lib/action-lock')
+          await releaseActionLock(actionLockId, adminEmail)
+          await logger.debug('Action lock released', { imageId: id, lockId: actionLockId })
+        } catch (releaseError) {
+          await logger.warn('Failed to release action lock', {
+            error: releaseError instanceof Error ? releaseError.message : String(releaseError),
+            imageId: id,
+            lockId: actionLockId
+          })
+        }
+      }
+    }
+
     const db = getTursoClient()
     const now = Math.floor(Date.now() / 1000)
 
@@ -149,10 +210,15 @@ export const PATCH = withVersioning(async (
       )
     }
 
-    await db.execute({
-      sql: `UPDATE images SET ${updates.join(", ")} WHERE id = ?`,
-      args,
-    })
+    try {
+      await db.execute({
+        sql: `UPDATE images SET ${updates.join(", ")} WHERE id = ?`,
+        args,
+      })
+    } catch (error) {
+      await releaseLock()
+      throw error
+    }
 
     // Fetch updated image
     const result = await db.execute({
@@ -169,10 +235,13 @@ export const PATCH = withVersioning(async (
 
     if (result.rows.length === 0) {
       await logger.warn('Image update failed: image not found', { imageId: id })
+      await releaseLock() // CRITICAL: Release lock before returning
       return notFoundResponse('Image', { requestId })
     }
 
     await logger.info('Image update completed successfully', { imageId: id })
+    
+    await releaseLock()
     
     return successResponse(
       {
@@ -207,6 +276,67 @@ export const DELETE = withVersioning(async (
       return authError
     }
 
+    // Get admin info from session
+    let adminEmail: string | undefined
+    let adminName: string | undefined
+    try {
+      const { getAuthSession } = await import('@/lib/auth')
+      const session = await getAuthSession()
+      if (session?.user) {
+        adminEmail = session.user.email || undefined
+        adminName = session.user.name || undefined
+      }
+    } catch (sessionError) {
+      await logger.warn("Could not get session for admin action logging", { error: sessionError instanceof Error ? sessionError.message : String(sessionError) })
+    }
+
+    // CRITICAL: Acquire action lock to prevent concurrent deletions
+    let actionLockId: string | null = null
+    if (adminEmail) {
+      try {
+        const { acquireActionLock, releaseActionLock } = await import('@/lib/action-lock')
+        actionLockId = await acquireActionLock('image', id, 'delete', adminEmail, adminName)
+        
+        if (!actionLockId) {
+          await logger.warn('Action lock acquisition failed: another admin is performing this action', {
+            imageId: id,
+            action: 'delete',
+            adminEmail
+          })
+          return errorResponse(
+            ErrorCodes.CONFLICT,
+            "Another admin is currently performing this action on this image. Please wait a moment and try again.",
+            undefined,
+            409,
+            { requestId }
+          )
+        }
+        await logger.debug('Action lock acquired', { imageId: id, action: 'delete', lockId: actionLockId })
+      } catch (lockError) {
+        await logger.warn('Failed to acquire action lock, falling back to optimistic locking', {
+          error: lockError instanceof Error ? lockError.message : String(lockError),
+          imageId: id
+        })
+      }
+    }
+    
+    // Ensure lock is released even if deletion fails
+    const releaseLock = async () => {
+      if (actionLockId && adminEmail) {
+        try {
+          const { releaseActionLock } = await import('@/lib/action-lock')
+          await releaseActionLock(actionLockId, adminEmail)
+          await logger.debug('Action lock released', { imageId: id, lockId: actionLockId })
+        } catch (releaseError) {
+          await logger.warn('Failed to release action lock', {
+            error: releaseError instanceof Error ? releaseError.message : String(releaseError),
+            imageId: id,
+            lockId: actionLockId
+          })
+        }
+      }
+    }
+
     const db = getTursoClient()
 
     // Get image details before deletion (for re-sequencing)
@@ -221,6 +351,7 @@ export const DELETE = withVersioning(async (
 
     if (imageResult.rows.length === 0) {
       await logger.warn('Image delete failed: image not found', { imageId: id })
+      await releaseLock() // CRITICAL: Release lock before returning
       return notFoundResponse('Image', { requestId })
     }
 
@@ -241,6 +372,7 @@ export const DELETE = withVersioning(async (
       // Check if error is "image not found" - return 404
       if (error instanceof Error && error.message.includes("not found")) {
         await logger.warn('Image blob not found during deletion', { imageId: id })
+        await releaseLock() // CRITICAL: Release lock before returning
         return notFoundResponse('Image', { requestId })
       }
       
@@ -258,11 +390,13 @@ export const DELETE = withVersioning(async (
         // Check if any rows were deleted
         if (deleteResult.rowsAffected === 0) {
           await logger.warn('Image not found in database', { imageId: id })
+          await releaseLock() // CRITICAL: Release lock before returning
           return notFoundResponse('Image', { requestId })
         }
         await logger.info('Image deleted from database (blob deletion failed)', { imageId: id })
       } catch (dbError) {
         await logger.error('Database deletion also failed', dbError instanceof Error ? dbError : new Error(String(dbError)), { imageId: id })
+        await releaseLock() // CRITICAL: Release lock before throwing
         throw dbError
       }
     }
@@ -304,6 +438,8 @@ export const DELETE = withVersioning(async (
     }
 
     await logger.info('Image deleted successfully', { imageId: id })
+
+    await releaseLock()
 
     return successResponse(
       {

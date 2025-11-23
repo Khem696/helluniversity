@@ -14,7 +14,7 @@ import {
   processEmailQueue, 
   getEmailQueueStats, 
   getEmailQueueItems,
-  cleanupOldSentEmails 
+  cleanupAllSentEmails 
 } from "@/lib/email-queue"
 import { createRequestLogger } from "@/lib/logger"
 import { withErrorHandling, successResponse, errorResponse, unauthorizedResponse, forbiddenResponse, ErrorCodes } from "@/lib/api-response"
@@ -144,17 +144,17 @@ export const POST = withVersioning(async (request: Request) => {
       body = {}
     }
     
-    const { action, limit, daysOld } = body
+    const { action, limit } = body
     
-    await logger.debug('Email queue POST parameters', { action, limit, daysOld })
+    await logger.debug('Email queue POST parameters', { action, limit })
 
     if (action === "cleanup") {
-      await logger.info('Cleaning up old sent emails', { daysOld: daysOld || 30 })
-      const deletedCount = await cleanupOldSentEmails(daysOld || 30)
-      await logger.info('Old emails cleaned up', { deletedCount })
+      await logger.info('Cleaning up all sent emails')
+      const deletedCount = await cleanupAllSentEmails()
+      await logger.info('Sent emails cleaned up', { deletedCount })
       return successResponse(
         {
-          message: `Cleaned up ${deletedCount} old sent emails`,
+          message: `Cleaned up ${deletedCount} sent emails`,
           deletedCount,
         },
         { requestId }

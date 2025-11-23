@@ -153,6 +153,67 @@ export const PATCH = withVersioning(async (
       hasImageId: image_id !== undefined,
     })
 
+    // Get admin info from session
+    let adminEmail: string | undefined
+    let adminName: string | undefined
+    try {
+      const { getAuthSession } = await import('@/lib/auth')
+      const session = await getAuthSession()
+      if (session?.user) {
+        adminEmail = session.user.email || undefined
+        adminName = session.user.name || undefined
+      }
+    } catch (sessionError) {
+      await logger.warn("Could not get session for admin action logging", { error: sessionError instanceof Error ? sessionError.message : String(sessionError) })
+    }
+
+    // CRITICAL: Acquire action lock to prevent concurrent modifications
+    let actionLockId: string | null = null
+    if (adminEmail) {
+      try {
+        const { acquireActionLock, releaseActionLock } = await import('@/lib/action-lock')
+        actionLockId = await acquireActionLock('event', id, 'update', adminEmail, adminName)
+        
+        if (!actionLockId) {
+          await logger.warn('Action lock acquisition failed: another admin is performing this action', {
+            eventId: id,
+            action: 'update',
+            adminEmail
+          })
+          return errorResponse(
+            ErrorCodes.CONFLICT,
+            "Another admin is currently performing this action on this event. Please wait a moment and try again.",
+            undefined,
+            409,
+            { requestId }
+          )
+        }
+        await logger.debug('Action lock acquired', { eventId: id, action: 'update', lockId: actionLockId })
+      } catch (lockError) {
+        await logger.warn('Failed to acquire action lock, falling back to optimistic locking', {
+          error: lockError instanceof Error ? lockError.message : String(lockError),
+          eventId: id
+        })
+      }
+    }
+    
+    // Ensure lock is released even if update fails
+    const releaseLock = async () => {
+      if (actionLockId && adminEmail) {
+        try {
+          const { releaseActionLock } = await import('@/lib/action-lock')
+          await releaseActionLock(actionLockId, adminEmail)
+          await logger.debug('Action lock released', { eventId: id, lockId: actionLockId })
+        } catch (releaseError) {
+          await logger.warn('Failed to release action lock', {
+            error: releaseError instanceof Error ? releaseError.message : String(releaseError),
+            eventId: id,
+            lockId: actionLockId
+          })
+        }
+      }
+    }
+
     const db = getTursoClient()
     const now = Math.floor(Date.now() / 1000)
 
@@ -252,12 +313,19 @@ export const PATCH = withVersioning(async (
       )
     }
 
-    await db.execute({
-      sql: `UPDATE events SET ${updates.join(", ")} WHERE id = ?`,
-      args,
-    })
+    try {
+      await db.execute({
+        sql: `UPDATE events SET ${updates.join(", ")} WHERE id = ?`,
+        args,
+      })
+      
+      await logger.info('Event updated in database', { eventId: id })
+    } catch (error) {
+      await releaseLock()
+      throw error
+    }
     
-    await logger.info('Event updated in database', { eventId: id })
+    await releaseLock()
 
     // If poster image was replaced, check if old image is orphaned and delete it
     if (image_id !== undefined && oldImageId && oldImageId !== image_id) {
@@ -394,14 +462,83 @@ export const DELETE = withVersioning(async (
       await logger.warn('Admin delete event rejected: authentication failed', { eventId: id })
       return authError
     }
+
+    // Get admin info from session
+    let adminEmail: string | undefined
+    let adminName: string | undefined
+    try {
+      const { getAuthSession } = await import('@/lib/auth')
+      const session = await getAuthSession()
+      if (session?.user) {
+        adminEmail = session.user.email || undefined
+        adminName = session.user.name || undefined
+      }
+    } catch (sessionError) {
+      await logger.warn("Could not get session for admin action logging", { error: sessionError instanceof Error ? sessionError.message : String(sessionError) })
+    }
+
+    // CRITICAL: Acquire action lock to prevent concurrent deletions
+    let actionLockId: string | null = null
+    if (adminEmail) {
+      try {
+        const { acquireActionLock, releaseActionLock } = await import('@/lib/action-lock')
+        actionLockId = await acquireActionLock('event', id, 'delete', adminEmail, adminName)
+        
+        if (!actionLockId) {
+          await logger.warn('Action lock acquisition failed: another admin is performing this action', {
+            eventId: id,
+            action: 'delete',
+            adminEmail
+          })
+          return errorResponse(
+            ErrorCodes.CONFLICT,
+            "Another admin is currently performing this action on this event. Please wait a moment and try again.",
+            undefined,
+            409,
+            { requestId }
+          )
+        }
+        await logger.debug('Action lock acquired', { eventId: id, action: 'delete', lockId: actionLockId })
+      } catch (lockError) {
+        await logger.warn('Failed to acquire action lock, falling back to optimistic locking', {
+          error: lockError instanceof Error ? lockError.message : String(lockError),
+          eventId: id
+        })
+      }
+    }
+    
+    // Ensure lock is released even if deletion fails
+    const releaseLock = async () => {
+      if (actionLockId && adminEmail) {
+        try {
+          const { releaseActionLock } = await import('@/lib/action-lock')
+          await releaseActionLock(actionLockId, adminEmail)
+          await logger.debug('Action lock released', { eventId: id, lockId: actionLockId })
+        } catch (releaseError) {
+          await logger.warn('Failed to release action lock', {
+            error: releaseError instanceof Error ? releaseError.message : String(releaseError),
+            eventId: id,
+            lockId: actionLockId
+          })
+        }
+      }
+    }
+
     const db = getTursoClient()
 
-    await db.execute({
-      sql: "DELETE FROM events WHERE id = ?",
-      args: [id],
-    })
+    try {
+      await db.execute({
+        sql: "DELETE FROM events WHERE id = ?",
+        args: [id],
+      })
+      
+      await logger.info('Event deleted successfully', { eventId: id })
+    } catch (error) {
+      await releaseLock()
+      throw error
+    }
     
-    await logger.info('Event deleted successfully', { eventId: id })
+    await releaseLock()
 
     return successResponse(
       {

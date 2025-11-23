@@ -735,6 +735,110 @@ export async function initializeDatabase(options?: { cleanupOrphanedImages?: boo
       console.log("✓ Created admin_actions table")
     }
 
+    // Create action_locks table for preventing concurrent admin actions
+    if (!existingTables.has("action_locks")) {
+      await db.execute(`
+        CREATE TABLE action_locks (
+          id TEXT PRIMARY KEY,
+          resource_type TEXT NOT NULL CHECK(resource_type IN ('booking', 'event', 'image', 'email', 'dashboard', 'global')),
+          resource_id TEXT NOT NULL,
+          action TEXT NOT NULL,
+          admin_email TEXT NOT NULL,
+          admin_name TEXT,
+          locked_at INTEGER NOT NULL,
+          expires_at INTEGER NOT NULL,
+          created_at INTEGER DEFAULT (strftime('%s', 'now')) NOT NULL,
+          updated_at INTEGER DEFAULT (strftime('%s', 'now')) NOT NULL,
+          UNIQUE (resource_type, resource_id, action)
+        )
+      `)
+      
+      await db.execute(`
+        CREATE INDEX idx_action_locks_resource ON action_locks(resource_type, resource_id, action, expires_at)
+      `)
+      await db.execute(`
+        CREATE INDEX idx_action_locks_expires_at ON action_locks(expires_at)
+      `)
+      await db.execute(`
+        CREATE INDEX idx_action_locks_admin ON action_locks(admin_email)
+      `)
+      console.log("✓ Created action_locks table")
+    } else {
+      // Migrate existing action_locks table to support resource types
+      const actionLocksColumns = await db.execute(`PRAGMA table_info(action_locks)`)
+      const columnNames = new Set(actionLocksColumns.rows.map((row: any) => row.name))
+      
+      if (!columnNames.has("resource_type")) {
+        const migrationVersion = "action_locks_add_resource_type"
+        if (!(await isMigrationApplied(db, migrationVersion))) {
+          console.log("⚠️ Migrating action_locks table to support resource types...")
+          
+          // Step 1: Create new table with resource_type and resource_id
+          await db.execute(`
+            CREATE TABLE action_locks_new (
+              id TEXT PRIMARY KEY,
+              resource_type TEXT NOT NULL CHECK(resource_type IN ('booking', 'event', 'image', 'email', 'dashboard', 'global')),
+              resource_id TEXT NOT NULL,
+              action TEXT NOT NULL,
+              admin_email TEXT NOT NULL,
+              admin_name TEXT,
+              locked_at INTEGER NOT NULL,
+              expires_at INTEGER NOT NULL,
+              created_at INTEGER DEFAULT (strftime('%s', 'now')) NOT NULL,
+              updated_at INTEGER DEFAULT (strftime('%s', 'now')) NOT NULL,
+              UNIQUE (resource_type, resource_id, action)
+            )
+          `)
+          
+          // Step 2: Migrate existing data (all existing locks are for bookings)
+          const existingLocks = await db.execute(`SELECT * FROM action_locks`)
+          if (existingLocks.rows.length > 0) {
+            for (const lock of existingLocks.rows) {
+              const row = lock as any
+              await db.execute(`
+                INSERT INTO action_locks_new (id, resource_type, resource_id, action, admin_email, admin_name, locked_at, expires_at, created_at, updated_at)
+                VALUES (?, 'booking', ?, ?, ?, ?, ?, ?, ?, ?)
+              `, [
+                row.id,
+                row.booking_id,
+                row.action,
+                row.admin_email,
+                row.admin_name || null,
+                row.locked_at,
+                row.expires_at,
+                row.created_at || Math.floor(Date.now() / 1000),
+                row.updated_at || Math.floor(Date.now() / 1000)
+              ])
+            }
+            console.log(`✓ Migrated ${existingLocks.rows.length} existing action locks`)
+          }
+          
+          // Step 3: Drop old table and rename new one
+          await db.execute(`DROP TABLE action_locks`)
+          await db.execute(`ALTER TABLE action_locks_new RENAME TO action_locks`)
+          
+          // Step 4: Recreate indexes
+          await db.execute(`
+            CREATE INDEX idx_action_locks_resource ON action_locks(resource_type, resource_id, action, expires_at)
+          `)
+          await db.execute(`
+            CREATE INDEX idx_action_locks_expires_at ON action_locks(expires_at)
+          `)
+          await db.execute(`
+            CREATE INDEX idx_action_locks_admin ON action_locks(admin_email)
+          `)
+          
+          await recordMigrationVersion(
+            db,
+            migrationVersion,
+            "Migrate action_locks table to support resource types",
+            "-- Manual rollback required: Restore from backup"
+          )
+          console.log("✓ Migrated action_locks table to support resource types")
+        }
+      }
+    }
+
     // Create event_images table for multiple images per event (future in-event photos)
     if (!existingTables.has("event_images")) {
       await db.execute(`

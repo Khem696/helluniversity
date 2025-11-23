@@ -1,5 +1,18 @@
 "use client"
 
+/**
+ * Dev Mode Toggle Component
+ * 
+ * NOTE: This is currently a client-side only setting (stored in localStorage).
+ * It does not require server-side action locking because:
+ * - It's a per-browser UI preference (not shared state)
+ * - Each admin's browser maintains its own dev mode state
+ * - It only affects visibility of dev tools in the UI
+ * 
+ * If you want dev mode to be a shared setting across all admins, convert it to
+ * a server-side setting (similar to bookings_enabled) and add action locking.
+ */
+
 import { useState, useEffect } from "react"
 import { Switch } from "@/components/ui/switch"
 import { Label } from "@/components/ui/label"

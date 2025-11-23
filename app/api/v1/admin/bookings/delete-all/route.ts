@@ -11,7 +11,7 @@
 
 import { NextResponse } from "next/server"
 import { getTursoClient } from "@/lib/turso"
-import { logAdminAction } from "@/lib/bookings"
+import { logAdminAction, formatBooking } from "@/lib/bookings"
 import { sendAdminBookingDeletionNotification } from "@/lib/email"
 import {
   requireAuthorizedDomain,
@@ -123,11 +123,66 @@ export const POST = withVersioning(async (request: Request) => {
 
     await logger.info(`Deleting ${bookingCount} ${bookingType} bookings`, { bookingType, count: bookingCount })
 
-    // Delete all bookings
-    await db.execute({
-      sql: `DELETE FROM bookings WHERE status IN (${placeholders})`,
-      args: statusesToDelete,
-    })
+    // CRITICAL: Acquire action lock to prevent concurrent bulk deletions
+    // Use dynamic resource ID based on bookingType to allow independent locks for active vs archive
+    let actionLockId: string | null = null
+    if (adminEmail) {
+      try {
+        const { acquireActionLock, releaseActionLock } = await import('@/lib/action-lock')
+        const resourceId = `delete_all_${bookingType}_bookings` // Dynamic resource ID based on bookingType
+        const actionType = `delete_all_${bookingType}`
+        actionLockId = await acquireActionLock('dashboard', resourceId, actionType, adminEmail, adminName)
+        
+        if (!actionLockId) {
+          await logger.warn('Action lock acquisition failed: another admin is performing bulk deletion', {
+            bookingType,
+            resourceId,
+            action: actionType,
+            adminEmail
+          })
+          return errorResponse(
+            ErrorCodes.CONFLICT,
+            `Another admin is currently performing a bulk deletion of ${bookingType} bookings. Please wait a moment and try again.`,
+            undefined,
+            409,
+            { requestId }
+          )
+        }
+        await logger.debug('Action lock acquired', { bookingType, resourceId, action: actionType, lockId: actionLockId })
+      } catch (lockError) {
+        await logger.warn('Failed to acquire action lock, falling back to optimistic locking', {
+          error: lockError instanceof Error ? lockError.message : String(lockError),
+          bookingType
+        })
+      }
+    }
+    
+    // Ensure lock is released even if deletion fails
+    const releaseLock = async () => {
+      if (actionLockId && adminEmail) {
+        try {
+          const { releaseActionLock } = await import('@/lib/action-lock')
+          await releaseActionLock(actionLockId, adminEmail)
+          await logger.debug('Action lock released', { lockId: actionLockId })
+        } catch (releaseError) {
+          await logger.warn('Failed to release action lock', {
+            error: releaseError instanceof Error ? releaseError.message : String(releaseError),
+            lockId: actionLockId
+          })
+        }
+      }
+    }
+
+    try {
+      // Delete all bookings
+      await db.execute({
+        sql: `DELETE FROM bookings WHERE status IN (${placeholders})`,
+        args: statusesToDelete,
+      })
+    } catch (error) {
+      await releaseLock()
+      throw error
+    }
 
     // Log admin action
     try {
@@ -152,22 +207,25 @@ export const POST = withVersioning(async (request: Request) => {
     const backgroundOperations: Promise<void>[] = []
 
     for (const booking of bookings) {
+      // Format booking to ensure proper field mapping (reference_number -> referenceNumber, etc.)
+      const formattedBooking = formatBooking(booking)
+
       // Queue blob deletion
-      if (booking.depositEvidenceUrl) {
+      if (formattedBooking.depositEvidenceUrl) {
         backgroundOperations.push(
           (async () => {
             try {
-              await deleteImage(booking.depositEvidenceUrl)
-              await logger.info('Deleted deposit evidence blob', { blobUrl: booking.depositEvidenceUrl, bookingId: booking.id })
+              await deleteImage(formattedBooking.depositEvidenceUrl!)
+              await logger.info('Deleted deposit evidence blob', { blobUrl: formattedBooking.depositEvidenceUrl, bookingId: formattedBooking.id })
             } catch (blobError) {
-              await logger.error("Failed to delete deposit evidence blob", blobError instanceof Error ? blobError : new Error(String(blobError)), { blobUrl: booking.depositEvidenceUrl, bookingId: booking.id })
+              await logger.error("Failed to delete deposit evidence blob", blobError instanceof Error ? blobError : new Error(String(blobError)), { blobUrl: formattedBooking.depositEvidenceUrl, bookingId: formattedBooking.id })
               
               // Queue cleanup job for retry
               try {
-                await enqueueJob("cleanup-orphaned-blob", { blobUrl: booking.depositEvidenceUrl }, { priority: 1 })
-                await logger.info('Queued orphaned blob cleanup job', { blobUrl: booking.depositEvidenceUrl })
+                await enqueueJob("cleanup-orphaned-blob", { blobUrl: formattedBooking.depositEvidenceUrl! }, { priority: 1 })
+                await logger.info('Queued orphaned blob cleanup job', { blobUrl: formattedBooking.depositEvidenceUrl })
               } catch (queueError) {
-                await logger.error("Failed to queue orphaned blob cleanup", queueError instanceof Error ? queueError : new Error(String(queueError)), { blobUrl: booking.depositEvidenceUrl })
+                await logger.error("Failed to queue orphaned blob cleanup", queueError instanceof Error ? queueError : new Error(String(queueError)), { blobUrl: formattedBooking.depositEvidenceUrl })
               }
             }
           })()
@@ -177,24 +235,24 @@ export const POST = withVersioning(async (request: Request) => {
       // Queue user notification email (only for active bookings that weren't already cancelled/finished)
       if (
         bookingType === "active" &&
-        booking.status !== "cancelled" &&
-        booking.status !== "finished"
+        formattedBooking.status !== "cancelled" &&
+        formattedBooking.status !== "finished"
       ) {
         backgroundOperations.push(
           (async () => {
             try {
               const { sendBookingStatusNotification } = await import("@/lib/email")
               await sendBookingStatusNotification(
-                { ...booking, status: "cancelled" as const },
+                { ...formattedBooking, status: "cancelled" as const },
                 "cancelled",
                 {
                   changeReason: "All bookings have been deleted by administrator",
                   skipDuplicateCheck: true,
                 }
               )
-              await logger.info("Cancellation notification sent to user", { bookingId: booking.id })
+              await logger.info("Cancellation notification sent to user", { bookingId: formattedBooking.id, referenceNumber: formattedBooking.referenceNumber })
             } catch (emailError) {
-              await logger.warn("User notification send failed", { bookingId: booking.id, error: emailError instanceof Error ? emailError.message : String(emailError) })
+              await logger.warn("User notification send failed", { bookingId: formattedBooking.id, error: emailError instanceof Error ? emailError.message : String(emailError) })
             }
           })()
         )
@@ -204,10 +262,10 @@ export const POST = withVersioning(async (request: Request) => {
       backgroundOperations.push(
         (async () => {
           try {
-            await sendAdminBookingDeletionNotification(booking, deletedBy)
-            await logger.info("Admin deletion notification sent", { bookingId: booking.id })
+            await sendAdminBookingDeletionNotification(formattedBooking, deletedBy)
+            await logger.info("Admin deletion notification sent", { bookingId: formattedBooking.id, referenceNumber: formattedBooking.referenceNumber })
           } catch (emailError) {
-            await logger.warn("Admin notification send failed", { bookingId: booking.id, error: emailError instanceof Error ? emailError.message : String(emailError) })
+            await logger.warn("Admin notification send failed", { bookingId: formattedBooking.id, error: emailError instanceof Error ? emailError.message : String(emailError) })
           }
         })()
       )
@@ -237,6 +295,8 @@ export const POST = withVersioning(async (request: Request) => {
     void backgroundPromise
 
     await logger.info(`Bulk deletion completed: ${bookingCount} ${bookingType} bookings deleted`, { bookingType, count: bookingCount })
+
+    await releaseLock()
 
     return successResponse(
       {

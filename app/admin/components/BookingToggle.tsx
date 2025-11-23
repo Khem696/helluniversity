@@ -4,13 +4,27 @@ import { useState, useEffect } from "react"
 import { API_PATHS, buildApiUrl } from "@/lib/api-config"
 import { Switch } from "@/components/ui/switch"
 import { Label } from "@/components/ui/label"
-import { Loader2, Calendar, CalendarX } from "lucide-react"
+import { Loader2, Calendar, CalendarX, Lock } from "lucide-react"
 import { toast } from "sonner"
+import { useActionLocks } from "@/hooks/useActionLocks"
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 
 export function BookingToggle() {
   const [enabled, setEnabled] = useState<boolean>(true)
   const [loading, setLoading] = useState(true)
   const [updating, setUpdating] = useState(false)
+  
+  // Check action locks for bookings_enabled setting
+  const { 
+    lockStatus: actionLockStatus, 
+    isLockedByOther: isActionLockedByOther,
+  } = useActionLocks({
+    resourceType: 'dashboard',
+    resourceId: 'bookings_enabled',
+    action: 'update_setting_bookings_enabled',
+    pollInterval: 3000, // Poll every 3 seconds
+    enabled: true,
+  })
 
   // Fetch current booking status
   useEffect(() => {
@@ -48,6 +62,15 @@ export function BookingToggle() {
 
   // Handle toggle change
   const handleToggle = async (checked: boolean) => {
+    // Check if action is locked by another admin
+    if (isActionLockedByOther) {
+      const lockedBy = actionLockStatus.lockedBy || "another admin"
+      toast.error(`This setting is currently being updated by ${lockedBy}. Please wait a moment and try again.`, {
+        duration: 5000,
+      })
+      return
+    }
+
     try {
       setUpdating(true)
       const response = await fetch(API_PATHS.adminSettings, {
@@ -77,6 +100,11 @@ export function BookingToggle() {
             description: "Please initialize the database first using the 'Initialize Database' button.",
             duration: 10000,
           })
+        } else if (response.status === 409) {
+          // Conflict - another admin has the lock
+          toast.error("Another admin is currently updating this setting. Please wait and try again.", {
+            duration: 5000,
+          })
         } else {
           toast.error(errorMessage)
         }
@@ -105,6 +133,18 @@ export function BookingToggle() {
 
   return (
     <div className="p-6 bg-white rounded-lg shadow-md hover:shadow-lg transition-shadow">
+      {/* Show lock status warning if action is locked by another admin */}
+      {isActionLockedByOther && (
+        <Alert variant="destructive" className="mb-4 bg-orange-50 border-orange-200">
+          <Lock className="h-4 w-4" />
+          <AlertTitle className="text-orange-900">🔒 Setting Locked by Another Admin</AlertTitle>
+          <AlertDescription className="text-orange-800">
+            This setting is currently being updated by {actionLockStatus.lockedBy || "another admin"}. 
+            Please wait a moment and try again. The page will automatically update when the lock is released.
+          </AlertDescription>
+        </Alert>
+      )}
+      
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-4">
           <div className={`flex-shrink-0 w-12 h-12 rounded-lg flex items-center justify-center ${
@@ -139,8 +179,9 @@ export function BookingToggle() {
               id="booking-toggle"
               checked={enabled}
               onCheckedChange={handleToggle}
-              disabled={updating}
+              disabled={updating || isActionLockedByOther}
               className="mt-1"
+              title={isActionLockedByOther ? `This setting is locked by ${actionLockStatus.lockedBy || "another admin"}` : undefined}
             />
           </div>
         </div>

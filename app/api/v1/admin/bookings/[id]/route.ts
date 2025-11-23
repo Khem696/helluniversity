@@ -322,6 +322,59 @@ export const PATCH = withVersioning(async (
       await logger.warn("Could not get session for admin action logging", { error: sessionError instanceof Error ? sessionError.message : String(sessionError) })
     }
 
+    // CRITICAL: Acquire action lock to prevent concurrent modifications by multiple admins
+    // This ensures only one admin can perform an action on a booking at a time
+    let actionLockId: string | null = null
+    if (adminEmail) {
+      try {
+        const { acquireActionLock, releaseActionLock } = await import('@/lib/action-lock')
+        const actionType = action || `status_${status}` || 'update'
+        actionLockId = await acquireActionLock('booking', id, actionType, adminEmail, adminName)
+        
+        if (!actionLockId) {
+          // Another admin is currently performing this action
+          await logger.warn('Action lock acquisition failed: another admin is performing this action', {
+            bookingId: id,
+            action: actionType,
+            adminEmail
+          })
+          // No lock to release since acquisition failed
+          return errorResponse(
+            ErrorCodes.CONFLICT,
+            "Another admin is currently performing this action on this booking. Please wait a moment and try again.",
+            undefined,
+            409,
+            { requestId }
+          )
+        }
+        
+        await logger.debug('Action lock acquired', { bookingId: id, action: actionType, lockId: actionLockId })
+      } catch (lockError) {
+        // If locking fails, log but continue (fallback to optimistic locking)
+        await logger.warn('Failed to acquire action lock, falling back to optimistic locking', {
+          error: lockError instanceof Error ? lockError.message : String(lockError),
+          bookingId: id
+        })
+      }
+    }
+    
+    // Ensure lock is released even if update fails
+    const releaseLock = async () => {
+      if (actionLockId && adminEmail) {
+        try {
+          const { releaseActionLock } = await import('@/lib/action-lock')
+          await releaseActionLock(actionLockId, adminEmail)
+          await logger.debug('Action lock released', { bookingId: id, lockId: actionLockId })
+        } catch (releaseError) {
+          await logger.warn('Failed to release action lock', {
+            error: releaseError instanceof Error ? releaseError.message : String(releaseError),
+            bookingId: id,
+            lockId: actionLockId
+          })
+        }
+      }
+    }
+
     // Handle date change for confirmed bookings or when restoring (before status update)
     // CRITICAL: If both date changes AND status changes are provided (restoration with date change),
     // we need to handle them together, not separately
@@ -351,6 +404,7 @@ export const PATCH = withVersioning(async (
           currentStatus: currentBooking.status,
           targetStatus: status 
         })
+        await releaseLock()
         return errorResponse(
           ErrorCodes.VALIDATION_ERROR,
           "Date changes are only allowed for confirmed bookings or when changing status to confirmed.",
@@ -381,6 +435,7 @@ export const PATCH = withVersioning(async (
           checkStartDate,
           checkEndDate
         })
+        await releaseLock()
         return errorResponse(
           ErrorCodes.VALIDATION_ERROR,
           "End date must be after or equal to start date.",
@@ -425,6 +480,7 @@ export const PATCH = withVersioning(async (
               checkStartDate,
               checkEndDate
             })
+            await releaseLock()
             return errorResponse(
               ErrorCodes.VALIDATION_ERROR,
               "For single-day bookings, end time must be after start time.",
@@ -518,6 +574,7 @@ export const PATCH = withVersioning(async (
           checkStartTime,
           checkEndTime
         })
+        await releaseLock()
         return errorResponse(
           ErrorCodes.VALIDATION_ERROR,
           "The booking end date and time must be after the start date and time.",
@@ -544,6 +601,7 @@ export const PATCH = withVersioning(async (
           bookingId: id,
           overlappingNames
         })
+        await releaseLock()
         return errorResponse(
           ErrorCodes.BOOKING_OVERLAP,
           `Cannot change date: the new date and time overlaps with an existing confirmed booking (${overlappingNames}). Please choose a different date.`,
@@ -572,6 +630,7 @@ export const PATCH = withVersioning(async (
       const recheckBooking = await getBookingById(id)
       if (!recheckBooking) {
         await logger.warn('Date change rejected: booking not found during re-check', { bookingId: id })
+        await releaseLock()
         return notFoundResponse('Booking', { requestId })
       }
       
@@ -581,6 +640,7 @@ export const PATCH = withVersioning(async (
           originalStatus: currentBooking.status,
           currentStatus: recheckBooking.status
         })
+        await releaseLock()
         return errorResponse(
           ErrorCodes.VALIDATION_ERROR,
           `Booking status has changed from "confirmed" to "${recheckBooking.status}". Date changes are only allowed for confirmed bookings. Please refresh and try again.`,
@@ -608,6 +668,7 @@ export const PATCH = withVersioning(async (
           bookingId: id,
           overlappingNames
         })
+        await releaseLock()
         return errorResponse(
           ErrorCodes.BOOKING_OVERLAP,
           `The selected date and time is no longer available. It overlaps with a recently confirmed booking (${overlappingNames}). Please refresh and choose a different date.`,
@@ -730,6 +791,7 @@ export const PATCH = withVersioning(async (
           } catch {
             // Ignore monitoring errors
           }
+          await releaseLock()
           return errorResponse(
             ErrorCodes.VALIDATION_ERROR,
             "Booking was modified by another process. Please refresh the page and try again.",
@@ -743,6 +805,7 @@ export const PATCH = withVersioning(async (
           bookingId: id,
           originalUpdatedAt
         })
+        await releaseLock()
         return errorResponse(
           ErrorCodes.INTERNAL_ERROR,
           "Failed to update booking dates. The transaction was rolled back. Please try again.",
@@ -801,6 +864,7 @@ export const PATCH = withVersioning(async (
       const updatedBooking = await getBookingById(id)
       if (!updatedBooking) {
         await logger.error('Failed to retrieve updated booking after date change', new Error('Booking not found after date change'), { bookingId: id })
+        await releaseLock()
         return errorResponse(
           ErrorCodes.INTERNAL_ERROR,
           "Failed to retrieve updated booking",
@@ -1103,6 +1167,7 @@ export const PATCH = withVersioning(async (
           ? `Cannot confirm this booking: The selected date range overlaps with ${overlapCheck.overlappingBookings.length} existing confirmed booking(s).\n\nOverlapping booking(s):\n${overlapCheck.overlappingBookings.map((b: any, idx: number) => `${idx + 1}. ${formatOverlappingBooking(b)}`).join("\n")}\n\nPlease choose a different date range or resolve the conflict first.`
           : `Cannot confirm this booking: The selected date and time overlaps with an existing confirmed booking. Please resolve the conflict first.`
         
+        await releaseLock() // CRITICAL: Release lock before returning
         return errorResponse(
           ErrorCodes.BOOKING_OVERLAP,
           errorMessage,
@@ -1150,6 +1215,7 @@ export const PATCH = withVersioning(async (
           ? `The selected date range is no longer available. It overlaps with ${finalOverlapCheck.overlappingBookings.length} recently confirmed booking(s).\n\nOverlapping booking(s):\n${finalOverlapCheck.overlappingBookings.map((b: any, idx: number) => `${idx + 1}. ${formatOverlappingBooking(b)}`).join("\n")}\n\nPlease refresh and choose a different date range or resolve the conflict.`
           : `The selected date and time is no longer available. It overlaps with a recently confirmed booking. Please refresh and resolve the conflict.`
         
+        await releaseLock() // CRITICAL: Release lock before returning
         return errorResponse(
           ErrorCodes.BOOKING_OVERLAP,
           errorMessage,
@@ -1195,6 +1261,7 @@ export const PATCH = withVersioning(async (
       const recheckBookingForDates = await getBookingById(id)
       if (!recheckBookingForDates) {
         await logger.warn('Date update rejected: booking not found during re-check', { bookingId: id })
+        await releaseLock() // CRITICAL: Release lock before returning
         return notFoundResponse('Booking', { requestId })
       }
       
@@ -1255,6 +1322,7 @@ export const PATCH = withVersioning(async (
           } catch {
             // Ignore monitoring errors
           }
+          await releaseLock() // CRITICAL: Release lock before returning
           return errorResponse(
             ErrorCodes.CONFLICT,
             "Booking was modified by another process. Please refresh the page and try again.",
@@ -1273,11 +1341,47 @@ export const PATCH = withVersioning(async (
         })
       } catch (dateUpdateError) {
         await logger.error('Failed to update dates during restoration', dateUpdateError instanceof Error ? dateUpdateError : new Error(String(dateUpdateError)), { bookingId: id })
+        await releaseLock() // CRITICAL: Release lock before returning
         return errorResponse(
           ErrorCodes.INTERNAL_ERROR,
           "Failed to update booking dates during restoration. Please try again.",
           undefined,
           500,
+          { requestId }
+        )
+      }
+    }
+    
+    // CRITICAL: Validate token generation requirements BEFORE updating status
+    // For pending_deposit status transitions from pending, token generation requires start_date
+    // This ensures atomicity: if token generation would fail, we don't update the database
+    const isPendingToPendingDeposit = currentBooking.status === "pending" && status === "pending_deposit"
+    const isCancelledToPendingDeposit = currentBooking.status === "cancelled" && status === "pending_deposit"
+    const requiresTokenGeneration = isPendingToPendingDeposit || isCancelledToPendingDeposit
+    
+    if (requiresTokenGeneration) {
+      // Check if booking has start_date (required for token expiration calculation)
+      // Use effective start date: newStartDate if provided, otherwise currentBooking.startDate
+      const effectiveStartDate = newStartDate || currentBooking.startDate
+      
+      if (!effectiveStartDate) {
+        await logger.error(
+          'Cannot transition to pending_deposit: booking missing start_date required for token generation',
+          new Error('Missing start_date for token generation'),
+          {
+            bookingId: id,
+            currentStatus: currentBooking.status,
+            requestedStatus: status,
+            hasStartDate: !!currentBooking.startDate,
+            hasNewStartDate: !!newStartDate
+          }
+        )
+        await releaseLock() // CRITICAL: Release lock before returning
+        return errorResponse(
+          ErrorCodes.VALIDATION_ERROR,
+          "Cannot accept booking: Booking date is required to generate deposit upload link. Please set a booking date first.",
+          undefined,
+          400,
           { requestId }
         )
       }
@@ -1303,9 +1407,14 @@ export const PATCH = withVersioning(async (
       })
     } catch (error) {
       // Check if error is due to optimistic locking conflict
+      // CRITICAL: finalOverlapCheck is only defined when status === "confirmed" (lines 1099-1227)
+      // For status-only updates (non-confirmed) or date-only updates, finalOverlapCheck is undefined
+      // DO NOT access finalOverlapCheck.overlappingBookings here - it will cause TypeError
+      // Overlap errors are handled before updateBookingStatus is called (lines 1142-1226)
       const errorMessage = error instanceof Error ? error.message : "Failed to update booking"
       if (errorMessage.includes("modified by another process")) {
         await logger.warn('Booking update conflict: modified by another process', { bookingId: id })
+        await releaseLock() // CRITICAL: Release lock before returning
         return errorResponse(
           ErrorCodes.CONFLICT,
           "Booking was modified by another process. Please refresh the page and try again.",
@@ -1315,6 +1424,8 @@ export const PATCH = withVersioning(async (
         )
       }
       // Re-throw other errors to be handled by withErrorHandling
+      // Release lock before re-throwing
+      await releaseLock()
       throw error
     }
 
@@ -1406,12 +1517,11 @@ export const PATCH = withVersioning(async (
           })
         }
         
-        // Log warning if token is missing for pending_deposit status
-        // CRITICAL: For pending -> pending_deposit, token should always be generated
-        // If token is missing, this is a critical error that needs investigation
+        // CRITICAL: Enforce token validation for pending_deposit status
+        // For pending -> pending_deposit, token MUST be present - this is required for deposit upload
         if (actualStatus === "pending_deposit" && !tokenToUse) {
           await logger.error(
-            `CRITICAL: No token available for pending_deposit booking - email will be sent without deposit link`,
+            `CRITICAL: No token available for pending_deposit booking - cannot send email without deposit link`,
             new Error(`Token missing for pending_deposit booking`),
             { 
               bookingId: id, 
@@ -1423,8 +1533,16 @@ export const PATCH = withVersioning(async (
               isPendingToPendingDeposit: currentBooking.status === "pending" && actualStatus === "pending_deposit"
             }
           )
-          // Still send email even without token - user needs to know booking was accepted
-          // Admin can manually send token link if needed
+          // FIXED: Don't send email without token - this would prevent user from uploading deposit
+          // Instead, release lock and return error to force admin to retry or investigate
+          await releaseLock()
+          return errorResponse(
+            ErrorCodes.INTERNAL_ERROR,
+            "Failed to generate deposit upload token. Please refresh the page and try again. If the issue persists, contact support.",
+            undefined,
+            500,
+            { requestId }
+          )
         }
         
         // Enhance changeReason for restoration emails and other channel confirmations
@@ -1537,6 +1655,9 @@ export const PATCH = withVersioning(async (
     }
 
     await logger.info('Booking updated successfully', { bookingId: id, status: updatedBooking.status })
+    
+    // Release action lock after successful update
+    await releaseLock()
     
     return successResponse(
       {

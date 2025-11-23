@@ -87,6 +87,9 @@ export const API_PATHS = {
   adminEmailQueue: getApiPath('admin/email-queue'),
   adminEmailQueueItem: (id: string) => getApiPath(`admin/email-queue/${id}`),
   
+  // Admin Action Locks API
+  adminActionLocks: getApiPath('admin/action-locks'),
+  
   // Admin Stats API
   adminStats: getApiPath('admin/stats'),
   
