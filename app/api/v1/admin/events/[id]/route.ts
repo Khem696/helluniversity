@@ -434,6 +434,38 @@ export const PATCH = withVersioning(async (
       inEventPhotosCount: inEventPhotos.rows.length
     })
 
+    // Broadcast event updated via SSE (after successful DB update)
+    try {
+      const { broadcastEventUpdate } = await import('../stream/route')
+      const eventRow = eventResult.rows[0] as any
+      
+      broadcastEventUpdate('event:updated', {
+        id: eventRow.id,
+        title: eventRow.title,
+        description: eventRow.description || null,
+        image_id: eventRow.image_id || null,
+        event_date: eventRow.event_date || null,
+        start_date: eventRow.start_date || null,
+        end_date: eventRow.end_date || null,
+        image_url: eventRow.image_url || null,
+        image_title: eventRow.image_title || null,
+        created_at: eventRow.created_at,
+        updated_at: eventRow.updated_at,
+      })
+    } catch (broadcastError) {
+      // Don't fail if broadcast fails - logging is optional
+      const errorMessage = broadcastError instanceof Error ? broadcastError.message : String(broadcastError)
+      try {
+        const { logWarn } = await import('@/lib/logger')
+        await logWarn('Failed to broadcast event updated', {
+          eventId: id,
+          error: errorMessage,
+        })
+      } catch (logError) {
+        // Fallback: if logger fails, silently continue (avoid infinite loops)
+      }
+    }
+
     return successResponse(
       {
         event: {
@@ -526,6 +558,20 @@ export const DELETE = withVersioning(async (
 
     const db = getTursoClient()
 
+    // Get event details before deleting (for broadcast)
+    const eventResult = await db.execute({
+      sql: `
+        SELECT 
+          e.id, e.title, e.description, e.image_id, e.event_date,
+          e.start_date, e.end_date, e.created_at, e.updated_at,
+          i.blob_url as image_url, i.title as image_title
+        FROM events e
+        LEFT JOIN images i ON e.image_id = i.id
+        WHERE e.id = ?
+      `,
+      args: [id],
+    })
+
     try {
       await db.execute({
         sql: "DELETE FROM events WHERE id = ?",
@@ -539,6 +585,40 @@ export const DELETE = withVersioning(async (
     }
     
     await releaseLock()
+
+    // Broadcast event deleted via SSE (after successful DB delete)
+    if (eventResult.rows.length > 0) {
+      try {
+        const { broadcastEventUpdate } = await import('../stream/route')
+        const eventRow = eventResult.rows[0] as any
+        
+        broadcastEventUpdate('event:deleted', {
+          id: eventRow.id,
+          title: eventRow.title,
+          description: eventRow.description || null,
+          image_id: eventRow.image_id || null,
+          event_date: eventRow.event_date || null,
+          start_date: eventRow.start_date || null,
+          end_date: eventRow.end_date || null,
+          image_url: eventRow.image_url || null,
+          image_title: eventRow.image_title || null,
+          created_at: eventRow.created_at,
+          updated_at: eventRow.updated_at,
+        })
+      } catch (broadcastError) {
+        // Don't fail if broadcast fails - logging is optional
+        const errorMessage = broadcastError instanceof Error ? broadcastError.message : String(broadcastError)
+        try {
+          const { logWarn } = await import('@/lib/logger')
+          await logWarn('Failed to broadcast event deleted', {
+            eventId: id,
+            error: errorMessage,
+          })
+        } catch (logError) {
+          // Fallback: if logger fails, silently continue (avoid infinite loops)
+        }
+      }
+    }
 
     return successResponse(
       {

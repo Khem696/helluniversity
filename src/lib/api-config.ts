@@ -51,9 +51,11 @@ export const API_PATHS = {
   bookingAvailability: getApiPath('booking/availability'),
   bookingDeposit: getApiPath('booking/deposit'),
   bookingResponse: (token: string) => getApiPath(`booking/response/${token}`),
+  bookingStream: (token: string) => getApiPath(`booking/${token}/stream`),
   
   // Admin Booking APIs
   adminBookings: getApiPath('admin/bookings'),
+  adminBookingsStream: getApiPath('admin/bookings/stream'),
   adminBooking: (id: string) => getApiPath(`admin/bookings/${id}`),
   adminBookingValidate: (id: string) => getApiPath(`admin/bookings/${id}/validate`),
   adminBookingReminders: getApiPath('admin/bookings/reminders'),
@@ -70,6 +72,7 @@ export const API_PATHS = {
   
   // Admin Event APIs
   adminEvents: getApiPath('admin/events'),
+  adminEventsStream: getApiPath('admin/events/stream'),
   adminEvent: (id: string) => getApiPath(`admin/events/${id}`),
   adminEventImages: (id: string) => getApiPath(`admin/events/${id}/images`),
   adminEventImage: (eventId: string, imageId: string) => 
@@ -86,12 +89,15 @@ export const API_PATHS = {
   // Admin Email Queue APIs
   adminEmailQueue: getApiPath('admin/email-queue'),
   adminEmailQueueItem: (id: string) => getApiPath(`admin/email-queue/${id}`),
+  adminEmailsStream: getApiPath('admin/emails/stream'),
   
   // Admin Action Locks API
   adminActionLocks: getApiPath('admin/action-locks'),
+  adminActionLocksStream: getApiPath('admin/action-locks/stream'),
   
   // Admin Stats API
   adminStats: getApiPath('admin/stats'),
+  adminStatsStream: getApiPath('admin/stats/stream'),
   
   // Admin Utility APIs
   adminInitDb: getApiPath('admin/init-db'),

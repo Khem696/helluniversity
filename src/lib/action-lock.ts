@@ -62,6 +62,39 @@ export async function acquireActionLock(
           sql: `UPDATE action_locks SET expires_at = ?, locked_at = ? WHERE id = ?`,
           args: [expiresAt, now, lock.id],
         })
+        
+        // Broadcast lock extension (after successful DB update)
+        try {
+          const { broadcastActionLockEvent } = await import('../../app/api/v1/admin/action-locks/stream/route')
+          broadcastActionLockEvent(
+            'lock:extended',
+            resourceType,
+            resourceId,
+            action,
+            {
+              lockId: lock.id,
+              adminEmail,
+              adminName: adminName || undefined,
+              lockedAt: now,
+              expiresAt,
+            }
+          )
+        } catch (broadcastError) {
+          // Don't fail if broadcast fails - logging is optional
+          const errorMessage = broadcastError instanceof Error ? broadcastError.message : String(broadcastError)
+          try {
+            const { logWarn } = await import('./logger')
+            await logWarn('Failed to broadcast lock extension', {
+              resourceType,
+              resourceId,
+              action,
+              error: errorMessage,
+            })
+          } catch (logError) {
+            // Fallback: if logger fails, silently continue (avoid infinite loops)
+          }
+        }
+        
         return lock.id
       }
       // Different admin has the lock
@@ -93,6 +126,39 @@ export async function acquireActionLock(
         const lock = verifyLock.rows[0] as any
         // Only return lock ID if we're the one who acquired it
         if (lock.admin_email === adminEmail) {
+          // Broadcast lock acquisition (after successful DB insert)
+          try {
+            const { broadcastActionLockEvent } = await import('../../app/api/v1/admin/action-locks/stream/route')
+            broadcastActionLockEvent(
+              'lock:acquired',
+              resourceType,
+              resourceId,
+              action,
+              {
+                lockId: lock.id,
+                adminEmail,
+                adminName: adminName || undefined,
+                lockedAt: lock.locked_at,
+                expiresAt: lock.expires_at,
+              }
+            )
+          } catch (broadcastError) {
+            // Don't fail if broadcast fails - logging is optional
+            const errorMessage = broadcastError instanceof Error ? broadcastError.message : String(broadcastError)
+            try {
+              const { logWarn } = await import('./logger')
+              await logWarn('Failed to broadcast lock acquisition', {
+                resourceType,
+                resourceId,
+                action,
+                adminEmail,
+                error: errorMessage,
+              })
+            } catch (logError) {
+              // Fallback: if logger fails, silently continue (avoid infinite loops)
+            }
+          }
+          
           return lock.id
         }
         // Another admin acquired it first
@@ -134,13 +200,55 @@ export async function releaseActionLock(lockId: string, adminEmail: string): Pro
   const db = getTursoClient()
   const now = Math.floor(Date.now() / 1000)
   
+  // Get lock details before deleting (for broadcast)
+  const lockResult = await db.execute({
+    sql: `SELECT * FROM action_locks WHERE id = ? AND admin_email = ?`,
+    args: [lockId, adminEmail],
+  })
+  
   // Only allow the admin who created the lock to release it
   const result = await db.execute({
     sql: `DELETE FROM action_locks WHERE id = ? AND admin_email = ?`,
     args: [lockId, adminEmail],
   })
   
-  return (result.rowsAffected || 0) > 0
+  const released = (result.rowsAffected || 0) > 0
+  
+  // Broadcast lock release (after successful DB delete)
+  if (released && lockResult.rows.length > 0) {
+    const lock = lockResult.rows[0] as any
+    try {
+      const { broadcastActionLockEvent } = await import('../../app/api/v1/admin/action-locks/stream/route')
+      broadcastActionLockEvent(
+        'lock:released',
+        lock.resource_type,
+        lock.resource_id,
+        lock.action,
+        {
+          lockId,
+          adminEmail,
+          adminName: lock.admin_name || undefined,
+        }
+      )
+    } catch (broadcastError) {
+      // Don't fail if broadcast fails - logging is optional
+      const errorMessage = broadcastError instanceof Error ? broadcastError.message : String(broadcastError)
+      try {
+        const { logWarn } = await import('./logger')
+        await logWarn('Failed to broadcast lock release', {
+          lockId: lock.id,
+          resourceType: lock.resource_type,
+          resourceId: lock.resource_id,
+          action: lock.action,
+          error: errorMessage,
+        })
+      } catch (logError) {
+        // Fallback: if logger fails, silently continue (avoid infinite loops)
+      }
+    }
+  }
+  
+  return released
 }
 
 /**
@@ -189,13 +297,57 @@ export async function extendActionLock(lockId: string, adminEmail: string): Prom
   const now = Math.floor(Date.now() / 1000)
   const expiresAt = now + LOCK_DURATION
   
+  // Get lock details before updating (for broadcast)
+  const lockResult = await db.execute({
+    sql: `SELECT * FROM action_locks WHERE id = ? AND admin_email = ? AND expires_at > ?`,
+    args: [lockId, adminEmail, now],
+  })
+  
   // Only allow the admin who created the lock to extend it
   const result = await db.execute({
     sql: `UPDATE action_locks SET expires_at = ? WHERE id = ? AND admin_email = ? AND expires_at > ?`,
     args: [expiresAt, lockId, adminEmail, now],
   })
   
-  return (result.rowsAffected || 0) > 0
+  const extended = (result.rowsAffected || 0) > 0
+  
+  // Broadcast lock extension (after successful DB update)
+  if (extended && lockResult.rows.length > 0) {
+    const lock = lockResult.rows[0] as any
+    try {
+      const { broadcastActionLockEvent } = await import('../../app/api/v1/admin/action-locks/stream/route')
+      broadcastActionLockEvent(
+        'lock:extended',
+        lock.resource_type,
+        lock.resource_id,
+        lock.action,
+        {
+          lockId,
+          adminEmail,
+          adminName: lock.admin_name || undefined,
+          lockedAt: lock.locked_at,
+          expiresAt,
+        }
+      )
+    } catch (broadcastError) {
+      // Don't fail if broadcast fails - logging is optional
+      const errorMessage = broadcastError instanceof Error ? broadcastError.message : String(broadcastError)
+      try {
+        const { logWarn } = await import('./logger')
+        await logWarn('Failed to broadcast lock extension', {
+          lockId: lock.id,
+          resourceType: lock.resource_type,
+          resourceId: lock.resource_id,
+          action: lock.action,
+          error: errorMessage,
+        })
+      } catch (logError) {
+        // Fallback: if logger fails, silently continue (avoid infinite loops)
+      }
+    }
+  }
+  
+  return extended
 }
 
 /**
@@ -205,12 +357,69 @@ export async function cleanupExpiredLocks(): Promise<number> {
   const db = getTursoClient()
   const now = Math.floor(Date.now() / 1000)
   
+  // Get expired locks before deleting (for broadcast)
+  const expiredLocks = await db.execute({
+    sql: `SELECT * FROM action_locks WHERE expires_at < ?`,
+    args: [now],
+  })
+  
   const result = await db.execute({
     sql: `DELETE FROM action_locks WHERE expires_at < ?`,
     args: [now],
   })
   
-  return result.rowsAffected || 0
+  const deletedCount = result.rowsAffected || 0
+  
+  // Broadcast lock expiration for each expired lock (after successful DB delete)
+  if (deletedCount > 0 && expiredLocks.rows.length > 0) {
+    try {
+      const { broadcastActionLockEvent } = await import('../../app/api/v1/admin/action-locks/stream/route')
+      for (const lockRow of expiredLocks.rows) {
+        const lock = lockRow as any
+        try {
+          broadcastActionLockEvent(
+            'lock:expired',
+            lock.resource_type,
+            lock.resource_id,
+            lock.action,
+            {
+              lockId: lock.id,
+              adminEmail: lock.admin_email,
+              adminName: lock.admin_name || undefined,
+            }
+          )
+        } catch (broadcastError) {
+          // Continue with other locks even if one broadcast fails
+          const errorMessage = broadcastError instanceof Error ? broadcastError.message : String(broadcastError)
+          try {
+            const { logWarn } = await import('./logger')
+            await logWarn('Failed to broadcast lock expiration', {
+              lockId: lock.id,
+              resourceType: lock.resource_type,
+              resourceId: lock.resource_id,
+              action: lock.action,
+              error: errorMessage,
+            })
+          } catch (logError) {
+            // Fallback: if logger fails, silently continue (avoid infinite loops)
+          }
+        }
+      }
+    } catch (broadcastError) {
+      // Don't fail if broadcast fails - logging is optional
+      const errorMessage = broadcastError instanceof Error ? broadcastError.message : String(broadcastError)
+      try {
+        const { logWarn } = await import('./logger')
+        await logWarn('Failed to broadcast expired locks', {
+          error: errorMessage,
+        })
+      } catch (logError) {
+        // Fallback: if logger fails, silently continue (avoid infinite loops)
+      }
+    }
+  }
+  
+  return deletedCount
 }
 
 /**

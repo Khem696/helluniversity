@@ -1,12 +1,12 @@
 /**
- * Booking Settings SSE Stream API v1
+ * Admin Stats SSE Stream API v1
  * 
- * Server-Sent Events endpoint for real-time booking enabled status updates
+ * Server-Sent Events endpoint for real-time admin statistics updates
  * 
- * GET /api/v1/settings/booking-enabled/stream - Stream booking enabled status changes
- * Public endpoint (no authentication required)
+ * GET /api/v1/admin/stats/stream - Stream admin statistics updates
+ * Admin-only endpoint (requires authentication)
  * 
- * This endpoint streams updates whenever the booking enabled status changes.
+ * This endpoint streams updates whenever admin statistics change.
  * Clients should use EventSource API to connect to this endpoint.
  */
 
@@ -15,12 +15,15 @@ import { getTursoClient } from "@/lib/turso"
 import { createRequestLogger } from "@/lib/logger"
 import { withVersioning } from "@/lib/api-version-wrapper"
 import { getRequestPath } from "@/lib/api-versioning"
+import { requireAuthorizedDomain } from "@/lib/auth"
+import { listBookings } from "@/lib/bookings"
+import { getEmailQueueStats } from "@/lib/email-queue"
 
 // In-memory store for SSE connections
 // In production, consider using Redis or a more robust solution for multi-instance deployments
 interface SSEClient {
   controller: ReadableStreamDefaultController
-  lastSent: boolean | null
+  lastHeartbeat: number
 }
 
 const sseClients = new Set<SSEClient>()
@@ -28,15 +31,28 @@ const sseClients = new Set<SSEClient>()
 /**
  * Get the number of connected SSE clients (for debugging)
  */
-export function getSSEClientCount(): number {
+export function getStatsSSEClientCount(): number {
   return sseClients.size
 }
 
 /**
- * Broadcast booking enabled status to all connected SSE clients
+ * Broadcast stats update to all connected SSE clients
  */
-export function broadcastBookingEnabledStatus(enabled: boolean) {
-  const message = JSON.stringify({ enabled, timestamp: Date.now() })
+export function broadcastStatsUpdate(stats: {
+  bookings: {
+    pending: number
+  }
+  emailQueue: {
+    pending: number
+    failed: number
+    total: number
+  }
+}) {
+  const message = JSON.stringify({
+    type: 'stats:updated',
+    stats,
+    timestamp: Date.now(),
+  })
   const sseData = `data: ${message}\n\n`
   
   const clientCount = sseClients.size
@@ -48,15 +64,15 @@ export function broadcastBookingEnabledStatus(enabled: boolean) {
   
   // Send to all connected clients
   const disconnectedClients: SSEClient[] = []
+  let sentCount = 0
   
   for (const client of sseClients) {
     try {
-      // Always send the update (don't check lastSent here - let client handle deduplication)
-      // This ensures all clients get the latest status even if they missed previous updates
       const encoder = new TextEncoder()
       const encodedData = encoder.encode(sseData)
       client.controller.enqueue(encodedData)
-      client.lastSent = enabled
+      client.lastHeartbeat = Date.now()
+      sentCount++
     } catch (error) {
       // Client disconnected, mark for removal
       disconnectedClients.push(client)
@@ -67,39 +83,47 @@ export function broadcastBookingEnabledStatus(enabled: boolean) {
   for (const client of disconnectedClients) {
     sseClients.delete(client)
   }
+  
+  // Return count for logging/debugging
+  return { sentCount, totalClients: clientCount }
 }
 
 /**
- * Get current booking enabled status from database
+ * Get initial admin stats (for initial state)
  */
-async function getBookingEnabledStatus(): Promise<boolean> {
-  try {
-    const db = getTursoClient()
-    
-    // Check if settings table exists
-    const tableCheck = await db.execute({
-      sql: `SELECT name FROM sqlite_master WHERE type='table' AND name='settings'`,
-      args: [],
-    })
+async function getInitialStats(): Promise<{
+  bookings: {
+    pending: number
+  }
+  emailQueue: {
+    pending: number
+    failed: number
+    total: number
+  }
+}> {
+  // Get pending bookings count (non-archived bookings that need attention)
+  const pendingBookingsResult = await listBookings({
+    statuses: ['pending', 'pending_deposit', 'paid_deposit'],
+    excludeArchived: true,
+    limit: 0, // We only need the count
+    offset: 0,
+  })
 
-    if (tableCheck.rows.length > 0) {
-      // Table exists, try to get the setting
-      const result = await db.execute({
-        sql: `SELECT value FROM settings WHERE key = 'bookings_enabled'`,
-        args: [],
-      })
+  // Get email queue stats
+  const emailQueueStats = await getEmailQueueStats()
+  
+  // Calculate pending email count (pending + failed)
+  const pendingEmailCount = (emailQueueStats.pending || 0) + (emailQueueStats.failed || 0)
 
-      if (result.rows.length > 0) {
-        const setting = result.rows[0] as any
-        return setting.value === '1' || setting.value === 1 || setting.value === true
-      }
-    }
-    
-    // Default to enabled if table doesn't exist or setting doesn't exist
-    return true
-  } catch (error) {
-    // If there's any error, default to enabled
-    return true
+  return {
+    bookings: {
+      pending: pendingBookingsResult.total,
+    },
+    emailQueue: {
+      pending: emailQueueStats.pending || 0,
+      failed: emailQueueStats.failed || 0,
+      total: pendingEmailCount,
+    },
   }
 }
 
@@ -110,13 +134,24 @@ export const GET = withVersioning(async (request: Request) => {
   
   await logger.info('SSE connection request received')
 
+  // Check authentication
+  try {
+    await requireAuthorizedDomain()
+  } catch (error) {
+    await logger.warn('SSE connection rejected: authentication failed')
+    return NextResponse.json(
+      { error: "Unauthorized" },
+      { status: 401 }
+    )
+  }
+
   // Create a readable stream for SSE
   const stream = new ReadableStream({
     async start(controller) {
       // Add client to the set
       const client: SSEClient = {
         controller,
-        lastSent: null,
+        lastHeartbeat: Date.now(),
       }
       sseClients.add(client)
 
@@ -136,32 +171,40 @@ export const GET = withVersioning(async (request: Request) => {
         try {
           controller.close()
         } catch (error) {
-          // Already closed
+          // Ignore errors on close
         }
-        // Note: logger.info is async but we can't await in event listener
         logger.info('SSE connection closed by client').catch(() => {
           // Ignore logging errors on disconnect
         })
       }
       
       try {
-        // Send initial status immediately
-        const initialStatus = await getBookingEnabledStatus()
-        client.lastSent = initialStatus
-        const initialMessage = JSON.stringify({ enabled: initialStatus, timestamp: Date.now() })
+        // Send initial stats immediately
+        const initialStats = await getInitialStats()
+        const initialMessage = JSON.stringify({ 
+          type: 'stats:updated',
+          stats: initialStats,
+          timestamp: Date.now() 
+        })
         const encoder = new TextEncoder()
         controller.enqueue(encoder.encode(`data: ${initialMessage}\n\n`))
         
-        await logger.info('SSE connection established', { enabled: initialStatus })
+        await logger.info('SSE connection established', { 
+          initialStats: {
+            pendingBookings: initialStats.bookings.pending,
+            pendingEmails: initialStats.emailQueue.total,
+          }
+        })
 
         // Send periodic heartbeat to keep connection alive (every 30 seconds)
         heartbeatInterval = setInterval(() => {
           try {
             controller.enqueue(new TextEncoder().encode(`: heartbeat\n\n`))
+            client.lastHeartbeat = Date.now()
           } catch (error) {
             // Client disconnected - clean up everything
             if (heartbeatInterval) {
-            clearInterval(heartbeatInterval)
+              clearInterval(heartbeatInterval)
               heartbeatInterval = null
             }
             // Remove abort event listener to prevent memory leak
@@ -175,7 +218,7 @@ export const GET = withVersioning(async (request: Request) => {
             }
           }
         }, 30000)
-
+        
         // Add abort event listener
         request.signal.addEventListener('abort', abortHandler)
       } catch (error) {
@@ -193,17 +236,16 @@ export const GET = withVersioning(async (request: Request) => {
         try {
           controller.close()
         } catch (closeError) {
-          // Already closed
+          // Ignore errors on close
         }
       }
     },
   })
 
-  // Return SSE response with proper headers
   return new NextResponse(stream, {
     headers: {
       'Content-Type': 'text/event-stream',
-      'Cache-Control': 'no-cache, no-transform',
+      'Cache-Control': 'no-cache',
       'Connection': 'keep-alive',
       'X-Accel-Buffering': 'no', // Disable nginx buffering
     },

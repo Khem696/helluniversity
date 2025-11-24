@@ -40,6 +40,7 @@ import { toast } from "sonner"
 import { format } from "date-fns"
 import { TZDate } from '@date-fns/tz'
 import { useInfiniteAdminData } from "@/hooks/useInfiniteAdminData"
+import { useAdminEventsSSE } from "@/hooks/useAdminEventsSSE"
 import { API_PATHS, buildApiUrl } from "@/lib/api-config"
 import { useInfiniteScroll } from "@/hooks/useInfiniteScroll"
 import { GenericDeleteConfirmationDialog } from "@/components/admin/GenericDeleteConfirmationDialog"
@@ -243,6 +244,10 @@ export default function EventsPage() {
     return buildApiUrl(API_PATHS.adminEvents, Object.fromEntries(params))
   }, [upcomingFilter, debouncedTitleFilter, eventDateFilter, eventDateFrom, eventDateTo, useDateRange, sortBy, sortOrder])
   
+  // Track SSE connection status for fallback polling
+  const [sseError, setSseError] = useState<Error | null>(null)
+  const [sseConnected, setSseConnected] = useState<boolean>(false)
+
   // Use infinite scroll hook for events
   const {
     data: events,
@@ -259,7 +264,9 @@ export default function EventsPage() {
     baseEndpoint,
     pageSize,
     enablePolling: true,
-    pollInterval: 30000,
+    // Enable fallback polling if SSE is not connected OR has an error (30 seconds interval)
+    // When SSE is connected and working, polling is disabled for efficiency
+    pollInterval: (!sseConnected || sseError) ? 30000 : false,
     transformResponse: (json) => {
       return Array.isArray(json.data?.events) 
         ? json.data.events 
@@ -269,6 +276,43 @@ export default function EventsPage() {
     },
     isDialogOpen: () => createDialogOpen || editDialogOpen,
   })
+
+  // Real-time event updates via SSE (replaces polling)
+  const sseHookResult = useAdminEventsSSE({
+    enabled: !!session,
+    onEventUpdate: (event) => {
+      // Handle event updates
+      if (event.type === 'event:created' && event.event) {
+        // Add new event to the list (at the beginning)
+        addItem(event.event as Event)
+      } else if (event.type === 'event:updated' && event.event) {
+        // Update event in the list
+        updateItem(event.event.id, event.event as Partial<Event>)
+        // If this is the event being edited, refresh its details
+        if (editingEvent?.id === event.event.id) {
+          fetchEventDetails(event.event.id).then(updated => {
+            if (updated) {
+              setEditingEvent(updated)
+            }
+          })
+        }
+      } else if (event.type === 'event:deleted' && event.event) {
+        // Remove event from the list
+        removeItem(event.event.id)
+        // If this is the event being edited, close the dialog
+        if (editingEvent?.id === event.event.id) {
+          setEditDialogOpen(false)
+          setEditingEvent(null)
+        }
+      }
+    },
+  })
+
+  // Update SSE status state for fallback polling
+  useEffect(() => {
+    setSseError(sseHookResult.error)
+    setSseConnected(sseHookResult.connected)
+  }, [sseHookResult.error, sseHookResult.connected])
   
   // Infinite scroll setup
   const { elementRef: scrollSentinelRef } = useInfiniteScroll({

@@ -166,6 +166,61 @@ export async function addEmailToQueue(
     ],
   })
 
+  // Broadcast email queued event (after successful DB insert)
+  try {
+    const { broadcastEmailQueueEvent } = await import('../../app/api/v1/admin/emails/stream/route')
+    const { broadcastStatsUpdate } = await import('../../app/api/v1/admin/stats/stream/route')
+    
+    broadcastEmailQueueEvent('email:queued', {
+      id,
+      emailType,
+      recipientEmail,
+      subject,
+      status: 'pending',
+      retryCount: 0,
+      errorMessage: null,
+      scheduledAt: options?.scheduledAt || now,
+      nextRetryAt: null,
+      sentAt: null,
+      createdAt: now,
+      updatedAt: now,
+    })
+
+    // Broadcast stats update
+    const stats = await getEmailQueueStats()
+    const { listBookings } = await import('./bookings')
+    const pendingBookingsResult = await listBookings({
+      statuses: ['pending', 'pending_deposit', 'paid_deposit'],
+      excludeArchived: true,
+      limit: 0,
+      offset: 0,
+    })
+    const pendingEmailCount = (stats.pending || 0) + (stats.failed || 0)
+    
+    broadcastStatsUpdate({
+      bookings: {
+        pending: pendingBookingsResult.total,
+      },
+      emailQueue: {
+        pending: stats.pending || 0,
+        failed: stats.failed || 0,
+        total: pendingEmailCount,
+      },
+    })
+  } catch (broadcastError) {
+    // Don't fail if broadcast fails - logging is optional
+    const errorMessage = broadcastError instanceof Error ? broadcastError.message : String(broadcastError)
+    try {
+      const { logWarn } = await import('./logger')
+      await logWarn('Failed to broadcast email queued event', {
+        emailId: id,
+        error: errorMessage,
+      })
+    } catch (logError) {
+      // Fallback: if logger fails, silently continue (avoid infinite loops)
+    }
+  }
+
   console.log(`Email queued for retry: ${id} (${emailType} to ${recipientEmail})`)
   return id
 }
@@ -350,6 +405,12 @@ export async function markEmailProcessing(id: string): Promise<boolean> {
   const db = getTursoClient()
   const now = Math.floor(Date.now() / 1000)
 
+  // Get email details before updating (for broadcast)
+  const emailResult = await db.execute({
+    sql: `SELECT * FROM email_queue WHERE id = ? AND status = 'pending'`,
+    args: [id],
+  })
+
   // ATOMIC STATUS UPDATE: Only update if status is 'pending'
   // This prevents multiple cron jobs from processing the same email
   const result = await db.execute({
@@ -361,9 +422,46 @@ export async function markEmailProcessing(id: string): Promise<boolean> {
     args: [now, id],
   })
 
+  const claimed = (result.rowsAffected || 0) > 0
+
+  // Broadcast email processing event (after successful DB update)
+  if (claimed && emailResult.rows.length > 0) {
+    const emailRow = emailResult.rows[0] as any
+    try {
+      const { broadcastEmailQueueEvent } = await import('../../app/api/v1/admin/emails/stream/route')
+      
+      broadcastEmailQueueEvent('email:processing', {
+        id: emailRow.id,
+        emailType: emailRow.email_type,
+        recipientEmail: emailRow.recipient_email,
+        subject: emailRow.subject,
+        status: 'processing',
+        retryCount: emailRow.retry_count,
+        errorMessage: emailRow.error_message,
+        scheduledAt: emailRow.scheduled_at,
+        nextRetryAt: emailRow.next_retry_at || null,
+        sentAt: emailRow.sent_at,
+        createdAt: emailRow.created_at,
+        updatedAt: now,
+      })
+    } catch (broadcastError) {
+      // Don't fail if broadcast fails - logging is optional
+      const errorMessage = broadcastError instanceof Error ? broadcastError.message : String(broadcastError)
+      try {
+        const { logWarn } = await import('./logger')
+        await logWarn('Failed to broadcast email processing event', {
+          emailId: id,
+          error: errorMessage,
+        })
+      } catch (logError) {
+        // Fallback: if logger fails, silently continue (avoid infinite loops)
+      }
+    }
+  }
+
   // If rowsAffected > 0, we successfully claimed the email
   // If rowsAffected = 0, another process already claimed it
-  return (result.rowsAffected || 0) > 0
+  return claimed
 }
 
 /**
@@ -438,6 +536,12 @@ export async function markEmailSent(id: string): Promise<void> {
   const db = getTursoClient()
   const now = Math.floor(Date.now() / 1000)
 
+  // Get email details before updating (for broadcast)
+  const emailResult = await db.execute({
+    sql: `SELECT * FROM email_queue WHERE id = ?`,
+    args: [id],
+  })
+
   await db.execute({
     sql: `
       UPDATE email_queue
@@ -446,6 +550,64 @@ export async function markEmailSent(id: string): Promise<void> {
     `,
     args: [now, now, id],
   })
+
+  // Broadcast email sent event (after successful DB update)
+  if (emailResult.rows.length > 0) {
+    const emailRow = emailResult.rows[0] as any
+    try {
+      const { broadcastEmailQueueEvent } = await import('../../app/api/v1/admin/emails/stream/route')
+      const { broadcastStatsUpdate } = await import('../../app/api/v1/admin/stats/stream/route')
+      
+      broadcastEmailQueueEvent('email:sent', {
+        id: emailRow.id,
+        emailType: emailRow.email_type,
+        recipientEmail: emailRow.recipient_email,
+        subject: emailRow.subject,
+        status: 'sent',
+        retryCount: emailRow.retry_count,
+        errorMessage: emailRow.error_message,
+        scheduledAt: emailRow.scheduled_at,
+        nextRetryAt: emailRow.next_retry_at || null,
+        sentAt: now,
+        createdAt: emailRow.created_at,
+        updatedAt: now,
+      })
+
+      // Broadcast stats update
+      const stats = await getEmailQueueStats()
+      const { listBookings } = await import('./bookings')
+      const pendingBookingsResult = await listBookings({
+        statuses: ['pending', 'pending_deposit', 'paid_deposit'],
+        excludeArchived: true,
+        limit: 0,
+        offset: 0,
+      })
+      const pendingEmailCount = (stats.pending || 0) + (stats.failed || 0)
+      
+      broadcastStatsUpdate({
+        bookings: {
+          pending: pendingBookingsResult.total,
+        },
+        emailQueue: {
+          pending: stats.pending || 0,
+          failed: stats.failed || 0,
+          total: pendingEmailCount,
+        },
+      })
+    } catch (broadcastError) {
+      // Don't fail if broadcast fails - logging is optional
+      const errorMessage = broadcastError instanceof Error ? broadcastError.message : String(broadcastError)
+      try {
+        const { logWarn } = await import('./logger')
+        await logWarn('Failed to broadcast email sent event', {
+          emailId: id,
+          error: errorMessage,
+        })
+      } catch (logError) {
+        // Fallback: if logger fails, silently continue (avoid infinite loops)
+      }
+    }
+  }
 }
 
 /**
@@ -488,6 +650,88 @@ export async function scheduleNextRetry(id: string, errorMessage: string): Promi
     `,
     args: [retryCount, nextRetryAt, status, errorMessage, now, id],
   })
+
+  // Broadcast email status change (after successful DB update)
+  try {
+    const { broadcastEmailQueueEvent } = await import('../../app/api/v1/admin/emails/stream/route')
+    const { broadcastStatsUpdate } = await import('../../app/api/v1/admin/stats/stream/route')
+    
+    // Get updated email details for broadcast
+    const updatedEmailResult = await db.execute({
+      sql: `SELECT * FROM email_queue WHERE id = ?`,
+      args: [id],
+    })
+
+    if (updatedEmailResult.rows.length > 0) {
+      const emailRow = updatedEmailResult.rows[0] as any
+      
+      if (status === "failed") {
+        broadcastEmailQueueEvent('email:failed', {
+          id: emailRow.id,
+          emailType: emailRow.email_type,
+          recipientEmail: emailRow.recipient_email,
+          subject: emailRow.subject,
+          status: 'failed',
+          retryCount: retryCount,
+          errorMessage: errorMessage,
+          scheduledAt: emailRow.scheduled_at,
+          nextRetryAt: emailRow.next_retry_at || null,
+          sentAt: emailRow.sent_at,
+          createdAt: emailRow.created_at,
+          updatedAt: now,
+        })
+      } else {
+        broadcastEmailQueueEvent('email:updated', {
+          id: emailRow.id,
+          emailType: emailRow.email_type,
+          recipientEmail: emailRow.recipient_email,
+          subject: emailRow.subject,
+          status: status,
+          retryCount: retryCount,
+          errorMessage: errorMessage,
+          scheduledAt: emailRow.scheduled_at,
+          nextRetryAt: emailRow.next_retry_at || null,
+          sentAt: emailRow.sent_at,
+          createdAt: emailRow.created_at,
+          updatedAt: now,
+        })
+      }
+
+      // Broadcast stats update
+      const stats = await getEmailQueueStats()
+      const { listBookings } = await import('./bookings')
+      const pendingBookingsResult = await listBookings({
+        statuses: ['pending', 'pending_deposit', 'paid_deposit'],
+        excludeArchived: true,
+        limit: 0,
+        offset: 0,
+      })
+      const pendingEmailCount = (stats.pending || 0) + (stats.failed || 0)
+      
+      broadcastStatsUpdate({
+        bookings: {
+          pending: pendingBookingsResult.total,
+        },
+        emailQueue: {
+          pending: stats.pending || 0,
+          failed: stats.failed || 0,
+          total: pendingEmailCount,
+        },
+      })
+    }
+  } catch (broadcastError) {
+    // Don't fail if broadcast fails - logging is optional
+    const errorMessage = broadcastError instanceof Error ? broadcastError.message : String(broadcastError)
+    try {
+      const { logWarn } = await import('./logger')
+      await logWarn('Failed to broadcast email status change', {
+        emailId: id,
+        error: errorMessage,
+      })
+    } catch (logError) {
+      // Fallback: if logger fails, silently continue (avoid infinite loops)
+    }
+  }
 
   if (status === "failed") {
     console.error(`Email queue item ${id} failed after ${retryCount} retries`)
@@ -978,10 +1222,74 @@ export async function cancelEmail(id: string): Promise<void> {
 export async function deleteEmail(id: string): Promise<void> {
   const db = getTursoClient()
   
+  // Get email details before deleting (for broadcast)
+  const emailResult = await db.execute({
+    sql: `SELECT * FROM email_queue WHERE id = ?`,
+    args: [id],
+  })
+  
   await db.execute({
     sql: "DELETE FROM email_queue WHERE id = ?",
     args: [id],
   })
+
+  // Broadcast email deleted event (after successful DB delete)
+  if (emailResult.rows.length > 0) {
+    const emailRow = emailResult.rows[0] as any
+    try {
+      const { broadcastEmailQueueEvent } = await import('../../app/api/v1/admin/emails/stream/route')
+      const { broadcastStatsUpdate } = await import('../../app/api/v1/admin/stats/stream/route')
+      
+      broadcastEmailQueueEvent('email:deleted', {
+        id: emailRow.id,
+        emailType: emailRow.email_type,
+        recipientEmail: emailRow.recipient_email,
+        subject: emailRow.subject,
+        status: emailRow.status,
+        retryCount: emailRow.retry_count,
+        errorMessage: emailRow.error_message,
+        scheduledAt: emailRow.scheduled_at,
+        nextRetryAt: emailRow.next_retry_at || null,
+        sentAt: emailRow.sent_at,
+        createdAt: emailRow.created_at,
+        updatedAt: emailRow.updated_at,
+      })
+
+      // Broadcast stats update
+      const stats = await getEmailQueueStats()
+      const { listBookings } = await import('./bookings')
+      const pendingBookingsResult = await listBookings({
+        statuses: ['pending', 'pending_deposit', 'paid_deposit'],
+        excludeArchived: true,
+        limit: 0,
+        offset: 0,
+      })
+      const pendingEmailCount = (stats.pending || 0) + (stats.failed || 0)
+      
+      broadcastStatsUpdate({
+        bookings: {
+          pending: pendingBookingsResult.total,
+        },
+        emailQueue: {
+          pending: stats.pending || 0,
+          failed: stats.failed || 0,
+          total: pendingEmailCount,
+        },
+      })
+    } catch (broadcastError) {
+      // Don't fail if broadcast fails - logging is optional
+      const errorMessage = broadcastError instanceof Error ? broadcastError.message : String(broadcastError)
+      try {
+        const { logWarn } = await import('./logger')
+        await logWarn('Failed to broadcast email deleted event', {
+          emailId: id,
+          error: errorMessage,
+        })
+      } catch (logError) {
+        // Fallback: if logger fails, silently continue (avoid infinite loops)
+      }
+    }
+  }
 }
 
 /**

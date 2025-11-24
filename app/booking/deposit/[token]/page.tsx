@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button"
 import { Label } from "@/components/ui/label"
 import { toast } from "sonner"
 import { API_PATHS } from "@/lib/api-config"
+import { useUserBookingSSE } from "@/hooks/useUserBookingSSE"
 
 interface BookingData {
   id: string
@@ -20,6 +21,7 @@ interface BookingData {
   endTime?: string
   status: string
   depositEvidenceUrl?: string | null
+  depositVerifiedAt?: number | null
 }
 
 export default function DepositUploadPage() {
@@ -37,6 +39,42 @@ export default function DepositUploadPage() {
   const [isCancelling, setIsCancelling] = useState(false)
   const [showCancelConfirm, setShowCancelConfirm] = useState(false)
   const [cancelSuccess, setCancelSuccess] = useState(false)
+  
+  // Real-time booking updates via SSE (for deposit verification status)
+  useUserBookingSSE({
+    token: token || "",
+    enabled: !!token, // Enable with just token - SSE will work even if initial booking fetch fails
+    onDepositVerified: (event) => {
+      // Update booking state when deposit is verified
+      if (event.booking) {
+        setBooking(prev => prev ? {
+          ...prev,
+          status: event.booking.status,
+          depositVerifiedAt: event.booking.deposit_verified_at || null,
+        } : null)
+      }
+    },
+    onStatusChange: (event) => {
+      // Update booking state when status changes
+      if (event.booking) {
+        setBooking(prev => prev ? {
+          ...prev,
+          status: event.booking.status,
+          depositVerifiedAt: event.booking.deposit_verified_at || null,
+        } : null)
+      }
+    },
+    onBookingUpdate: (event) => {
+      // Update booking state for any booking update
+      if (event.booking) {
+        setBooking(prev => prev ? {
+          ...prev,
+          status: event.booking.status,
+          depositVerifiedAt: event.booking.deposit_verified_at || null,
+        } : null)
+      }
+    },
+  })
 
   useEffect(() => {
     if (!token) {

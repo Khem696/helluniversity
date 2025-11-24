@@ -103,52 +103,52 @@ export function useBookingEnabledSSE(
    * Use refs to avoid stale closures and prevent duplicate notifications
    */
   const handleStatusUpdate = useCallback((newEnabled: boolean) => {
-    // Always update state directly (don't use functional form to avoid comparison issues)
-    // This ensures React always sees a state change and triggers re-render
+    // Check if status changed BEFORE updating state (using ref to avoid stale closures)
+    const previousEnabled = previousStatusRef.current
+    
+    // Update state (pure state update, no side effects)
     setEnabled((currentEnabled) => {
-      const previousEnabled = previousStatusRef.current ?? currentEnabled
-      
-      // Only update if status actually changed
-      if (previousEnabled !== newEnabled) {
-        // Update ref to match new state BEFORE returning
-        previousStatusRef.current = newEnabled
-        
-        // Call callbacks and force re-render after state update
-        // Use requestAnimationFrame to ensure callbacks run after render
-        requestAnimationFrame(() => {
-          // Force version update to ensure component re-renders
-          setVersion((v) => v + 1)
-          
-          if (onStatusChangeRef.current) {
-            onStatusChangeRef.current(newEnabled, previousEnabled)
-          }
-          
-          // Show notification if enabled (only once per change)
-          if (showNotificationsRef.current) {
-            if (!newEnabled && previousEnabled) {
-              toast.error("Bookings are currently disabled. Please try again later.")
-            } else if (newEnabled && !previousEnabled) {
-              toast.success("Bookings are now enabled.")
-            }
-          }
-          
-          // Call disabled callback if status changed to disabled
-          if (!newEnabled && previousEnabled && onDisabledRef.current) {
-            onDisabledRef.current()
-          }
-        })
-        
-        // Return new value to update state - this will trigger re-render
-        return newEnabled
-      } else {
-        // Force update even if value appears unchanged (handles edge cases)
-        // Update version to force re-render
-        requestAnimationFrame(() => {
-          setVersion((v) => v + 1)
-        })
-        return newEnabled
-      }
+      // Return new value to update state
+      // Ref will be updated outside the updater to maintain React purity
+      return newEnabled
     })
+    
+    // Update ref outside state updater to maintain React purity
+    previousStatusRef.current = newEnabled
+    
+    // Move all side effects outside the state updater to maintain React purity
+    // Use requestAnimationFrame to ensure callbacks run after render
+    const statusChanged = previousEnabled !== null && previousEnabled !== newEnabled
+    
+    if (statusChanged) {
+      requestAnimationFrame(() => {
+        // Force version update to ensure component re-renders
+        setVersion((v) => v + 1)
+        
+        if (onStatusChangeRef.current) {
+          onStatusChangeRef.current(newEnabled, previousEnabled)
+        }
+        
+        // Show notification if enabled (only once per change)
+        if (showNotificationsRef.current) {
+          if (!newEnabled && previousEnabled) {
+            toast.error("Bookings are currently disabled. Please try again later.")
+          } else if (newEnabled && previousEnabled) {
+            toast.success("Bookings are now enabled.")
+          }
+        }
+        
+        // Call disabled callback if status changed to disabled
+        if (!newEnabled && previousEnabled && onDisabledRef.current) {
+          onDisabledRef.current()
+        }
+      })
+    } else {
+      // Force update even if value appears unchanged (handles edge cases)
+      requestAnimationFrame(() => {
+        setVersion((v) => v + 1)
+      })
+    }
   }, []) // Empty deps - use refs for all external values
 
   /**

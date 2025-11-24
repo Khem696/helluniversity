@@ -36,6 +36,7 @@ import { toast } from "sonner"
 import { format } from "date-fns"
 import { TZDate } from '@date-fns/tz'
 import { useInfiniteAdminEmails, type EmailQueueItem } from "@/hooks/useInfiniteAdminEmails"
+import { useAdminEmailsSSE } from "@/hooks/useAdminEmailsSSE"
 import { API_PATHS, buildApiUrl } from "@/lib/api-config"
 import { useInfiniteScroll } from "@/hooks/useInfiniteScroll"
 import { GenericDeleteConfirmationDialog } from "@/components/admin/GenericDeleteConfirmationDialog"
@@ -96,6 +97,10 @@ export default function EmailQueuePage() {
     return buildApiUrl(API_PATHS.adminEmailQueue, Object.fromEntries(params))
   }, [statusFilter, emailTypeFilter, debouncedBookingReferenceFilter])
   
+  // Track SSE connection status for fallback polling
+  const [sseError, setSseError] = useState<Error | null>(null)
+  const [sseConnected, setSseConnected] = useState<boolean>(false)
+
   // Use infinite scroll hook for emails
   const {
     emails,
@@ -106,18 +111,83 @@ export default function EmailQueuePage() {
     loadMore,
     refetch: fetchEmails,
     updateItem,
+    addItem,
     removeItem,
     replaceItem
   } = useInfiniteAdminEmails({
     baseEndpoint,
     pageSize,
-    refetchInterval: 30000,
+    // Enable fallback polling if SSE is not connected OR has an error (30 seconds interval)
+    // When SSE is connected and working, polling is disabled for efficiency
+    refetchInterval: (!sseConnected || sseError) ? 30000 : false,
     enabled: !!session,
     isDialogOpen: () => viewDialogOpen,
     onStatsUpdate: (stats) => {
       setStats(stats)
     },
   })
+
+  // Real-time email queue updates via SSE (replaces polling)
+  const sseHookResult = useAdminEmailsSSE({
+    enabled: !!session,
+    onEmailUpdate: (event) => {
+      // Handle email status changes
+      if (event.email) {
+        const email = event.email
+        
+        // Handle new email queued - add to list
+        if (event.type === 'email:queued') {
+          // Create EmailQueueItem from SSE event data
+          // Note: SSE event may not have all fields, so we use defaults for missing ones
+          const emailItem: EmailQueueItem = {
+            id: email.id,
+            emailType: email.emailType,
+            recipientEmail: email.recipientEmail,
+            subject: email.subject,
+            htmlContent: '', // Will be loaded when email details are fetched
+            textContent: '', // Will be loaded when email details are fetched
+            metadata: undefined,
+            retryCount: email.retryCount || 0,
+            maxRetries: 5, // Default max retries (matches lib/email-queue.ts default)
+            status: email.status,
+            errorMessage: email.errorMessage || undefined,
+            scheduledAt: email.scheduledAt || email.createdAt, // Use scheduledAt from SSE, fallback to createdAt
+            nextRetryAt: email.nextRetryAt || undefined,
+            sentAt: email.sentAt || undefined,
+            createdAt: email.createdAt,
+            updatedAt: email.updatedAt,
+          }
+          addItem(emailItem)
+        } 
+        // Update email in list if it exists
+        else if (event.type === 'email:updated' || event.type === 'email:sent' || event.type === 'email:failed' || event.type === 'email:processing') {
+          updateItem(email.id, {
+            status: email.status as any,
+            retryCount: email.retryCount || 0,
+            errorMessage: email.errorMessage || undefined,
+            scheduledAt: email.scheduledAt,
+            nextRetryAt: email.nextRetryAt || undefined,
+            sentAt: email.sentAt || undefined,
+            updatedAt: email.updatedAt,
+          })
+        } 
+        // Remove email from list if deleted
+        else if (event.type === 'email:deleted') {
+          removeItem(email.id)
+        }
+      }
+    },
+    onStatsUpdate: (stats) => {
+      // Update stats when received from SSE
+      setStats(stats)
+    },
+  })
+
+  // Update SSE status state for fallback polling
+  useEffect(() => {
+    setSseError(sseHookResult.error)
+    setSseConnected(sseHookResult.connected)
+  }, [sseHookResult.error, sseHookResult.connected])
   
   // Infinite scroll setup
   const { elementRef: scrollSentinelRef } = useInfiniteScroll({

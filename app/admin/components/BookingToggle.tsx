@@ -6,7 +6,7 @@ import { Switch } from "@/components/ui/switch"
 import { Label } from "@/components/ui/label"
 import { Loader2, Calendar, CalendarX, Lock } from "lucide-react"
 import { toast } from "sonner"
-import { useActionLocks } from "@/hooks/useActionLocks"
+import { useActionLocksSSE } from "@/hooks/useActionLocksSSE"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 
 export function BookingToggle() {
@@ -14,15 +14,14 @@ export function BookingToggle() {
   const [loading, setLoading] = useState(true)
   const [updating, setUpdating] = useState(false)
   
-  // Check action locks for bookings_enabled setting
+  // Check action locks for bookings_enabled setting (real-time via SSE)
   const { 
     lockStatus: actionLockStatus, 
     isLockedByOther: isActionLockedByOther,
-  } = useActionLocks({
+  } = useActionLocksSSE({
     resourceType: 'dashboard',
     resourceId: 'bookings_enabled',
     action: 'update_setting_bookings_enabled',
-    pollInterval: 3000, // Poll every 3 seconds
     enabled: true,
   })
 

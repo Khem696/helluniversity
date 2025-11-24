@@ -1,12 +1,12 @@
 /**
- * Booking Settings SSE Stream API v1
+ * Admin Events SSE Stream API v1
  * 
- * Server-Sent Events endpoint for real-time booking enabled status updates
+ * Server-Sent Events endpoint for real-time event updates
  * 
- * GET /api/v1/settings/booking-enabled/stream - Stream booking enabled status changes
- * Public endpoint (no authentication required)
+ * GET /api/v1/admin/events/stream - Stream event updates
+ * Admin-only endpoint (requires authentication)
  * 
- * This endpoint streams updates whenever the booking enabled status changes.
+ * This endpoint streams updates whenever events are created, updated, or deleted.
  * Clients should use EventSource API to connect to this endpoint.
  */
 
@@ -15,12 +15,13 @@ import { getTursoClient } from "@/lib/turso"
 import { createRequestLogger } from "@/lib/logger"
 import { withVersioning } from "@/lib/api-version-wrapper"
 import { getRequestPath } from "@/lib/api-versioning"
+import { requireAuthorizedDomain } from "@/lib/auth"
 
 // In-memory store for SSE connections
 // In production, consider using Redis or a more robust solution for multi-instance deployments
 interface SSEClient {
   controller: ReadableStreamDefaultController
-  lastSent: boolean | null
+  lastHeartbeat: number
 }
 
 const sseClients = new Set<SSEClient>()
@@ -28,15 +29,34 @@ const sseClients = new Set<SSEClient>()
 /**
  * Get the number of connected SSE clients (for debugging)
  */
-export function getSSEClientCount(): number {
+export function getEventsSSEClientCount(): number {
   return sseClients.size
 }
 
 /**
- * Broadcast booking enabled status to all connected SSE clients
+ * Broadcast event update to all connected SSE clients
  */
-export function broadcastBookingEnabledStatus(enabled: boolean) {
-  const message = JSON.stringify({ enabled, timestamp: Date.now() })
+export function broadcastEventUpdate(
+  type: 'event:created' | 'event:updated' | 'event:deleted',
+  event: {
+    id: string
+    title: string
+    description?: string | null
+    image_id?: string | null
+    event_date?: number | null
+    start_date?: number | null
+    end_date?: number | null
+    image_url?: string | null
+    image_title?: string | null
+    created_at: number
+    updated_at: number
+  }
+) {
+  const message = JSON.stringify({
+    type,
+    event,
+    timestamp: Date.now(),
+  })
   const sseData = `data: ${message}\n\n`
   
   const clientCount = sseClients.size
@@ -48,15 +68,15 @@ export function broadcastBookingEnabledStatus(enabled: boolean) {
   
   // Send to all connected clients
   const disconnectedClients: SSEClient[] = []
+  let sentCount = 0
   
   for (const client of sseClients) {
     try {
-      // Always send the update (don't check lastSent here - let client handle deduplication)
-      // This ensures all clients get the latest status even if they missed previous updates
       const encoder = new TextEncoder()
       const encodedData = encoder.encode(sseData)
       client.controller.enqueue(encodedData)
-      client.lastSent = enabled
+      client.lastHeartbeat = Date.now()
+      sentCount++
     } catch (error) {
       // Client disconnected, mark for removal
       disconnectedClients.push(client)
@@ -67,40 +87,55 @@ export function broadcastBookingEnabledStatus(enabled: boolean) {
   for (const client of disconnectedClients) {
     sseClients.delete(client)
   }
+  
+  // Return count for logging/debugging
+  return { sentCount, totalClients: clientCount }
 }
 
 /**
- * Get current booking enabled status from database
+ * Get initial events list (for initial state)
  */
-async function getBookingEnabledStatus(): Promise<boolean> {
-  try {
-    const db = getTursoClient()
-    
-    // Check if settings table exists
-    const tableCheck = await db.execute({
-      sql: `SELECT name FROM sqlite_master WHERE type='table' AND name='settings'`,
-      args: [],
-    })
+async function getInitialEvents(): Promise<Array<{
+  id: string
+  title: string
+  description?: string | null
+  image_id?: string | null
+  event_date?: number | null
+  start_date?: number | null
+  end_date?: number | null
+  image_url?: string | null
+  image_title?: string | null
+  created_at: number
+  updated_at: number
+}>> {
+  const db = getTursoClient()
 
-    if (tableCheck.rows.length > 0) {
-      // Table exists, try to get the setting
-      const result = await db.execute({
-        sql: `SELECT value FROM settings WHERE key = 'bookings_enabled'`,
-        args: [],
-      })
+  const result = await db.execute({
+    sql: `
+      SELECT 
+        e.id, e.title, e.description, e.image_id, e.event_date,
+        e.start_date, e.end_date, e.created_at, e.updated_at,
+        i.blob_url as image_url, i.title as image_title
+      FROM events e
+      LEFT JOIN images i ON e.image_id = i.id
+      ORDER BY COALESCE(e.end_date, e.event_date, e.start_date) ASC, e.created_at DESC
+      LIMIT 50
+    `,
+  })
 
-      if (result.rows.length > 0) {
-        const setting = result.rows[0] as any
-        return setting.value === '1' || setting.value === 1 || setting.value === true
-      }
-    }
-    
-    // Default to enabled if table doesn't exist or setting doesn't exist
-    return true
-  } catch (error) {
-    // If there's any error, default to enabled
-    return true
-  }
+  return result.rows.map((row: any) => ({
+    id: row.id,
+    title: row.title,
+    description: row.description || null,
+    image_id: row.image_id || null,
+    event_date: row.event_date || null,
+    start_date: row.start_date || null,
+    end_date: row.end_date || null,
+    image_url: row.image_url || null,
+    image_title: row.image_title || null,
+    created_at: row.created_at,
+    updated_at: row.updated_at,
+  }))
 }
 
 export const GET = withVersioning(async (request: Request) => {
@@ -110,13 +145,24 @@ export const GET = withVersioning(async (request: Request) => {
   
   await logger.info('SSE connection request received')
 
+  // Check authentication
+  try {
+    await requireAuthorizedDomain()
+  } catch (error) {
+    await logger.warn('SSE connection rejected: authentication failed')
+    return NextResponse.json(
+      { error: "Unauthorized" },
+      { status: 401 }
+    )
+  }
+
   // Create a readable stream for SSE
   const stream = new ReadableStream({
     async start(controller) {
       // Add client to the set
       const client: SSEClient = {
         controller,
-        lastSent: null,
+        lastHeartbeat: Date.now(),
       }
       sseClients.add(client)
 
@@ -136,32 +182,37 @@ export const GET = withVersioning(async (request: Request) => {
         try {
           controller.close()
         } catch (error) {
-          // Already closed
+          // Ignore errors on close
         }
-        // Note: logger.info is async but we can't await in event listener
         logger.info('SSE connection closed by client').catch(() => {
           // Ignore logging errors on disconnect
         })
       }
       
       try {
-        // Send initial status immediately
-        const initialStatus = await getBookingEnabledStatus()
-        client.lastSent = initialStatus
-        const initialMessage = JSON.stringify({ enabled: initialStatus, timestamp: Date.now() })
+        // Send initial events immediately
+        const initialEvents = await getInitialEvents()
+        const initialMessage = JSON.stringify({ 
+          type: 'events:initial',
+          events: initialEvents,
+          timestamp: Date.now() 
+        })
         const encoder = new TextEncoder()
         controller.enqueue(encoder.encode(`data: ${initialMessage}\n\n`))
         
-        await logger.info('SSE connection established', { enabled: initialStatus })
+        await logger.info('SSE connection established', { 
+          initialEventsCount: initialEvents.length
+        })
 
         // Send periodic heartbeat to keep connection alive (every 30 seconds)
         heartbeatInterval = setInterval(() => {
           try {
             controller.enqueue(new TextEncoder().encode(`: heartbeat\n\n`))
+            client.lastHeartbeat = Date.now()
           } catch (error) {
             // Client disconnected - clean up everything
             if (heartbeatInterval) {
-            clearInterval(heartbeatInterval)
+              clearInterval(heartbeatInterval)
               heartbeatInterval = null
             }
             // Remove abort event listener to prevent memory leak
@@ -175,7 +226,7 @@ export const GET = withVersioning(async (request: Request) => {
             }
           }
         }, 30000)
-
+        
         // Add abort event listener
         request.signal.addEventListener('abort', abortHandler)
       } catch (error) {
@@ -193,17 +244,16 @@ export const GET = withVersioning(async (request: Request) => {
         try {
           controller.close()
         } catch (closeError) {
-          // Already closed
+          // Ignore errors on close
         }
       }
     },
   })
 
-  // Return SSE response with proper headers
   return new NextResponse(stream, {
     headers: {
       'Content-Type': 'text/event-stream',
-      'Cache-Control': 'no-cache, no-transform',
+      'Cache-Control': 'no-cache',
       'Connection': 'keep-alive',
       'X-Accel-Buffering': 'no', // Disable nginx buffering
     },

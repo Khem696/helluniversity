@@ -10,7 +10,7 @@ export type { EmailQueueItem, EmailQueueStats }
 interface UseInfiniteAdminEmailsOptions {
   baseEndpoint: string
   pageSize?: number
-  refetchInterval?: number
+  refetchInterval?: number | false // false disables polling
   enabled?: boolean
   isDialogOpen?: () => boolean | boolean
   onStatsUpdate?: (stats: EmailQueueStats) => void
@@ -27,6 +27,7 @@ interface UseInfiniteAdminEmailsReturn {
   refetch: () => Promise<void>
   invalidate: () => void
   updateItem: (id: string, updates: Partial<EmailQueueItem>) => void
+  addItem: (item: EmailQueueItem) => void
   removeItem: (id: string) => void
   replaceItem: (id: string, newItem: EmailQueueItem) => void
 }
@@ -38,6 +39,8 @@ export function useInfiniteAdminEmails(
   options: UseInfiniteAdminEmailsOptions
 ): UseInfiniteAdminEmailsReturn {
   const { baseEndpoint, pageSize = 25, refetchInterval = 30000, enabled = true, isDialogOpen, onStatsUpdate } = options
+  // If refetchInterval is explicitly set to false, use it; otherwise use default or provided value
+  const actualRefetchInterval = refetchInterval === false ? false : (refetchInterval ?? 30000)
   const queryClient = useQueryClient()
 
   const checkDialogOpen = React.useCallback(() => {
@@ -94,7 +97,17 @@ export function useInfiniteAdminEmails(
       if (checkDialogOpen()) {
         return false
       }
-      return refetchInterval
+      // If refetchInterval is false, disable polling
+      if (actualRefetchInterval === false) {
+        return false
+      }
+      // Only refetch if data is stale (older than staleTime)
+      const dataUpdatedAt = query.state.dataUpdatedAt
+      if (dataUpdatedAt && Date.now() - dataUpdatedAt < 30000) {
+        // Data is fresh (less than 30 seconds old), don't refetch yet
+        return false
+      }
+      return actualRefetchInterval
     },
     refetchIntervalInBackground: false,
     refetchOnWindowFocus: true,
@@ -136,6 +149,51 @@ export function useInfiniteAdminEmails(
           items: page.items.filter((item: EmailQueueItem) => item.id !== id),
           total: Math.max(0, page.total - 1)
         }))
+      }
+    })
+  }, [queryClient, baseEndpoint])
+
+  const addItem = React.useCallback((item: EmailQueueItem) => {
+    queryClient.setQueryData(['infiniteAdminEmails', baseEndpoint], (old: any) => {
+      // If query data doesn't exist yet (before initial fetch), initialize it with the new item
+      if (!old) {
+        return {
+          pages: [{
+            items: [item],
+            total: 1,
+            stats: {} as EmailQueueStats
+          }],
+          pageParams: [0]
+        }
+      }
+      
+      // Check if email with this ID already exists in any page (deduplication)
+      let emailExists = false
+      for (const page of old.pages) {
+        if (page.items && page.items.some((existingItem: EmailQueueItem) => existingItem.id === item.id)) {
+          emailExists = true
+          break
+        }
+      }
+      
+      // If email already exists, skip adding it to prevent duplicates
+      if (emailExists) {
+        return old
+      }
+      
+      // Otherwise, add item to the first page (most recent emails)
+      return {
+        ...old,
+        pages: old.pages.map((page: { items: EmailQueueItem[]; total: number; stats: EmailQueueStats }, index: number) => {
+          if (index === 0) {
+            return {
+              ...page,
+              items: [item, ...page.items],
+              total: (page.total || 0) + 1
+            }
+          }
+          return page
+        })
       }
     })
   }, [queryClient, baseEndpoint])
@@ -189,6 +247,7 @@ export function useInfiniteAdminEmails(
     refetch,
     invalidate,
     updateItem,
+    addItem,
     removeItem,
     replaceItem,
   }

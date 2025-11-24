@@ -6,7 +6,7 @@ import { toast } from 'sonner'
 interface UseInfiniteAdminDataOptions<T> {
   baseEndpoint: string // Endpoint without limit/offset
   pageSize?: number
-  pollInterval?: number
+  pollInterval?: number | false // false disables polling
   enablePolling?: boolean
   onPoll?: (data: T[]) => void
   transformResponse?: (response: any) => T[]
@@ -51,6 +51,8 @@ export function useInfiniteAdminData<T extends { id?: string; [key: string]: any
     transformResponse,
     isDialogOpen
   } = options
+  // If pollInterval is explicitly set to false, use it; otherwise use default or provided value
+  const actualPollInterval = pollInterval === false ? false : (pollInterval ?? 30000)
 
   const [data, setData] = useState<T[]>([])
   const [total, setTotal] = useState(0)
@@ -59,6 +61,10 @@ export function useInfiniteAdminData<T extends { id?: string; [key: string]: any
   const [hasMore, setHasMore] = useState(true)
   const [loadedPages, setLoadedPages] = useState(0)
   const [isLoadingMore, setIsLoadingMore] = useState(false)
+  // Track count of SSE-added items to account for them in hasMore calculations
+  const sseAddedCountRef = useRef<number>(0)
+  // Track which items are SSE-added (by ID) so we can decrement count when removing them
+  const sseAddedItemIdsRef = useRef<Set<string>>(new Set())
   
   const originalDataRef = useRef<T[]>([])
   const lastFetchTimeRef = useRef<number>(0)
@@ -119,19 +125,49 @@ export function useInfiniteAdminData<T extends { id?: string; [key: string]: any
         
         if (pageNumber === 0) {
           // First page - replace data (but keep previous data visible until new data loads)
-          setData(newItems)
-          setTotal(pageTotal)
+          // However, preserve SSE-added items that aren't in the fetched data
+          // Calculate all values BEFORE state updates to maintain React purity
+          // Use ref to get current data (synced with state) for calculations
+          const currentData = originalDataRef.current.length > 0 ? originalDataRef.current : data
+          
+          // Calculate SSE-added items and totals using the current data
+          const fetchedItemIds = new Set(newItems.map(item => getItemId(item)).filter(Boolean))
+          const sseAddedItems = currentData.filter(item => {
+            const itemId = getItemId(item)
+            return itemId && !fetchedItemIds.has(itemId)
+          })
+          
+          // Merge SSE-added items with fetched data (SSE items first, then fetched)
+          const mergedData = [...sseAddedItems, ...newItems]
+          
+          // Calculate total: server total + SSE-added items not in server response
+          const sseAddedCount = sseAddedItems.length
+          const adjustedTotal = pageTotal + sseAddedCount
+          
+          // Update all state with calculated values (pure state updates, no side effects)
+          setData(mergedData)
+          originalDataRef.current = mergedData
+          sseAddedCountRef.current = sseAddedCount // Track SSE-added count for subsequent pages
+          // Update SSE-added item IDs set to track which items are SSE-added
+          sseAddedItemIdsRef.current = new Set(
+            sseAddedItems.map(item => getItemId(item)).filter(Boolean) as string[]
+          )
+          setTotal(adjustedTotal)
+          setHasMore(mergedData.length < adjustedTotal)
           setLoadedPages(1)
-          originalDataRef.current = newItems
-          setHasMore(newItems.length < pageTotal)
         } else {
           // Subsequent pages - append data
-          setData(prev => {
-            const combined = [...prev, ...newItems]
-            originalDataRef.current = combined
-            setHasMore(combined.length < pageTotal)
-            return combined
-          })
+          // Calculate combined data BEFORE state update to maintain React purity
+          // Use ref to get current data (synced with state) for calculations
+          const currentData = originalDataRef.current.length > 0 ? originalDataRef.current : data
+          const combined = [...currentData, ...newItems]
+          
+          // Update state with calculated values (pure state update, no side effects)
+          setData(combined)
+          originalDataRef.current = combined
+          // Account for SSE-added items when calculating hasMore
+          const adjustedTotal = pageTotal + sseAddedCountRef.current
+          setHasMore(combined.length < adjustedTotal)
           setLoadedPages(prev => prev + 1)
         }
         
@@ -176,45 +212,81 @@ export function useInfiniteAdminData<T extends { id?: string; [key: string]: any
   }, [hasMore, isLoadingMore, loading, loadedPages, fetchPage])
 
   const updateItem = useCallback((id: string, updates: Partial<T>) => {
-    setData(prev => {
-      const updated = prev.map(item => {
-        const itemId = getItemId(item)
-        return itemId === id ? { ...item, ...updates } : item
-      })
-      originalDataRef.current = prev
-      return updated
+    // Calculate updated data BEFORE state update to maintain React purity and ref synchronization
+    // Use ref as primary source (always in sync), fallback to state only if ref is empty (initial state)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    const currentData = originalDataRef.current.length > 0 ? originalDataRef.current : data
+    const updated = currentData.map(item => {
+      const itemId = getItemId(item)
+      return itemId === id ? { ...item, ...updates } : item
     })
+    
+    // Update state (pure state update, no side effects)
+    setData(updated)
+    // Update ref outside state updater to ensure synchronization
+    originalDataRef.current = updated
   }, [])
 
   const addItem = useCallback((item: T) => {
-    setData(prev => {
-      const updated = [item, ...prev]
-      originalDataRef.current = prev
-      return updated
-    })
+    const itemId = getItemId(item)
+    // Calculate updated data BEFORE state update to maintain React purity and ref synchronization
+    // Use ref as primary source (always in sync), fallback to state only if ref is empty (initial state)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    const currentData = originalDataRef.current.length > 0 ? originalDataRef.current : data
+    const updated = [item, ...currentData]
+    
+    // Update state (pure state update, no side effects)
+    setData(updated)
+    // Update ref outside state updater to ensure synchronization
+    originalDataRef.current = updated
+    
+    // Increment total count and SSE-added count to keep them in sync with data
+    // Track this item as SSE-added so we can decrement count when removing it
+    if (itemId && !sseAddedItemIdsRef.current.has(itemId)) {
+      sseAddedItemIdsRef.current.add(itemId)
+      sseAddedCountRef.current += 1
+    }
+    setTotal(prev => prev + 1)
   }, [])
 
   const removeItem = useCallback((id: string) => {
-    setData(prev => {
-      const updated = prev.filter(item => {
-        const itemId = getItemId(item)
-        return itemId !== id
-      })
-      originalDataRef.current = prev
-      setTotal(prev => Math.max(0, prev - 1))
-      return updated
+    // Calculate updated data BEFORE state update to maintain React purity and ref synchronization
+    // Use ref as primary source (always in sync), fallback to state only if ref is empty (initial state)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    const currentData = originalDataRef.current.length > 0 ? originalDataRef.current : data
+    const updated = currentData.filter(item => {
+      const itemId = getItemId(item)
+      return itemId !== id
     })
+    
+    // Update state (pure state update, no side effects)
+    setData(updated)
+    // Update ref outside state updater to ensure synchronization
+    originalDataRef.current = updated
+    
+    // Decrement total count outside state updater to maintain React purity
+    setTotal(prev => Math.max(0, prev - 1))
+    // Decrement SSE-added count if this item was SSE-added
+    if (sseAddedItemIdsRef.current.has(id)) {
+      sseAddedItemIdsRef.current.delete(id)
+      sseAddedCountRef.current = Math.max(0, sseAddedCountRef.current - 1)
+    }
   }, [])
 
   const replaceItem = useCallback((id: string, newItem: T) => {
-    setData(prev => {
-      const updated = prev.map(item => {
-        const itemId = getItemId(item)
-        return itemId === id ? newItem : item
-      })
-      originalDataRef.current = prev
-      return updated
+    // Calculate updated data BEFORE state update to maintain React purity and ref synchronization
+    // Use ref as primary source (always in sync), fallback to state only if ref is empty (initial state)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    const currentData = originalDataRef.current.length > 0 ? originalDataRef.current : data
+    const updated = currentData.map(item => {
+      const itemId = getItemId(item)
+      return itemId === id ? newItem : item
     })
+    
+    // Update state (pure state update, no side effects)
+    setData(updated)
+    // Update ref outside state updater to ensure synchronization
+    originalDataRef.current = updated
   }, [])
 
   // Fetch when base endpoint changes (filters change)
@@ -230,6 +302,9 @@ export function useInfiniteAdminData<T extends { id?: string; [key: string]: any
       // Reset pagination state but keep data visible until new data loads
       setLoadedPages(0)
       setHasMore(true)
+      // Reset SSE-added tracking when endpoint changes (filters changed)
+      sseAddedCountRef.current = 0
+      sseAddedItemIdsRef.current = new Set()
       // Don't clear data immediately - let fetchPage replace it
       fetchPage(0, data.length === 0) // Only show loading if no existing data
       prevEndpointRef.current = baseEndpoint
@@ -239,6 +314,8 @@ export function useInfiniteAdminData<T extends { id?: string; [key: string]: any
   // Smart polling
   useEffect(() => {
     if (!enablePolling || loading) return
+    // If pollInterval is false, disable polling
+    if (actualPollInterval === false) return
 
     let intervalId: NodeJS.Timeout | null = null
 
@@ -246,7 +323,7 @@ export function useInfiniteAdminData<T extends { id?: string; [key: string]: any
       if (document.visibilityState === 'visible' && !checkDialogOpen()) {
         intervalId = setInterval(() => {
           fetchPage(0, false) // Refresh first page only
-        }, pollInterval)
+        }, actualPollInterval)
       }
     }
 
@@ -270,7 +347,7 @@ export function useInfiniteAdminData<T extends { id?: string; [key: string]: any
       }
       document.removeEventListener('visibilitychange', handleVisibilityChange)
     }
-  }, [enablePolling, pollInterval, fetchPage, loading, checkDialogOpen])
+  }, [enablePolling, actualPollInterval, fetchPage, loading, checkDialogOpen])
 
   return {
     data,

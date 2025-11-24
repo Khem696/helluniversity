@@ -1712,7 +1712,8 @@ export async function updateBookingStatus(
       throw new Error(`Booking ${bookingId} not found after update`)
     }
 
-    const updatedBooking = formatBooking(result.rows[0] as any)
+    const dbRow = result.rows[0] as any
+    const updatedBooking = formatBooking(dbRow)
     
     // CRITICAL: Verify token is present for pending_deposit status
     // For transitions that require a token (pending -> pending_deposit, cancelled -> pending_deposit),
@@ -1770,6 +1771,184 @@ export async function updateBookingStatus(
     
     // Invalidate list caches (bookings list may have changed)
     await invalidateCache('bookings:list')
+    
+    // Broadcast booking update via SSE (after successful DB update and cache invalidation)
+    try {
+      const { broadcastBookingEvent } = await import('../../app/api/v1/admin/bookings/stream/route')
+      const { broadcastUserBookingEvent } = await import('../../app/api/v1/booking/[token]/stream/route')
+      
+      // Determine event type based on what changed
+      let eventType: 'booking:status_changed' | 'booking:updated' = 'booking:updated'
+      if (oldStatus !== finalStatus) {
+        eventType = 'booking:status_changed'
+      }
+      
+      // Check if user response was added/updated
+      const hasUserResponse = updatedBooking.userResponse && updatedBooking.responseDate
+      const hadUserResponse = currentBooking.user_response && currentBooking.response_date
+      const isNewUserResponse = hasUserResponse && (!hadUserResponse || updatedBooking.responseDate !== currentBooking.response_date)
+      
+      // Check if deposit was uploaded
+      const hasDeposit = updatedBooking.depositEvidenceUrl
+      const hadDeposit = currentBooking.deposit_evidence_url
+      const isNewDeposit = hasDeposit && !hadDeposit
+      
+      // Check if deposit was verified (only when deposit_verified_at actually changes)
+      // Explicit null/undefined checks for extra safety
+      const currentDepositVerifiedAt = currentBooking.deposit_verified_at ?? null
+      const updatedDepositVerifiedAt = updatedBooking.depositVerifiedAt ?? null
+      
+      // Deposit is verified if deposit_verified_at changed:
+      // 1. Changed from null to a value (new verification), OR
+      // 2. Timestamp increased (re-verification or update)
+      // NOTE: Status change to confirmed does NOT imply new verification if deposit was already verified
+      // We only broadcast verification events when the timestamp actually changes to avoid false notifications
+      const depositWasVerified = updatedDepositVerifiedAt !== null && 
+        (currentDepositVerifiedAt === null || updatedDepositVerifiedAt !== currentDepositVerifiedAt)
+      
+      // Prepare booking data for broadcasts
+      // CRITICAL: Use raw database row data (timestamps) instead of formatted booking (date strings)
+      // The BookingUpdateEvent interface expects Unix timestamp numbers, not date strings
+      const bookingData = {
+        id: dbRow.id,
+        status: dbRow.status,
+        name: dbRow.name,
+        email: dbRow.email,
+        event_type: dbRow.event_type,
+        start_date: dbRow.start_date ?? null,
+        end_date: dbRow.end_date ?? null,
+        start_time: dbRow.start_time ?? null,
+        end_time: dbRow.end_time ?? null,
+        updated_at: dbRow.updated_at,
+        user_response: dbRow.user_response ?? null,
+        response_date: dbRow.response_date ?? null,
+        deposit_evidence_url: dbRow.deposit_evidence_url ?? null,
+        deposit_verified_at: dbRow.deposit_verified_at ?? null,
+        proposed_date: dbRow.proposed_date ?? null,
+        proposed_end_date: dbRow.proposed_end_date ?? null,
+        responseToken: dbRow.response_token ?? null, // Include token for user SSE
+      }
+      
+      // Broadcast to admin clients (status change)
+      if (eventType === 'booking:status_changed') {
+        broadcastBookingEvent(
+          'booking:status_changed',
+          bookingData,
+          {
+            previousStatus: oldStatus,
+            changedBy: options?.changedBy,
+            changeReason: options?.changeReason,
+          }
+        )
+        
+        // Broadcast to user clients (status change)
+        broadcastUserBookingEvent(
+          'booking:status_changed',
+          bookingData,
+          {
+            previousStatus: oldStatus,
+          }
+        )
+      }
+      
+      // Broadcast user response if new response was added (admin only - user already knows they submitted)
+      if (isNewUserResponse) {
+        broadcastBookingEvent(
+          'booking:user_response',
+          bookingData
+        )
+      }
+      
+      // Broadcast deposit upload if new deposit was uploaded (admin only - user already knows they uploaded)
+      if (isNewDeposit) {
+        broadcastBookingEvent(
+          'booking:deposit_uploaded',
+          bookingData
+        )
+      }
+      
+      // Broadcast deposit verification to user clients
+      if (depositWasVerified) {
+        broadcastUserBookingEvent(
+          'booking:deposit_verified',
+          bookingData
+        )
+      }
+      
+      // Broadcast general update if nothing specific changed but booking was updated
+      if (eventType === 'booking:updated' && !isNewUserResponse && !isNewDeposit) {
+        broadcastBookingEvent(
+          'booking:updated',
+          bookingData
+        )
+        
+        // Also broadcast to user clients for general updates
+        broadcastUserBookingEvent(
+          'booking:updated',
+          bookingData
+        )
+      }
+
+      // Broadcast stats update (when booking status changes affect pending count)
+      // Only broadcast if status changed to/from pending states that affect stats
+      const pendingStatuses = ['pending', 'pending_deposit', 'paid_deposit']
+      const oldStatusWasPending = pendingStatuses.includes(oldStatus)
+      const newStatusIsPending = pendingStatuses.includes(finalStatus)
+      
+      if (oldStatusWasPending !== newStatusIsPending || eventType === 'booking:status_changed') {
+        try {
+          const { broadcastStatsUpdate } = await import('../../app/api/v1/admin/stats/stream/route')
+          const { getEmailQueueStats } = await import('./email-queue')
+          
+          // Get updated stats
+          const pendingBookingsResult = await listBookings({
+            statuses: ['pending', 'pending_deposit', 'paid_deposit'],
+            excludeArchived: true,
+            limit: 0,
+            offset: 0,
+          })
+          const emailQueueStats = await getEmailQueueStats()
+          const pendingEmailCount = (emailQueueStats.pending || 0) + (emailQueueStats.failed || 0)
+          
+          broadcastStatsUpdate({
+            bookings: {
+              pending: pendingBookingsResult.total,
+            },
+            emailQueue: {
+              pending: emailQueueStats.pending || 0,
+              failed: emailQueueStats.failed || 0,
+              total: pendingEmailCount,
+            },
+          })
+        } catch (statsBroadcastError) {
+          // Don't fail if stats broadcast fails - logging is optional
+          const errorMessage = statsBroadcastError instanceof Error ? statsBroadcastError.message : String(statsBroadcastError)
+          try {
+            const { logWarn } = await import('./logger')
+            await logWarn('Failed to broadcast stats update', {
+              bookingId: updatedBooking.id,
+              error: errorMessage,
+            })
+          } catch (logError) {
+            // Fallback: if logger fails, silently continue (avoid infinite loops)
+          }
+        }
+      }
+    } catch (broadcastError) {
+      // Don't fail if broadcast fails - logging is optional
+      const errorMessage = broadcastError instanceof Error ? broadcastError.message : String(broadcastError)
+      
+      // Log with structured logger
+      try {
+        const { logWarn } = await import('./logger')
+        await logWarn('Failed to broadcast booking update', {
+          bookingId: updatedBooking.id,
+          error: errorMessage,
+        })
+      } catch (logError) {
+        // Fallback: if logger fails, silently continue (avoid infinite loops)
+      }
+    }
     
     return updatedBooking
   })
