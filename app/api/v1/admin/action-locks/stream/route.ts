@@ -12,7 +12,7 @@
  * - action: Filter by specific action
  * 
  * This endpoint streams updates whenever action locks are acquired, released, or expired.
- * Clients should use EventSource API to connect to this endpoint.
+ * Uses Redis for cross-instance communication when configured.
  */
 
 import { NextResponse } from "next/server"
@@ -22,9 +22,22 @@ import { withVersioning } from "@/lib/api-version-wrapper"
 import { getRequestPath } from "@/lib/api-versioning"
 import { requireAuthorizedDomain } from "@/lib/auth"
 import { type ResourceType } from "@/lib/action-lock"
+import {
+  isRedisConfigured,
+  publishBroadcast,
+  getBroadcastMessages,
+  getChannelLatestTimestamp,
+  SSE_CHANNELS,
+  encodeSSEMessage,
+  encodeSSEHeartbeat,
+} from "@/lib/redis-sse"
 
-// In-memory store for SSE connections
-// In production, consider using Redis or a more robust solution for multi-instance deployments
+// Constants
+const MAX_SSE_CLIENTS = 500
+const STALE_CONNECTION_TIMEOUT_MS = 5 * 60 * 1000
+const HEARTBEAT_INTERVAL_MS = 30 * 1000
+const REDIS_POLL_INTERVAL_MS = 1000
+
 interface SSEClient {
   controller: ReadableStreamDefaultController
   filters: {
@@ -33,45 +46,63 @@ interface SSEClient {
     action?: string
   }
   lastHeartbeat: number
+  lastRedisTimestamp: number
 }
 
 const sseClients = new Set<SSEClient>()
+let cleanupInterval: NodeJS.Timeout | null = null
 
-/**
- * Get the number of connected SSE clients (for debugging)
- */
+async function cleanupStaleConnections() {
+  const now = Date.now()
+  const staleClients: SSEClient[] = []
+  
+  for (const client of sseClients) {
+    if (now - client.lastHeartbeat > STALE_CONNECTION_TIMEOUT_MS) {
+      staleClients.push(client)
+    }
+  }
+  
+  for (const client of staleClients) {
+    try { client.controller.close() } catch {}
+    sseClients.delete(client)
+  }
+  
+  if (staleClients.length > 0) {
+    try {
+      const { logDebug } = await import('@/lib/logger')
+      await logDebug(`Cleaned up ${staleClients.length} stale SSE connection(s)`, {
+        endpoint: 'admin-action-locks-sse',
+        staleCount: staleClients.length,
+      })
+    } catch {}
+  }
+}
+
+function startCleanupInterval() {
+  if (cleanupInterval) return
+  cleanupInterval = setInterval(() => {
+    cleanupStaleConnections().catch(() => {})
+  }, STALE_CONNECTION_TIMEOUT_MS)
+}
+
 export function getActionLocksSSEClientCount(): number {
   return sseClients.size
 }
 
-/**
- * Check if an event matches client filters
- */
 function matchesFilters(
-  event: {
-    resourceType: ResourceType
-    resourceId: string
-    action: string
-  },
+  event: { resourceType: ResourceType; resourceId: string; action: string },
   filters: SSEClient['filters']
 ): boolean {
-  if (filters.resourceType && filters.resourceType !== event.resourceType) {
-    return false
-  }
-  if (filters.resourceId && filters.resourceId !== event.resourceId) {
-    return false
-  }
-  if (filters.action && filters.action !== event.action) {
-    return false
-  }
+  if (filters.resourceType && filters.resourceType !== event.resourceType) return false
+  if (filters.resourceId && filters.resourceId !== event.resourceId) return false
+  if (filters.action && filters.action !== event.action) return false
   return true
 }
 
 /**
  * Broadcast action lock event to all connected SSE clients
- * Only sends to clients whose filters match the event
  */
-export function broadcastActionLockEvent(
+export async function broadcastActionLockEvent(
   type: 'lock:acquired' | 'lock:released' | 'lock:expired' | 'lock:extended',
   resourceType: ResourceType,
   resourceId: string,
@@ -83,65 +114,51 @@ export function broadcastActionLockEvent(
     lockedAt?: number
     expiresAt?: number
   }
-) {
-  const message = JSON.stringify({
+): Promise<{ sentCount: number; totalClients: number; redisPublished: boolean }> {
+  const eventData = {
     type,
     resourceType,
     resourceId,
     action,
     ...data,
     timestamp: Date.now(),
-  })
-  const sseData = `data: ${message}\n\n`
-  
-  const clientCount = sseClients.size
-  
-  // If no clients connected, return early
-  if (clientCount === 0) {
-    return
   }
   
-  // Send to all connected clients that match filters
+  // Publish to Redis
+  let redisPublished = false
+  if (isRedisConfigured()) {
+    const messageId = await publishBroadcast(SSE_CHANNELS.ADMIN_ACTION_LOCKS, type, eventData)
+    redisPublished = messageId !== null
+  }
+  
+  const clientCount = sseClients.size
+  if (clientCount === 0) {
+    return { sentCount: 0, totalClients: 0, redisPublished }
+  }
+  
   const disconnectedClients: SSEClient[] = []
   let sentCount = 0
   
   for (const client of sseClients) {
-    // Check if event matches client filters
-    if (!matchesFilters({ resourceType, resourceId, action }, client.filters)) {
-      continue
-    }
+    if (!matchesFilters({ resourceType, resourceId, action }, client.filters)) continue
     
     try {
-      const encoder = new TextEncoder()
-      const encodedData = encoder.encode(sseData)
-      client.controller.enqueue(encodedData)
+      client.controller.enqueue(encodeSSEMessage(eventData))
       client.lastHeartbeat = Date.now()
       sentCount++
-    } catch (error) {
-      // Client disconnected, mark for removal
+    } catch {
       disconnectedClients.push(client)
     }
   }
   
-  // Remove disconnected clients
   for (const client of disconnectedClients) {
     sseClients.delete(client)
   }
   
-  // Return count for logging/debugging
-  return { sentCount, totalClients: clientCount }
+  return { sentCount, totalClients: clientCount, redisPublished }
 }
 
-/**
- * Get all active locks from database (for initial state)
- */
-async function getActiveLocks(
-  filters?: {
-    resourceType?: ResourceType
-    resourceId?: string
-    action?: string
-  }
-): Promise<Array<{
+async function getActiveLocks(filters?: SSEClient['filters']): Promise<Array<{
   id: string
   resourceType: ResourceType
   resourceId: string
@@ -155,13 +172,9 @@ async function getActiveLocks(
     const db = getTursoClient()
     const now = Math.floor(Date.now() / 1000)
     
-    let sql = `
-      SELECT * FROM action_locks 
-      WHERE expires_at > ?
-    `
+    let sql = `SELECT * FROM action_locks WHERE expires_at > ?`
     const args: any[] = [now]
     
-    // Apply filters
     if (filters?.resourceType) {
       sql += ` AND resource_type = ?`
       args.push(filters.resourceType)
@@ -189,8 +202,7 @@ async function getActiveLocks(
       lockedAt: row.locked_at,
       expiresAt: row.expires_at,
     }))
-  } catch (error) {
-    // If there's any error, return empty array
+  } catch {
     return []
   }
 }
@@ -202,10 +214,9 @@ export const GET = withVersioning(async (request: Request) => {
   
   await logger.info('Action locks SSE connection request received')
   
-  // Check authentication (admin-only)
   try {
     await requireAuthorizedDomain()
-  } catch (error) {
+  } catch {
     await logger.warn('Action locks SSE connection rejected: authentication failed')
     return NextResponse.json(
       { success: false, error: { message: "Authentication required" } },
@@ -213,7 +224,6 @@ export const GET = withVersioning(async (request: Request) => {
     )
   }
   
-  // Parse query parameters for filtering
   const { searchParams } = new URL(request.url)
   const resourceType = searchParams.get('resourceType') as ResourceType | null
   const resourceId = searchParams.get('resourceId')
@@ -225,116 +235,125 @@ export const GET = withVersioning(async (request: Request) => {
     ...(action && { action }),
   }
   
-  // Create a readable stream for SSE
   const stream = new ReadableStream({
     async start(controller) {
-      // Add client to the set
+      if (sseClients.size >= MAX_SSE_CLIENTS) {
+        await logger.warn('SSE client limit reached', {
+          currentClients: sseClients.size,
+          maxClients: MAX_SSE_CLIENTS,
+        })
+        try {
+          controller.enqueue(encodeSSEMessage({
+            type: 'error',
+            error: 'connection_limit_reached',
+            message: 'Server connection limit reached. Please try again later.',
+            timestamp: Date.now(),
+          }))
+        } catch {}
+        try { controller.close() } catch {}
+        return
+      }
+      
+      // OPTIMIZED: Get latest timestamp from Redis for initial sync (prevents missing historical messages)
+      const initialTimestamp = isRedisConfigured()
+        ? await getChannelLatestTimestamp(SSE_CHANNELS.ADMIN_ACTION_LOCKS)
+        : Date.now()
+      
       const client: SSEClient = {
         controller,
         filters,
         lastHeartbeat: Date.now(),
+        lastRedisTimestamp: initialTimestamp,
       }
       sseClients.add(client)
+      startCleanupInterval()
       
-      // Store heartbeat interval for cleanup
       let heartbeatInterval: NodeJS.Timeout | null = null
+      let redisPollInterval: NodeJS.Timeout | null = null
+      let abortListenerAdded = false
       
-      // Handle client disconnect - defined outside try block so we can always remove it
-      const abortHandler = () => {
-        // Remove the event listener to prevent memory leak
-        request.signal.removeEventListener('abort', abortHandler)
-        
-        if (heartbeatInterval) {
-          clearInterval(heartbeatInterval)
-          heartbeatInterval = null
+      const cleanup = () => {
+        if (heartbeatInterval) { clearInterval(heartbeatInterval); heartbeatInterval = null }
+        if (redisPollInterval) { clearInterval(redisPollInterval); redisPollInterval = null }
+        if (abortListenerAdded) {
+          try { request.signal.removeEventListener('abort', abortHandler) } catch {}
+          abortListenerAdded = false
         }
         sseClients.delete(client)
-        try {
-          controller.close()
-        } catch (error) {
-          // Already closed
-        }
-        // Note: logger.info is async but we can't await in event listener
-        logger.info('Action locks SSE connection closed by client').catch(() => {
-          // Ignore logging errors on disconnect
-        })
+        try { controller.close() } catch {}
+      }
+      
+      const abortHandler = () => {
+        cleanup()
+        logger.info('Action locks SSE connection closed by client').catch(() => {})
       }
       
       try {
-        // Send initial state (all active locks matching filters)
+        // Send initial state
         const activeLocks = await getActiveLocks(filters)
-        const encoder = new TextEncoder()
-        
-        // Send initial state as a single event
-        const initialMessage = JSON.stringify({
+        controller.enqueue(encodeSSEMessage({
           type: 'locks:initial',
           locks: activeLocks,
           timestamp: Date.now(),
-        })
-        controller.enqueue(encoder.encode(`data: ${initialMessage}\n\n`))
+        }))
         
         await logger.info('Action locks SSE connection established', {
           filters,
           activeLocksCount: activeLocks.length,
+          redisEnabled: isRedisConfigured(),
         })
         
-        // Send periodic heartbeat to keep connection alive (every 30 seconds)
         heartbeatInterval = setInterval(() => {
           try {
-            controller.enqueue(new TextEncoder().encode(`: heartbeat\n\n`))
+            controller.enqueue(encodeSSEHeartbeat())
             client.lastHeartbeat = Date.now()
-          } catch (error) {
-            // Client disconnected - clean up everything
-            if (heartbeatInterval) {
-              clearInterval(heartbeatInterval)
-              heartbeatInterval = null
-            }
-            // Remove abort event listener to prevent memory leak
-            request.signal.removeEventListener('abort', abortHandler)
-            sseClients.delete(client)
-            // Close controller to ensure stream is properly cleaned up
+          } catch { cleanup() }
+        }, HEARTBEAT_INTERVAL_MS)
+        
+        if (isRedisConfigured()) {
+          redisPollInterval = setInterval(async () => {
             try {
-              controller.close()
-            } catch (closeError) {
-              // Already closed
-            }
-          }
-        }, 30000)
+              const messages = await getBroadcastMessages(
+                SSE_CHANNELS.ADMIN_ACTION_LOCKS,
+                client.lastRedisTimestamp
+              )
+              
+              for (const message of messages) {
+                const eventData = message.data
+                if (matchesFilters(
+                  { resourceType: eventData.resourceType, resourceId: eventData.resourceId, action: eventData.action },
+                  client.filters
+                )) {
+                  try {
+                    controller.enqueue(encodeSSEMessage(eventData))
+                    client.lastHeartbeat = Date.now()
+                  } catch { cleanup(); return }
+                }
+                if (message.timestamp > client.lastRedisTimestamp) {
+                  client.lastRedisTimestamp = message.timestamp
+                }
+              }
+            } catch {}
+          }, REDIS_POLL_INTERVAL_MS)
+        }
         
-        // Add abort event listener
         request.signal.addEventListener('abort', abortHandler)
+        abortListenerAdded = true
       } catch (error) {
-        // Clean up heartbeat interval if it was created
-        if (heartbeatInterval) {
-          clearInterval(heartbeatInterval)
-          heartbeatInterval = null
-        }
-        
-        // Remove abort event listener to prevent memory leak (safe to call even if not added)
-        request.signal.removeEventListener('abort', abortHandler)
-        
-        await logger.error(
-          'Action locks SSE connection error',
-          error instanceof Error ? error : new Error(String(error))
-        )
-        sseClients.delete(client)
+        cleanup()
         try {
-          controller.close()
-        } catch (closeError) {
-          // Already closed
-        }
+          await logger.error('Action locks SSE connection error', error instanceof Error ? error : new Error(String(error)))
+        } catch {}
       }
     },
   })
   
-  // Return SSE response with proper headers
   return new NextResponse(stream, {
     headers: {
       'Content-Type': 'text/event-stream',
       'Cache-Control': 'no-cache, no-transform',
       'Connection': 'keep-alive',
-      'X-Accel-Buffering': 'no', // Disable nginx buffering
+      'X-Accel-Buffering': 'no',
     },
   })
 })
-

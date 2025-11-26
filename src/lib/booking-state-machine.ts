@@ -32,7 +32,6 @@ export type AdminAction =
   | "cancel"
   | "change_date"
   | "confirm_other_channel"
-  | "force_restore" // New: For restoring finished bookings (admin override)
 
 export interface ActionDefinition {
   id: AdminAction
@@ -42,7 +41,6 @@ export interface ActionDefinition {
   description: string
   requiresConfirmation: boolean
   requiresValidation?: boolean // Whether to run pre-action validation
-  requiresForceFlag?: boolean // New: For actions that need explicit force flag (e.g., force_restore)
 }
 
 /**
@@ -51,7 +49,6 @@ export interface ActionDefinition {
 export interface GuardContext {
   checkOverlap?: boolean // Whether to check for overlaps (default: true)
   verifyBlob?: boolean // Whether to verify blob existence (default: true)
-  forceRestore?: boolean // Whether this is a force restore operation
   isAdmin?: boolean // Whether the user is an admin
   skipDateCheck?: boolean // Whether to skip date validation (for testing/admin override)
 }
@@ -80,7 +77,6 @@ export function mapActionToStatus(
     cancel: "cancelled",
     change_date: currentStatus, // Date change doesn't change status
     confirm_other_channel: "confirmed", // Confirm from pending_deposit -> confirmed (other channel)
-    force_restore: "confirmed", // Force restore from finished -> confirmed (admin override)
   }
   
   return mapping[action]
@@ -148,7 +144,18 @@ export const STATE_MACHINE_GUARDS: Record<string, Record<string, TransitionGuard
           }
         } catch (error) {
           // If overlap check fails, allow but log warning
-          console.warn("Overlap check failed:", error)
+          // FIXED: Use structured logger instead of console.warn (HIGH-1)
+          try {
+            const { logWarn } = await import('./logger')
+            await logWarn('Overlap check failed in state machine guard', {
+              bookingId: booking.id,
+              fromStatus: 'pending_deposit',
+              toStatus: 'confirmed',
+              error: error instanceof Error ? error.message : String(error),
+            })
+          } catch {
+            // Fallback: silently continue if logger fails (don't expose in production)
+          }
         }
       }
       return { allowed: true }
@@ -185,7 +192,18 @@ export const STATE_MACHINE_GUARDS: Record<string, Record<string, TransitionGuard
             }
           }
         } catch (error) {
-          console.warn("Overlap check failed:", error)
+          // FIXED: Use structured logger instead of console.warn (HIGH-1)
+          try {
+            const { logWarn } = await import('./logger')
+            await logWarn('Overlap check failed in state machine guard', {
+              bookingId: booking.id,
+              fromStatus: 'paid_deposit',
+              toStatus: 'confirmed',
+              error: error instanceof Error ? error.message : String(error),
+            })
+          } catch {
+            // Fallback: silently continue if logger fails (don't expose in production)
+          }
         }
       }
       return { allowed: true }
@@ -263,57 +281,24 @@ export const STATE_MACHINE_GUARDS: Record<string, Record<string, TransitionGuard
             }
           }
         } catch (error) {
-          console.warn("Overlap check failed:", error)
+          // FIXED: Use structured logger instead of console.warn (HIGH-1)
+          try {
+            const { logWarn } = await import('./logger')
+            await logWarn('Overlap check failed in state machine guard', {
+              bookingId: booking.id,
+              fromStatus: 'cancelled',
+              toStatus: 'confirmed',
+              error: error instanceof Error ? error.message : String(error),
+            })
+          } catch {
+            // Fallback: silently continue if logger fails (don't expose in production)
+          }
         }
       }
       return { allowed: true }
     }
   },
-  finished: {
-    confirmed: async (booking, context) => {
-      // Guard: Only allowed with force flag and admin context
-      if (!context?.forceRestore || !context?.isAdmin) {
-        return {
-          allowed: false,
-          reason: "Cannot restore finished booking without force flag and admin context"
-        }
-      }
-      
-      // Guard: Check overlap before restoring
-      if (context?.checkOverlap !== false) {
-        try {
-          const { checkBookingOverlap } = await import("./booking-validations")
-          const { createBangkokTimestamp } = await import("./timezone")
-          
-          const startDate = typeof booking.startDate === 'string' 
-            ? createBangkokTimestamp(booking.startDate) 
-            : booking.startDate
-          const endDate = booking.endDate 
-            ? (typeof booking.endDate === 'string' ? createBangkokTimestamp(booking.endDate) : booking.endDate)
-            : null
-          
-          const overlapCheck = await checkBookingOverlap(
-            booking.id,
-            startDate,
-            endDate,
-            booking.startTime || null,
-            booking.endTime || null
-          )
-          
-          if (overlapCheck.overlaps) {
-            return {
-              allowed: false,
-              reason: `Cannot restore finished booking: overlaps with existing confirmed booking(s)`
-            }
-          }
-        } catch (error) {
-          console.warn("Overlap check failed:", error)
-        }
-      }
-      
-      return { allowed: true }
-    }
-  }
+  // finished: No actions allowed - finished bookings are immutable
 }
 
 /**
@@ -495,19 +480,7 @@ export function getAvailableActions(
       break
       
     case "finished":
-      // New: Allow force restore for admins (requires explicit force flag)
-      if (isAdmin) {
-        actions.push({
-          id: "force_restore",
-          label: "Force Restore to Confirmed",
-          targetStatus: "confirmed",
-          type: "secondary",
-          description: "Force restore finished booking to confirmed (requires admin override)",
-          requiresConfirmation: true,
-          requiresValidation: true,
-          requiresForceFlag: true,
-        })
-      }
+      // No actions allowed - finished bookings are immutable
       break
   }
   

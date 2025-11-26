@@ -87,8 +87,8 @@ async function loadThumbnailManifest(): Promise<{ thumbnails: Record<string, str
       thumbnailManifestCache = data
       return data
     }
-  } catch (error) {
-    console.warn('Failed to load thumbnail manifest:', error)
+  } catch {
+    // Silently fail - thumbnail manifest is optional, will fall back to original images
   }
   return null
 }
@@ -243,17 +243,21 @@ export function measurePerformance(name: string, fn: () => void): void {
   fn()
   const end = performance.now()
   
-  console.log(`${name} took ${end - start} milliseconds`)
+  // Only log timing in development
+  if (process.env.NODE_ENV !== 'production') {
+    console.log(`${name} took ${end - start} milliseconds`)
+  }
 }
 
 // Error handling utilities
 export function handleError(error: unknown, context?: string): void {
-  console.error(`Error${context ? ` in ${context}` : ''}:`, error)
+  // Only log in development - production should use structured logging
+  if (process.env.NODE_ENV !== 'production') {
+    console.error(`Error${context ? ` in ${context}` : ''}:`, error)
+  }
   
   // In production, you might want to send this to an error tracking service
-  if (process.env.NODE_ENV === 'production') {
-    // Example: Sentry.captureException(error)
-  }
+  // Note: Import dynamically to avoid bundling server code on client
 }
 
 /**
@@ -305,8 +309,7 @@ export function detectImageAspectRatio(src: string): Promise<number> {
       resolve(aspectRatio)
     }
     img.onerror = () => {
-      // Default to 16:9 if detection fails
-      console.warn(`Failed to detect aspect ratio for ${src}, using default 16:9`)
+      // Default to 16:9 if detection fails (silently - this is expected for some images)
       resolve(16 / 9)
     }
     img.src = src

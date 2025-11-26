@@ -440,8 +440,8 @@ export const PATCH = withVersioning(async (
       const eventRow = eventResult.rows[0] as any
       
       broadcastEventUpdate('event:updated', {
-        id: eventRow.id,
-        title: eventRow.title,
+        id: eventRow.id || '',
+        title: eventRow.title || '',
         description: eventRow.description || null,
         image_id: eventRow.image_id || null,
         event_date: eventRow.event_date || null,
@@ -449,8 +449,8 @@ export const PATCH = withVersioning(async (
         end_date: eventRow.end_date || null,
         image_url: eventRow.image_url || null,
         image_title: eventRow.image_title || null,
-        created_at: eventRow.created_at,
-        updated_at: eventRow.updated_at,
+        created_at: eventRow.created_at || Math.floor(Date.now() / 1000),
+        updated_at: eventRow.updated_at || Math.floor(Date.now() / 1000),
       })
     } catch (broadcastError) {
       // Don't fail if broadcast fails - logging is optional
@@ -593,8 +593,8 @@ export const DELETE = withVersioning(async (
         const eventRow = eventResult.rows[0] as any
         
         broadcastEventUpdate('event:deleted', {
-          id: eventRow.id,
-          title: eventRow.title,
+          id: eventRow.id || '',
+          title: eventRow.title || '',
           description: eventRow.description || null,
           image_id: eventRow.image_id || null,
           event_date: eventRow.event_date || null,
@@ -602,8 +602,8 @@ export const DELETE = withVersioning(async (
           end_date: eventRow.end_date || null,
           image_url: eventRow.image_url || null,
           image_title: eventRow.image_title || null,
-          created_at: eventRow.created_at,
-          updated_at: eventRow.updated_at,
+          created_at: eventRow.created_at || Math.floor(Date.now() / 1000),
+          updated_at: eventRow.updated_at || Math.floor(Date.now() / 1000),
         })
       } catch (broadcastError) {
         // Don't fail if broadcast fails - logging is optional

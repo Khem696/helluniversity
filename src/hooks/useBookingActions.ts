@@ -29,7 +29,8 @@ interface Booking {
 }
 
 interface UseBookingActionsOptions {
-  onSuccess?: (updatedBooking?: Booking) => void
+  // FIXED: Support async callbacks for proper async flow (Bug #49)
+  onSuccess?: (updatedBooking?: Booking) => void | Promise<void>
   onError?: (error: string) => void
 }
 
@@ -40,12 +41,20 @@ export function useBookingActions(options?: UseBookingActionsOptions) {
 
   /**
    * Get available actions for a booking
+   * FIXED: Corrected parameter order to match function signature (CRITICAL-3)
    */
   const getActions = useCallback((booking: Booking): ActionDefinition[] => {
+    // Calculate isDateInPast properly from start_date timestamp
+    const isDateInPast = booking.start_date 
+      ? (booking.start_date * 1000) < Date.now()
+      : false
+    
     return getAvailableActions(
       booking.status,
-      Boolean(booking.proposed_date),
-      Boolean(booking.deposit_evidence_url)
+      Boolean(booking.deposit_evidence_url), // hasDepositEvidence (position 2)
+      isDateInPast,                           // isDateInPast (position 3)
+      true,                                   // isAdmin (always true for admin pages, position 4)
+      booking                                 // booking object for context-aware filtering (position 5)
     )
   }, [])
 
@@ -58,7 +67,22 @@ export function useBookingActions(options?: UseBookingActionsOptions) {
       
       try {
         const validateUrl = API_PATHS.adminBookingValidate(booking.id)
-        console.log('[validateActionBeforeExecution] Calling validation API:', validateUrl, { action, targetStatus, bookingId: booking.id })
+        
+        // Debug logging (development only)
+        if (process.env.NODE_ENV === 'development') {
+          import('@/lib/logger').then(({ logDebug }) => {
+            logDebug('Calling validation API', {
+              url: validateUrl,
+              action,
+              targetStatus,
+              bookingId: booking.id,
+            }).catch(() => {
+              // Fallback if logger fails
+            })
+          }).catch(() => {
+            // Fallback if logger import fails
+          })
+        }
         
         // Call server-side validation API
         const response = await fetch(validateUrl, {
@@ -77,7 +101,19 @@ export function useBookingActions(options?: UseBookingActionsOptions) {
             // If JSON parsing fails, use status text
           }
           
-          console.error("Validation API error:", errorMessage)
+          // Use structured logger for errors
+          import('@/lib/logger').then(({ logError }) => {
+            logError('Validation API error', {
+              error: errorMessage,
+              bookingId: booking.id,
+              action,
+              targetStatus,
+            }).catch(() => {
+              // Fallback if logger fails
+            })
+          }).catch(() => {
+            // Fallback if logger import fails
+          })
           const validation: ValidationResult = {
             valid: true, // Allow proceeding even if validation fails
             warnings: [`Could not verify booking validation: ${errorMessage}. Please check manually.`],
@@ -91,7 +127,19 @@ export function useBookingActions(options?: UseBookingActionsOptions) {
 
         if (!data.success) {
           // If validation API fails, return a warning but allow proceeding
-          console.error("Validation API error:", data.error)
+          // Use structured logger for errors
+          import('@/lib/logger').then(({ logError }) => {
+            logError('Validation API error', {
+              error: data.error,
+              bookingId: booking.id,
+              action,
+              targetStatus,
+            }).catch(() => {
+              // Fallback if logger fails
+            })
+          }).catch(() => {
+            // Fallback if logger import fails
+          })
           const validation: ValidationResult = {
             valid: true, // Allow proceeding even if validation fails
             warnings: ["Could not verify booking validation. Please check manually."],
@@ -105,16 +153,22 @@ export function useBookingActions(options?: UseBookingActionsOptions) {
         setValidationResult(validation)
         return validation
       } catch (error) {
-        // Enhanced error logging
+        // Enhanced error logging with structured logger
         const errorMessage = error instanceof Error ? error.message : String(error)
         const errorDetails = error instanceof Error ? error.stack : String(error)
-        console.error("Error calling validation API:", {
-          error: errorMessage,
-          details: errorDetails,
-          bookingId: booking.id,
-          action,
-          targetStatus,
-          url: API_PATHS.adminBookingValidate(booking.id),
+        import('@/lib/logger').then(({ logError }) => {
+          logError('Error calling validation API', {
+            error: errorMessage,
+            details: errorDetails,
+            bookingId: booking.id,
+            action,
+            targetStatus,
+            url: API_PATHS.adminBookingValidate(booking.id),
+          }, error instanceof Error ? error : new Error(String(error))).catch(() => {
+            // Fallback if logger fails
+          })
+        }).catch(() => {
+          // Fallback if logger import fails
         })
         
         // If API call fails, return a warning but allow proceeding
@@ -155,10 +209,18 @@ export function useBookingActions(options?: UseBookingActionsOptions) {
 
       try {
         // Validate action is allowed
+        // FIXED: Corrected parameter order to match function signature (CRITICAL-4)
+        const isDateInPast = booking.start_date 
+          ? (booking.start_date * 1000) < Date.now()
+          : false
+        
         const actionDef = getActionDefinition(
           action,
           booking.status,
-          Boolean(booking.proposed_date)
+          Boolean(booking.deposit_evidence_url), // hasDepositEvidence (position 3)
+          isDateInPast,                          // isDateInPast (position 4)
+          true,                                  // isAdmin (always true for admin pages, position 5)
+          booking                                // booking object for context (position 6)
         )
 
         if (!actionDef) {
@@ -190,7 +252,9 @@ export function useBookingActions(options?: UseBookingActionsOptions) {
         const targetStatus = mapActionToStatus(action, booking.status)
 
         // Prepare request body
+        // FIXED: Add action parameter for backend state machine validation (CRITICAL-1, HIGH-3)
         const requestBody: any = {
+          action,              // Add action parameter for backend state machine validation
           status: targetStatus,
           changeReason: additionalData?.changeReason || null,
           adminNotes: additionalData?.adminNotes || null,
@@ -241,8 +305,9 @@ export function useBookingActions(options?: UseBookingActionsOptions) {
         const updatedBooking = data.data?.booking || data.booking || undefined
         
         // Call success callback with updated booking
+        // FIXED: Await the callback to properly support async callbacks (Bug #50)
         if (options?.onSuccess) {
-          options.onSuccess(updatedBooking)
+          await options.onSuccess(updatedBooking)
         }
 
         return true

@@ -6,8 +6,7 @@
  * GET /api/v1/admin/events/stream - Stream event updates
  * Admin-only endpoint (requires authentication)
  * 
- * This endpoint streams updates whenever events are created, updated, or deleted.
- * Clients should use EventSource API to connect to this endpoint.
+ * Uses Redis for cross-instance communication when configured.
  */
 
 import { NextResponse } from "next/server"
@@ -16,19 +15,64 @@ import { createRequestLogger } from "@/lib/logger"
 import { withVersioning } from "@/lib/api-version-wrapper"
 import { getRequestPath } from "@/lib/api-versioning"
 import { requireAuthorizedDomain } from "@/lib/auth"
+import {
+  isRedisConfigured,
+  publishBroadcast,
+  getBroadcastMessages,
+  getChannelLatestTimestamp,
+  SSE_CHANNELS,
+  encodeSSEMessage,
+  encodeSSEHeartbeat,
+} from "@/lib/redis-sse"
 
-// In-memory store for SSE connections
-// In production, consider using Redis or a more robust solution for multi-instance deployments
+// Constants
+const MAX_SSE_CLIENTS = 500
+const STALE_CONNECTION_TIMEOUT_MS = 5 * 60 * 1000
+const HEARTBEAT_INTERVAL_MS = 30 * 1000
+const REDIS_POLL_INTERVAL_MS = 1000
+
 interface SSEClient {
   controller: ReadableStreamDefaultController
   lastHeartbeat: number
+  lastRedisTimestamp: number
 }
 
 const sseClients = new Set<SSEClient>()
+let cleanupInterval: NodeJS.Timeout | null = null
 
-/**
- * Get the number of connected SSE clients (for debugging)
- */
+async function cleanupStaleConnections() {
+  const now = Date.now()
+  const staleClients: SSEClient[] = []
+  
+  for (const client of sseClients) {
+    if (now - client.lastHeartbeat > STALE_CONNECTION_TIMEOUT_MS) {
+      staleClients.push(client)
+    }
+  }
+  
+  for (const client of staleClients) {
+    try { client.controller.close() } catch {}
+    sseClients.delete(client)
+  }
+  
+  if (staleClients.length > 0) {
+    try {
+      const { logDebug } = await import('@/lib/logger')
+      await logDebug(`Cleaned up ${staleClients.length} stale SSE connection(s)`, {
+        endpoint: 'admin-events-sse',
+        staleCount: staleClients.length,
+      })
+    } catch {}
+  }
+}
+
+function startCleanupInterval() {
+  if (cleanupInterval) return
+  cleanupInterval = setInterval(() => {
+    cleanupStaleConnections().catch(() => {})
+  }, STALE_CONNECTION_TIMEOUT_MS)
+}
+
 export function getEventsSSEClientCount(): number {
   return sseClients.size
 }
@@ -36,7 +80,7 @@ export function getEventsSSEClientCount(): number {
 /**
  * Broadcast event update to all connected SSE clients
  */
-export function broadcastEventUpdate(
+export async function broadcastEventUpdate(
   type: 'event:created' | 'event:updated' | 'event:deleted',
   event: {
     id: string
@@ -51,50 +95,44 @@ export function broadcastEventUpdate(
     created_at: number
     updated_at: number
   }
-) {
-  const message = JSON.stringify({
+): Promise<{ sentCount: number; totalClients: number; redisPublished: boolean }> {
+  const eventData = {
     type,
     event,
     timestamp: Date.now(),
-  })
-  const sseData = `data: ${message}\n\n`
-  
-  const clientCount = sseClients.size
-  
-  // If no clients connected, return early
-  if (clientCount === 0) {
-    return
   }
   
-  // Send to all connected clients
+  let redisPublished = false
+  if (isRedisConfigured()) {
+    const messageId = await publishBroadcast(SSE_CHANNELS.ADMIN_EVENTS, type, eventData)
+    redisPublished = messageId !== null
+  }
+  
+  const clientCount = sseClients.size
+  if (clientCount === 0) {
+    return { sentCount: 0, totalClients: 0, redisPublished }
+  }
+  
   const disconnectedClients: SSEClient[] = []
   let sentCount = 0
   
   for (const client of sseClients) {
     try {
-      const encoder = new TextEncoder()
-      const encodedData = encoder.encode(sseData)
-      client.controller.enqueue(encodedData)
+      client.controller.enqueue(encodeSSEMessage(eventData))
       client.lastHeartbeat = Date.now()
       sentCount++
-    } catch (error) {
-      // Client disconnected, mark for removal
+    } catch {
       disconnectedClients.push(client)
     }
   }
   
-  // Remove disconnected clients
   for (const client of disconnectedClients) {
     sseClients.delete(client)
   }
   
-  // Return count for logging/debugging
-  return { sentCount, totalClients: clientCount }
+  return { sentCount, totalClients: clientCount, redisPublished }
 }
 
-/**
- * Get initial events list (for initial state)
- */
 async function getInitialEvents(): Promise<Array<{
   id: string
   title: string
@@ -133,8 +171,8 @@ async function getInitialEvents(): Promise<Array<{
     end_date: row.end_date || null,
     image_url: row.image_url || null,
     image_title: row.image_title || null,
-    created_at: row.created_at,
-    updated_at: row.updated_at,
+    created_at: row.created_at || Math.floor(Date.now() / 1000),
+    updated_at: row.updated_at || Math.floor(Date.now() / 1000),
   }))
 }
 
@@ -143,109 +181,115 @@ export const GET = withVersioning(async (request: Request) => {
   const endpoint = getRequestPath(request)
   const logger = createRequestLogger(requestId, endpoint)
   
-  await logger.info('SSE connection request received')
+  await logger.info('Events SSE connection request received')
 
-  // Check authentication
   try {
     await requireAuthorizedDomain()
-  } catch (error) {
-    await logger.warn('SSE connection rejected: authentication failed')
-    return NextResponse.json(
-      { error: "Unauthorized" },
-      { status: 401 }
-    )
+  } catch {
+    await logger.warn('Events SSE connection rejected: authentication failed')
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
   }
 
-  // Create a readable stream for SSE
   const stream = new ReadableStream({
     async start(controller) {
-      // Add client to the set
+      if (sseClients.size >= MAX_SSE_CLIENTS) {
+        await logger.warn('SSE client limit reached', {
+          currentClients: sseClients.size,
+          maxClients: MAX_SSE_CLIENTS,
+        })
+        try {
+          controller.enqueue(encodeSSEMessage({
+            type: 'error',
+            error: 'connection_limit_reached',
+            message: 'Server connection limit reached. Please try again later.',
+            timestamp: Date.now(),
+          }))
+        } catch {}
+        try { controller.close() } catch {}
+        return
+      }
+      
+      // OPTIMIZED: Get latest timestamp from Redis for initial sync (prevents missing historical messages)
+      const initialTimestamp = isRedisConfigured()
+        ? await getChannelLatestTimestamp(SSE_CHANNELS.ADMIN_EVENTS)
+        : Date.now()
+      
       const client: SSEClient = {
         controller,
         lastHeartbeat: Date.now(),
+        lastRedisTimestamp: initialTimestamp,
       }
       sseClients.add(client)
+      startCleanupInterval()
 
-      // Store heartbeat interval for cleanup
       let heartbeatInterval: NodeJS.Timeout | null = null
+      let redisPollInterval: NodeJS.Timeout | null = null
+      let abortListenerAdded = false
       
-      // Handle client disconnect - defined outside try block so we can always remove it
-      const abortHandler = () => {
-        // Remove the event listener to prevent memory leak
-        request.signal.removeEventListener('abort', abortHandler)
-        
-        if (heartbeatInterval) {
-          clearInterval(heartbeatInterval)
-          heartbeatInterval = null
+      const cleanup = () => {
+        if (heartbeatInterval) { clearInterval(heartbeatInterval); heartbeatInterval = null }
+        if (redisPollInterval) { clearInterval(redisPollInterval); redisPollInterval = null }
+        if (abortListenerAdded) {
+          try { request.signal.removeEventListener('abort', abortHandler) } catch {}
+          abortListenerAdded = false
         }
         sseClients.delete(client)
-        try {
-          controller.close()
-        } catch (error) {
-          // Ignore errors on close
-        }
-        logger.info('SSE connection closed by client').catch(() => {
-          // Ignore logging errors on disconnect
-        })
+        try { controller.close() } catch {}
+      }
+      
+      const abortHandler = () => {
+        cleanup()
+        logger.info('Events SSE connection closed by client').catch(() => {})
       }
       
       try {
-        // Send initial events immediately
         const initialEvents = await getInitialEvents()
-        const initialMessage = JSON.stringify({ 
+        controller.enqueue(encodeSSEMessage({ 
           type: 'events:initial',
           events: initialEvents,
           timestamp: Date.now() 
-        })
-        const encoder = new TextEncoder()
-        controller.enqueue(encoder.encode(`data: ${initialMessage}\n\n`))
+        }))
         
-        await logger.info('SSE connection established', { 
-          initialEventsCount: initialEvents.length
+        await logger.info('Events SSE connection established', { 
+          initialEventsCount: initialEvents.length,
+          redisEnabled: isRedisConfigured(),
         })
 
-        // Send periodic heartbeat to keep connection alive (every 30 seconds)
         heartbeatInterval = setInterval(() => {
           try {
-            controller.enqueue(new TextEncoder().encode(`: heartbeat\n\n`))
+            controller.enqueue(encodeSSEHeartbeat())
             client.lastHeartbeat = Date.now()
-          } catch (error) {
-            // Client disconnected - clean up everything
-            if (heartbeatInterval) {
-              clearInterval(heartbeatInterval)
-              heartbeatInterval = null
-            }
-            // Remove abort event listener to prevent memory leak
-            request.signal.removeEventListener('abort', abortHandler)
-            sseClients.delete(client)
-            // Close controller to ensure stream is properly cleaned up
+          } catch { cleanup() }
+        }, HEARTBEAT_INTERVAL_MS)
+        
+        if (isRedisConfigured()) {
+          redisPollInterval = setInterval(async () => {
             try {
-              controller.close()
-            } catch (closeError) {
-              // Already closed
-            }
-          }
-        }, 30000)
+              const messages = await getBroadcastMessages(
+                SSE_CHANNELS.ADMIN_EVENTS,
+                client.lastRedisTimestamp
+              )
+              
+              for (const message of messages) {
+                try {
+                  controller.enqueue(encodeSSEMessage(message.data))
+                  client.lastHeartbeat = Date.now()
+                } catch { cleanup(); return }
+                if (message.timestamp > client.lastRedisTimestamp) {
+                  client.lastRedisTimestamp = message.timestamp
+                }
+              }
+            } catch {}
+          }, REDIS_POLL_INTERVAL_MS)
+        }
         
-        // Add abort event listener
         request.signal.addEventListener('abort', abortHandler)
+        abortListenerAdded = true
       } catch (error) {
-        // Clean up heartbeat interval if it was created
-        if (heartbeatInterval) {
-          clearInterval(heartbeatInterval)
-          heartbeatInterval = null
-        }
-        
-        // Remove abort event listener to prevent memory leak (safe to call even if not added)
-        request.signal.removeEventListener('abort', abortHandler)
-        
-        await logger.error('SSE connection error', error instanceof Error ? error : new Error(String(error)))
-        sseClients.delete(client)
+        cleanup()
         try {
-          controller.close()
-        } catch (closeError) {
-          // Ignore errors on close
-        }
+          await logger.error('Events SSE connection error', error instanceof Error ? error : new Error(String(error)))
+        } catch {}
       }
     },
   })
@@ -255,8 +299,7 @@ export const GET = withVersioning(async (request: Request) => {
       'Content-Type': 'text/event-stream',
       'Cache-Control': 'no-cache',
       'Connection': 'keep-alive',
-      'X-Accel-Buffering': 'no', // Disable nginx buffering
+      'X-Accel-Buffering': 'no',
     },
   })
 })
-

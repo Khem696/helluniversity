@@ -100,7 +100,9 @@ function Carousel({
     api.on("select", onSelect);
 
     return () => {
+      // Clean up all event listeners to prevent memory leaks
       api?.off("select", onSelect);
+      api?.off("reInit", onSelect);
     };
   }, [api, onSelect]);
 

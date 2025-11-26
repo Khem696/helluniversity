@@ -135,6 +135,64 @@ export const PATCH = withVersioning(async (
       return notFoundResponse('Booking', { requestId })
     }
 
+    // FIXED: Early validation - check if clearing a non-existent fee (Bug #42)
+    // This avoids unnecessary database operations and admin action logging
+    const currentHasFee = currentBooking.feeAmount !== null && currentBooking.feeAmount !== undefined
+    if (isClearingFee && !currentHasFee) {
+      await logger.info("Fee clear requested but no fee exists - returning early", { bookingId: id })
+      // FIXED: Transform to snake_case for frontend consistency (Bug #47)
+      // Must match the format returned by the normal success path
+      const transformedCurrentBooking = {
+        id: currentBooking.id,
+        reference_number: currentBooking.referenceNumber || null,
+        name: currentBooking.name,
+        email: currentBooking.email,
+        phone: currentBooking.phone,
+        participants: currentBooking.participants,
+        event_type: currentBooking.eventType,
+        other_event_type: currentBooking.otherEventType,
+        date_range: currentBooking.dateRange ? 1 : 0,
+        start_date: currentBooking.startDate ? createBangkokTimestamp(currentBooking.startDate) : 0,
+        end_date: currentBooking.endDate ? createBangkokTimestamp(currentBooking.endDate) : null,
+        start_time: currentBooking.startTime || "",
+        end_time: currentBooking.endTime || "",
+        organization_type: currentBooking.organizationType,
+        organized_person: currentBooking.organizedPerson,
+        introduction: currentBooking.introduction,
+        biography: currentBooking.biography,
+        special_requests: currentBooking.specialRequests,
+        status: currentBooking.status,
+        admin_notes: currentBooking.adminNotes,
+        response_token: currentBooking.responseToken,
+        token_expires_at: currentBooking.tokenExpiresAt,
+        proposed_date: currentBooking.proposedDate ? createBangkokTimestamp(currentBooking.proposedDate) : null,
+        proposed_end_date: currentBooking.proposedEndDate ? createBangkokTimestamp(currentBooking.proposedEndDate) : null,
+        user_response: currentBooking.userResponse,
+        response_date: currentBooking.responseDate,
+        deposit_evidence_url: currentBooking.depositEvidenceUrl,
+        deposit_verified_at: currentBooking.depositVerifiedAt,
+        deposit_verified_by: currentBooking.depositVerifiedBy,
+        deposit_verified_from_other_channel: currentBooking.depositVerifiedFromOtherChannel === true,
+        fee_amount: currentBooking.feeAmount ?? null,
+        fee_amount_original: currentBooking.feeAmountOriginal ?? null,
+        fee_currency: currentBooking.feeCurrency || null,
+        fee_conversion_rate: currentBooking.feeConversionRate ?? null,
+        fee_rate_date: currentBooking.feeRateDate ?? null,
+        fee_recorded_at: currentBooking.feeRecordedAt ?? null,
+        fee_recorded_by: currentBooking.feeRecordedBy || null,
+        fee_notes: currentBooking.feeNotes || null,
+        created_at: currentBooking.createdAt,
+        updated_at: currentBooking.updatedAt,
+      }
+      return successResponse(
+        {
+          booking: transformedCurrentBooking,
+          message: "No fee to clear - booking already has no fee recorded",
+        },
+        { requestId }
+      )
+    }
+
     // Get admin info
     let adminEmail: string | undefined
     let adminName: string | undefined
@@ -233,18 +291,89 @@ export const PATCH = withVersioning(async (
       await logger.error("Failed to log admin action", logError instanceof Error ? logError : new Error(String(logError)), { bookingId: id })
     }
 
-    // Send admin notification (only if not clearing, as clearing doesn't need notification)
-    if (!isClearingFee) {
-      try {
-        const { sendAdminFeeChangeNotification } = await import('@/lib/email')
-        await sendAdminFeeChangeNotification(
-          updatedBooking,
-          currentBooking,
-          adminEmail || "Admin"
-        )
-      } catch (emailError) {
-        await logger.error("Failed to send admin fee change notification", emailError instanceof Error ? emailError : new Error(String(emailError)), { bookingId: id })
+    // FIXED: Send email notifications for fee changes (Issue #10)
+    // Send both admin and user notifications when fees change OR are cleared
+    // Send admin notification
+    try {
+      const { sendAdminFeeChangeNotification } = await import('@/lib/email')
+      await sendAdminFeeChangeNotification(
+        updatedBooking,
+        currentBooking,
+        adminEmail || "Admin"
+      )
+      await logger.info("Admin fee change notification sent", { bookingId: id, isClearingFee })
+    } catch (emailError) {
+      await logger.error("Failed to send admin fee change notification", emailError instanceof Error ? emailError : new Error(String(emailError)), { bookingId: id })
+    }
+    
+    // FIXED: Send user notification for fee changes (including fee clearance)
+    // Users should be notified when their booking fee changes or is cleared
+    try {
+      const { sendBookingStatusNotification } = await import('@/lib/email')
+      
+      // Build fee change message
+      let feeChangeMessage = ""
+      const hadFee = currentBooking.feeAmount !== null && currentBooking.feeAmount !== undefined
+      
+      // FIXED: Validate fee fields before using in message to prevent "undefined" strings (Bug #1)
+      const prevFeeAmount = currentBooking.feeAmount ?? 'N/A'
+      const prevFeeOriginal = currentBooking.feeAmountOriginal
+      const prevFeeCurrency = currentBooking.feeCurrency ?? 'THB'
+      const newFeeAmount = updatedBooking.feeAmount ?? 'N/A'
+      const newFeeOriginal = updatedBooking.feeAmountOriginal
+      const newFeeCurrency = updatedBooking.feeCurrency ?? 'THB'
+      
+      // FIXED: Use explicit null/undefined checks instead of truthiness (Bug #23)
+      // Since 0 is a valid fee amount, truthiness checks would incorrectly skip
+      // displaying conversion details when feeAmountOriginal is 0
+      const hasPrevOriginal = prevFeeOriginal != null
+      const hasNewOriginal = newFeeOriginal != null
+      
+      if (isClearingFee) {
+        // Fee was cleared - we know hadFee is true due to early validation (Bug #42)
+        feeChangeMessage = `The fee for your booking has been cleared.\n\n` +
+          `Previous Fee: ${prevFeeAmount} THB` +
+          (hasPrevOriginal ? ` (${prevFeeOriginal} ${prevFeeCurrency})` : '') +
+          `\nNew Fee: None`
+      } else if (hadFee) {
+        // Fee was updated
+        feeChangeMessage = `Your booking fee has been updated.\n\n` +
+          `Previous Fee: ${prevFeeAmount} THB` +
+          (hasPrevOriginal ? ` (${prevFeeOriginal} ${prevFeeCurrency})` : '') +
+          `\nNew Fee: ${newFeeAmount} THB` +
+          (hasNewOriginal ? ` (${newFeeOriginal} ${newFeeCurrency})` : '')
+      } else {
+        // Fee was recorded for the first time
+        feeChangeMessage = `A fee has been recorded for your booking.\n\n` +
+          `Fee Amount: ${newFeeAmount} THB` +
+          (hasNewOriginal ? ` (${newFeeOriginal} ${newFeeCurrency})` : '')
       }
+      
+      // Send notification - feeChangeMessage is always set at this point
+      // (early validation ensures we don't reach here when clearing a non-existent fee)
+      if (feeChangeMessage) {
+        if (changeReason) {
+          feeChangeMessage += `\n\nReason: ${changeReason}`
+        }
+        
+        if (!isClearingFee && updatedBooking.feeNotes) {
+          feeChangeMessage += `\n\nNotes: ${updatedBooking.feeNotes}`
+        }
+        
+        // Send notification using status change email (maintains booking status)
+        await sendBookingStatusNotification(
+          updatedBooking,
+          updatedBooking.status, // Keep current status
+          {
+            changeReason: feeChangeMessage,
+            allowIntentionalDuplicate: true, // FIXED: Allow intentional duplicates for admin-initiated fee changes (Issue #17)
+          }
+        )
+        await logger.info("User fee change notification sent", { bookingId: id, isClearingFee })
+      }
+    } catch (emailError) {
+      await logger.error("Failed to send user fee change notification", emailError instanceof Error ? emailError : new Error(String(emailError)), { bookingId: id })
+      // Don't fail the request if email fails
     }
 
     // Transform booking to snake_case for frontend consistency

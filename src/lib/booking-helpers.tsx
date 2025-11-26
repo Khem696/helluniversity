@@ -65,8 +65,8 @@ export function formatTimestamp(timestamp: number | null | undefined): string {
     const bangkokDate = new TZDate(utcDate.getTime(), 'Asia/Bangkok')
     
     return format(bangkokDate, "MMM dd, yyyy 'at' h:mm a")
-  } catch (error) {
-    console.error("Error formatting timestamp:", timestamp, error)
+  } catch {
+    // Silently fail - return N/A for invalid timestamps
     return "N/A"
   }
 }
@@ -88,8 +88,8 @@ export function formatDate(timestamp: number | null | undefined): string {
     const bangkokDate = new TZDate(utcDate.getTime(), 'Asia/Bangkok')
     
     return format(bangkokDate, "MMM dd, yyyy")
-  } catch (error) {
-    console.error("Error formatting date:", timestamp, error)
+  } catch {
+    // Silently fail - return N/A for invalid timestamps
     return "N/A"
   }
 }

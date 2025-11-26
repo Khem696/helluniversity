@@ -4,6 +4,8 @@
  * Common utilities for cron job routes to ensure smooth execution
  */
 
+import { logInfo, logError, logWarn } from './logger'
+
 /**
  * Create a timeout promise that rejects after specified milliseconds
  */
@@ -44,66 +46,59 @@ export function verifyCronSecret(request: Request): void {
   const vercelSignature = request.headers.get('x-vercel-signature')
   const cronSecret = process.env.CRON_SECRET
 
-  // Debug logging to help diagnose authentication issues (no credential exposure)
-  console.log('[verifyCronSecret] Checking cron authentication:', {
-    hasAuthHeader: !!authHeader,
-    authHeaderLength: authHeader?.length || 0,
-    hasVercelSignature: !!vercelSignature,
-    vercelSignatureLength: vercelSignature?.length || 0,
-    hasCronSecret: !!cronSecret,
-    cronSecretLength: cronSecret?.length || 0,
-  })
+  // Debug logging only in development (no credential exposure)
+  if (process.env.NODE_ENV !== 'production') {
+    logInfo('[verifyCronSecret] Checking cron authentication', {
+      hasAuthHeader: !!authHeader,
+      authHeaderLength: authHeader?.length || 0,
+      hasVercelSignature: !!vercelSignature,
+      hasCronSecret: !!cronSecret,
+    }).catch(() => {})
+  }
 
   if (!cronSecret) {
-    console.error('[verifyCronSecret] CRON_SECRET not configured in environment variables')
+    logError('[verifyCronSecret] CRON_SECRET not configured', {}, new Error('CRON_SECRET not configured')).catch(() => {})
     throw new Error('CRON_SECRET not configured')
   }
 
   // Check Authorization header (standard Vercel cron format)
   if (authHeader === `Bearer ${cronSecret}`) {
-    console.log('[verifyCronSecret] Authentication successful via Authorization header')
     return
   }
 
   // Check x-vercel-signature header (alternative Vercel format, if used)
   if (vercelSignature && vercelSignature === cronSecret) {
-    console.log('[verifyCronSecret] Authentication successful via x-vercel-signature header')
     return
   }
 
-  // Log detailed failure info for debugging (with fully redacted sensitive headers)
-  const safeHeaders: Record<string, string> = {}
-  request.headers.forEach((value, key) => {
-    const lowerKey = key.toLowerCase()
-    // Fully redact sensitive headers to prevent any credential exposure in logs
-    if (lowerKey === 'authorization' || lowerKey === 'x-vercel-signature') {
-      safeHeaders[key] = `[REDACTED] (length: ${value.length})`
-    } else {
-      safeHeaders[key] = value
-    }
-  })
-
-  console.error('[verifyCronSecret] Authentication failed:', {
-    expectedFormat: 'Bearer <CRON_SECRET>',
-    receivedAuthHeader: authHeader ? `[REDACTED] (length: ${authHeader.length})` : 'null',
-    receivedVercelSignature: vercelSignature ? `[REDACTED] (length: ${vercelSignature.length})` : 'null',
-    headers: safeHeaders,
-  })
+  // Log authentication failure (security event - always log, even in production)
+  logWarn('[verifyCronSecret] Authentication failed', {
+    hasAuthHeader: !!authHeader,
+    hasVercelSignature: !!vercelSignature,
+    // Never log actual header values
+  }).catch(() => {})
 
   throw new Error('Unauthorized cron job attempt')
 }
 
 /**
- * Cron job execution timeout (25 seconds - safety margin before 30s Vercel limit)
+ * Cron job execution timeout
+ * 
+ * Default: 25000ms (25 seconds) - safety margin before 30s Vercel limit
+ * Can be configured via CRON_TIMEOUT_MS environment variable
+ * 
+ * Note: Vercel free/hobby plan has 10s limit, Pro has 300s for background functions
+ * Adjust this based on your plan and expected execution time
  */
-export const CRON_TIMEOUT_MS = 25000
+export const CRON_TIMEOUT_MS = parseInt(process.env.CRON_TIMEOUT_MS || '25000', 10)
 
 /**
  * Default limits for cron jobs
+ * Can be configured via environment variables
  */
 export const CRON_LIMITS = {
-  JOB_QUEUE: 10,
-  EMAIL_QUEUE: 20,
-  AUTO_UPDATE_BATCH: 50,
+  JOB_QUEUE: parseInt(process.env.CRON_JOB_QUEUE_LIMIT || '10', 10),
+  EMAIL_QUEUE: parseInt(process.env.CRON_EMAIL_QUEUE_LIMIT || '20', 10),
+  AUTO_UPDATE_BATCH: parseInt(process.env.CRON_AUTO_UPDATE_LIMIT || '50', 10),
 } as const
 

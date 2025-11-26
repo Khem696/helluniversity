@@ -147,19 +147,30 @@ export function useActionLocksSSE(
   const reconnectTimeoutRef = useRef<NodeJS.Timeout | null>(null)
   const reconnectAttemptsRef = useRef<number>(0)
   const fallbackPollIntervalRef = useRef<NodeJS.Timeout | null>(null)
+  // CRITICAL-3: Track if component is mounted to prevent operations after unmount
+  const isMountedRef = useRef<boolean>(true)
   
   // Store callbacks in refs to prevent recreation and stale closures
   const onLockStatusChangeRef = useRef(onLockStatusChange)
   const onLocksChangeRef = useRef(onLocksChange)
+  // HIGH-4: Store enabled in ref to prevent stale closures in reconnection logic
+  const enabledRef = useRef(enabled)
   
+  // MEDIUM-6: Base delay for exponential backoff (in milliseconds)
+  // LOW-3: Extract magic number to named constant
+  const BASE_RECONNECT_DELAY_MS = 1000 // 1 second base delay
   const maxReconnectAttempts = 5
-  const reconnectDelay = 3000 // 3 seconds
 
   // Update refs when callbacks change
   useEffect(() => {
     onLockStatusChangeRef.current = onLockStatusChange
     onLocksChangeRef.current = onLocksChange
   }, [onLockStatusChange, onLocksChange])
+  
+  // HIGH-4: Update enabled ref when it changes
+  useEffect(() => {
+    enabledRef.current = enabled
+  }, [enabled])
 
   /**
    * Check if current user has the lock
@@ -228,9 +239,14 @@ export function useActionLocksSSE(
     lockedAt?: number
     expiresAt?: number
   }) => {
-    // Update locks list based on event type
+    // FIXED: State updater functions must be pure - no side effects like startTransition calls (Bug #6)
+    // Calculate new locks state first, then apply side effects after
+    
+    // Calculate the new locks list based on event type
+    let newLocks: ActionLock[] = []
+    
     setLocks((currentLocks) => {
-      const newLocks = [...currentLocks]
+      newLocks = [...currentLocks]
       
       if (event.type === 'lock:acquired' || event.type === 'lock:extended') {
         // Add or update lock
@@ -262,53 +278,71 @@ export function useActionLocksSSE(
         }
       }
       
-      // Update lock status if this event affects the filtered resource/action
-      if (
-        resourceType &&
-        resourceId &&
-        action &&
-        event.resourceType === resourceType &&
-        event.resourceId === resourceId &&
-        event.action === action
-      ) {
-        let newStatus: LockStatus
-        if (event.type === 'lock:acquired' || event.type === 'lock:extended') {
-          newStatus = {
-            locked: true,
-            lockedBy: event.adminEmail,
-            lockId: event.lockId,
-          }
-        } else {
-          newStatus = { locked: false }
-        }
-        
-        setLockStatus(newStatus)
-        
-        if (onLockStatusChangeRef.current) {
-          onLockStatusChangeRef.current(newStatus)
-        }
-      }
-      
-      if (onLocksChangeRef.current) {
-        onLocksChangeRef.current(newLocks)
-      }
-      
       return newLocks
     })
+    
+    // FIXED: Move side effects outside the state updater function
+    // Update lock status if this event affects the filtered resource/action
+    if (
+      resourceType &&
+      resourceId &&
+      action &&
+      event.resourceType === resourceType &&
+      event.resourceId === resourceId &&
+      event.action === action
+    ) {
+      let newStatus: LockStatus
+      if (event.type === 'lock:acquired' || event.type === 'lock:extended') {
+        newStatus = {
+          locked: true,
+          lockedBy: event.adminEmail,
+          lockId: event.lockId,
+        }
+      } else {
+        newStatus = { locked: false }
+      }
+      
+      // FIXED: Remove startTransition for lock status updates (Bug #48)
+      // Lock status changes are important for UI consistency and should be applied immediately
+      // Using startTransition here could cause race conditions where callbacks see stale state
+      setLockStatus(newStatus)
+      
+      // Callback should be called synchronously after state update
+      if (onLockStatusChangeRef.current) {
+        onLockStatusChangeRef.current(newStatus)
+      }
+    }
+    
+    // FIXED: Call locks change callback synchronously (Bug #48)
+    // startTransition should only wrap state updates, not callback invocations
+    // Callbacks may have important side effects that shouldn't be deferred
+    if (onLocksChangeRef.current) {
+      onLocksChangeRef.current(newLocks)
+    }
   }, [resourceType, resourceId, action])
 
   /**
    * Connect to SSE stream
+   * CRITICAL-3: Added mounted check to prevent operations after unmount
    */
   const connectSSE = useCallback(() => {
-    // Only connect if enabled and session exists
-    if (!enabled || !session) {
+    // CRITICAL-3: Don't connect if component is unmounted
+    if (!isMountedRef.current) {
+      return
+    }
+    
+    // Only connect if enabled and session exists (check ref to avoid dependency on enabled)
+    if (!enabledRef.current || !session) {
       return
     }
 
     // Clean up existing connection
     if (eventSourceRef.current) {
-      eventSourceRef.current.close()
+      try {
+        eventSourceRef.current.close()
+      } catch (error) {
+        // Ignore errors during cleanup
+      }
       eventSourceRef.current = null
     }
 
@@ -325,6 +359,15 @@ export function useActionLocksSSE(
 
       // Handle connection open
       eventSource.onopen = () => {
+        // CRITICAL-3: Check if still mounted before updating state
+        if (!isMountedRef.current) {
+          try {
+            eventSource.close()
+          } catch (error) {
+            // Ignore errors
+          }
+          return
+        }
         setConnected(true)
         setError(null)
         reconnectAttemptsRef.current = 0
@@ -333,6 +376,11 @@ export function useActionLocksSSE(
 
       // Handle messages
       eventSource.onmessage = (event) => {
+        // CRITICAL-3: Check if still mounted before processing
+        if (!isMountedRef.current) {
+          return
+        }
+        
         try {
           // Ignore heartbeat messages (lines starting with :)
           if (!event.data || event.data.trim() === '' || event.data.startsWith(':')) {
@@ -363,19 +411,51 @@ export function useActionLocksSSE(
 
       // Handle errors
       eventSource.onerror = () => {
+        // CRITICAL-3: Check if still mounted before processing
+        if (!isMountedRef.current) {
+          return
+        }
+        
         setConnected(false)
-        eventSource.close()
+        try {
+          eventSource.close()
+        } catch (error) {
+          // Ignore errors during cleanup
+        }
         eventSourceRef.current = null
+
+        // CRITICAL-3: Check if still mounted before attempting reconnection
+        if (!isMountedRef.current) {
+          return
+        }
+
+        // HIGH-4: Check if still enabled before attempting reconnection (use ref)
+        if (!enabledRef.current) {
+          return
+        }
 
         // Attempt reconnection
         if (reconnectAttemptsRef.current < maxReconnectAttempts) {
           reconnectAttemptsRef.current++
+          // MEDIUM-6: Exponential backoff: delay = baseDelay * 2^(attempt-1)
+          const reconnectDelay = BASE_RECONNECT_DELAY_MS * Math.pow(2, reconnectAttemptsRef.current - 1)
           reconnectTimeoutRef.current = setTimeout(() => {
-            connectSSE()
+            // CRITICAL-3: Check if still mounted before reconnecting
+            // HIGH-4: Check if still enabled before reconnecting (use ref)
+            if (isMountedRef.current && enabledRef.current) {
+              connectSSE()
+            }
           }, reconnectDelay)
         } else {
           // Max reconnection attempts reached, fallback to polling
-          setError(new Error("SSE connection failed after multiple attempts. Falling back to polling."))
+          if (isMountedRef.current) {
+            setError(new Error("SSE connection failed after multiple attempts. Falling back to polling."))
+          }
+          
+          // CRITICAL-3: Only set up polling if still mounted
+          if (!isMountedRef.current) {
+            return
+          }
           
           // Clear any existing fallback polling
           if (fallbackPollIntervalRef.current) {
@@ -384,6 +464,15 @@ export function useActionLocksSSE(
           
           // Fallback to polling - set up interval
           fallbackPollIntervalRef.current = setInterval(async () => {
+            // CRITICAL-3: Check if still mounted before polling
+            if (!isMountedRef.current) {
+              if (fallbackPollIntervalRef.current) {
+                clearInterval(fallbackPollIntervalRef.current)
+                fallbackPollIntervalRef.current = null
+              }
+              return
+            }
+            
             try {
               let url: string
               if (resourceType && resourceId && action) {
@@ -431,13 +520,18 @@ export function useActionLocksSSE(
         }
       }
     } catch (initError) {
-      setError(initError instanceof Error ? initError : new Error(String(initError)))
-      setConnected(false)
+      // CRITICAL-3: Only set error if still mounted
+      if (isMountedRef.current) {
+        setError(initError instanceof Error ? initError : new Error(String(initError)))
+        setConnected(false)
+      }
     }
-  }, [enabled, session, resourceType, resourceId, action, handleLockEvent, updateLockStatusFromLocks])
+  }, [session, resourceType, resourceId, action, handleLockEvent, updateLockStatusFromLocks]) // Removed 'enabled' from dependencies
 
   /**
    * Initialize SSE connection
+   * CRITICAL-3: Added proper cleanup and mounted tracking
+   * HIGH-7: Fetch initial state before SSE connection
    */
   useEffect(() => {
     // Only connect on client side
@@ -445,25 +539,96 @@ export function useActionLocksSSE(
       return
     }
 
-    // Connect to SSE
-    connectSSE()
+    // CRITICAL-3: Mark as mounted
+    isMountedRef.current = true
+
+    // HIGH-7: Fetch initial state before SSE connection to prevent race conditions
+    // This ensures we have current lock status even if SSE connection fails
+    const fetchInitialState = async () => {
+      if (!isMountedRef.current || !enabledRef.current) {
+        return
+      }
+      
+      try {
+        let url: string
+        if (resourceType && resourceId && action) {
+          url = `${API_PATHS.adminActionLocks}?resourceType=${encodeURIComponent(resourceType)}&resourceId=${encodeURIComponent(resourceId)}&action=${encodeURIComponent(action)}`
+        } else if (resourceType && resourceId) {
+          url = `${API_PATHS.adminActionLocks}?resourceType=${encodeURIComponent(resourceType)}&resourceId=${encodeURIComponent(resourceId)}`
+        } else {
+          url = API_PATHS.adminActionLocks
+        }
+        
+        const response = await fetch(url, {
+          credentials: 'include',
+        })
+        
+        if (response.ok && isMountedRef.current) {
+          const json = await response.json()
+          if (json.success) {
+            if (resourceType && resourceId && action) {
+              setLockStatus(json.data.lockStatus || { locked: false })
+            } else if (resourceType && resourceId) {
+              const resourceLocks = json.data.locks || []
+              setLocks(resourceLocks)
+              
+              if (action) {
+                const actionLock = resourceLocks.find((l: ActionLock) => l.action === action)
+                if (actionLock) {
+                  setLockStatus({
+                    locked: true,
+                    lockedBy: actionLock.adminEmail,
+                    lockId: actionLock.id,
+                  })
+                } else {
+                  setLockStatus({ locked: false })
+                }
+              }
+            } else {
+              setLocks(json.data.locks || [])
+            }
+            setLoaded(true)
+          }
+        }
+      } catch (error) {
+        // Silently handle fetch errors - SSE will provide updates
+      }
+    }
+    
+    // Fetch initial state, then connect to SSE
+    fetchInitialState().then(() => {
+      if (isMountedRef.current) {
+        connectSSE()
+      }
+    })
 
     // Cleanup on unmount
     return () => {
-      if (eventSourceRef.current) {
-        eventSourceRef.current.close()
-        eventSourceRef.current = null
-      }
+      // CRITICAL-3: Mark as unmounted first to prevent operations
+      isMountedRef.current = false
+      
+      // CRITICAL-3: Clean up in order to prevent race conditions
+      // HIGH-5: Ensure fallback polling is cleaned up
       if (reconnectTimeoutRef.current) {
         clearTimeout(reconnectTimeoutRef.current)
         reconnectTimeoutRef.current = null
       }
+      
       if (fallbackPollIntervalRef.current) {
         clearInterval(fallbackPollIntervalRef.current)
         fallbackPollIntervalRef.current = null
       }
+      
+      if (eventSourceRef.current) {
+        try {
+          eventSourceRef.current.close()
+        } catch (error) {
+          // Ignore errors during cleanup
+        }
+        eventSourceRef.current = null
+      }
     }
-  }, [connectSSE])
+  }, [connectSSE, resourceType, resourceId, action]) // Removed 'enabled' from dependencies
 
   return {
     lockStatus,

@@ -3,6 +3,9 @@ import { randomUUID, randomBytes, randomInt } from "crypto"
 import { sendAdminAutoUpdateNotification, sendBookingStatusNotification } from "./email"
 import { checkBookingOverlap } from "./booking-validations"
 import { getCached, setCached, invalidateCache, CacheKeys } from "./cache"
+import { TZDate } from '@date-fns/tz'
+import { format } from 'date-fns'
+import { logInfo, logWarn, logError } from "./logger"
 
 /**
  * Booking Management Utilities
@@ -147,7 +150,16 @@ async function generateUniqueBookingReference(
     }
     
     // Reference collision detected (rare but possible with timestamp-based generation)
-    console.warn(`Reference number collision detected on attempt ${attempt + 1}/${maxRetries}, generating new reference...`)
+    try {
+      const { logWarn } = await import('./logger')
+      await logWarn('Reference number collision detected, generating new reference', {
+        attempt: attempt + 1,
+        maxRetries,
+        referenceType: 'booking',
+      })
+    } catch {
+      // Fallback if logger fails
+    }
     // Track monitoring metric
     try {
       const { trackCollisionRetry } = await import('./monitoring')
@@ -182,7 +194,15 @@ export async function createBooking(data: BookingData, referenceNumber?: string)
     
     if (checkResult.rows.length > 0) {
       // Provided reference number collides - generate unique one
-      console.warn(`Provided reference number ${referenceNumber} collides, generating unique reference`)
+      try {
+        const { logWarn } = await import('./logger')
+        await logWarn('Provided reference number collides, generating unique reference', {
+          providedReference: referenceNumber,
+          referenceType: 'booking',
+        })
+      } catch {
+        // Fallback if logger fails
+      }
       finalReferenceNumber = await generateUniqueBookingReference(db)
     } else {
       // Provided reference number is unique
@@ -287,17 +307,22 @@ export async function getBookingById(id: string): Promise<Booking | null> {
 
   const booking = formatBooking(result.rows[0] as any)
   
-  // Debug: Log fee data from database
+  // Debug: Log fee data from database (development only)
   if (process.env.NODE_ENV === 'development') {
-    console.log('[getBookingById] Booking from database:', {
-      bookingId: id,
-      feeAmount: booking.feeAmount,
-      feeCurrency: booking.feeCurrency,
-      feeAmountOriginal: booking.feeAmountOriginal,
-      hasFee: !!(booking.feeAmount && Number(booking.feeAmount) > 0),
-      bookingKeys: Object.keys(booking).filter(k => k.toLowerCase().includes('fee')),
-      rawRowFeeAmount: (result.rows[0] as any).fee_amount,
-    })
+    try {
+      const { logDebug } = await import('./logger')
+      await logDebug('Booking retrieved from database', {
+        bookingId: id,
+        feeAmount: booking.feeAmount,
+        feeCurrency: booking.feeCurrency,
+        feeAmountOriginal: booking.feeAmountOriginal,
+        hasFee: !!(booking.feeAmount && Number(booking.feeAmount) > 0),
+        bookingKeys: Object.keys(booking).filter(k => k.toLowerCase().includes('fee')),
+        rawRowFeeAmount: (result.rows[0] as any).fee_amount,
+      })
+    } catch {
+      // Fallback if logger fails
+    }
   }
   
   // Cache the result (5 minutes TTL)
@@ -386,12 +411,20 @@ export async function listBookings(options?: {
       conditions.push("(reference_number IS NOT NULL AND reference_number != '' AND LOWER(reference_number) LIKE ?)")
       args.push(`%${refLower}%`)
       searchFields.push("reference_number")
-      console.log('[listBookings] Reference number search:', { 
-        searchTerm: refLower, 
-        searchPattern: `%${refLower}%`,
-        condition: "(reference_number IS NOT NULL AND reference_number != '' AND LOWER(reference_number) LIKE ?)",
-        argsCount: args.length
-      })
+      // Debug logging (development only)
+      if (process.env.NODE_ENV === 'development') {
+        try {
+          const { logDebug } = await import('./logger')
+          await logDebug('Reference number search', {
+            searchTerm: refLower,
+            searchPattern: `%${refLower}%`,
+            condition: "(reference_number IS NOT NULL AND reference_number != '' AND LOWER(reference_number) LIKE ?)",
+            argsCount: args.length,
+          })
+        } catch {
+          // Fallback if logger fails
+        }
+      }
     }
   }
 
@@ -419,25 +452,29 @@ export async function listBookings(options?: {
   const whereClause =
     conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : ""
 
-  // Debug logging for search queries
+  // Debug logging for search queries (development only)
   const isSearching = !!(options?.referenceNumber || options?.email || options?.name || options?.phone)
-  if (isSearching) {
-    console.log('[listBookings] Search query:', {
-      whereClause,
-      args,
-      argsCount: args.length,
-      searchFields: {
-        referenceNumber: options?.referenceNumber,
-        email: options?.email,
-        name: options?.name,
-        phone: options?.phone,
-      },
-      excludeArchived: options?.excludeArchived,
-      isSearching,
-      statuses: options?.statuses,
-      status: options?.status,
-      willExcludeArchived: options?.excludeArchived && !isSearching,
-    })
+  if (isSearching && process.env.NODE_ENV === 'development') {
+    try {
+      const { logDebug } = await import('./logger')
+      await logDebug('Search query', {
+        whereClause,
+        argsCount: args.length,
+        searchFields: {
+          referenceNumber: options?.referenceNumber,
+          email: options?.email,
+          name: options?.name,
+          phone: options?.phone,
+        },
+        excludeArchived: options?.excludeArchived,
+        isSearching,
+        statuses: options?.statuses,
+        status: options?.status,
+        willExcludeArchived: options?.excludeArchived && !isSearching,
+      })
+    } catch {
+      // Fallback if logger fails
+    }
   }
 
   // Get total count (optimized: uses indexes for filtering)
@@ -448,11 +485,19 @@ export async function listBookings(options?: {
   })
   const total = (countResult.rows[0] as any).count
   
-  console.log('[listBookings] Count query result:', {
-    total,
-    whereClause,
-    argsCount: args.length,
-  })
+  // Debug logging (development only)
+  if (process.env.NODE_ENV === 'development' && isSearching) {
+    try {
+      const { logDebug } = await import('./logger')
+      await logDebug('Count query result', {
+        total,
+        whereClause,
+        argsCount: args.length,
+      })
+    } catch {
+      // Fallback if logger fails
+    }
+  }
   
   // Debug: Log sample reference numbers and their statuses if searching by reference
   if (options?.referenceNumber) {
@@ -461,37 +506,71 @@ export async function listBookings(options?: {
         sql: `SELECT reference_number, id, name, status FROM bookings WHERE reference_number IS NOT NULL LIMIT 10`,
         args: [],
       })
-      console.log('[listBookings] Sample reference numbers in DB:', sampleResult.rows.map((r: any) => ({
-        id: r.id,
-        reference_number: r.reference_number,
-        name: r.name,
-        status: r.status,
-      })))
+      // Debug logging (development only)
+      if (process.env.NODE_ENV === 'development') {
+        try {
+          const { logDebug } = await import('./logger')
+          await logDebug('Sample reference numbers in DB', {
+            sampleCount: sampleResult.rows.length,
+            samples: sampleResult.rows.map((r: any) => ({
+              id: r.id,
+              reference_number: r.reference_number,
+              name: r.name,
+              status: r.status,
+            })),
+          })
+        } catch {
+          // Fallback if logger fails
+        }
+      }
       
       // Check what statuses the matching bookings have
       const matchingResult = await db.execute({
         sql: `SELECT reference_number, id, name, status FROM bookings ${whereClause} LIMIT 10`,
         args,
       })
-      console.log('[listBookings] Matching bookings from search query:', matchingResult.rows.map((r: any) => ({
-        id: r.id,
-        reference_number: r.reference_number,
-        name: r.name,
-        status: r.status,
-      })))
-      console.log('[listBookings] Matching bookings count:', matchingResult.rows.length)
       
-      console.log('[listBookings] Total bookings with reference_number:', (await db.execute({
-        sql: `SELECT COUNT(*) as count FROM bookings WHERE reference_number IS NOT NULL`,
-        args: [],
-      })).rows[0]?.count)
+      // Debug logging (development only)
+      if (process.env.NODE_ENV === 'development') {
+        try {
+          const { logDebug } = await import('./logger')
+          await logDebug('Matching bookings from search query', {
+            matchingCount: matchingResult.rows.length,
+            matches: matchingResult.rows.map((r: any) => ({
+              id: r.id,
+              reference_number: r.reference_number,
+              name: r.name,
+              status: r.status,
+            })),
+            totalWithReference: (await db.execute({
+              sql: `SELECT COUNT(*) as count FROM bookings WHERE reference_number IS NOT NULL`,
+              args: [],
+            })).rows[0]?.count,
+          })
+        } catch {
+          // Fallback if logger fails
+        }
+      }
     } catch (err) {
-      console.error('[listBookings] Error getting sample reference numbers:', err)
+      try {
+        const { logError } = await import('./logger')
+        await logError('Error getting sample reference numbers', {
+          error: err instanceof Error ? err.message : String(err),
+        }, err instanceof Error ? err : new Error(String(err)))
+      } catch {
+        // Fallback if logger fails
+      }
     }
   }
   
-  if (options?.referenceNumber || options?.email || options?.name || options?.phone) {
-    console.log('[listBookings] Search results count:', total)
+  // Debug logging (development only)
+  if ((options?.referenceNumber || options?.email || options?.name || options?.phone) && process.env.NODE_ENV === 'development') {
+    try {
+      const { logDebug } = await import('./logger')
+      await logDebug('Search results count', { total })
+    } catch {
+      // Fallback if logger fails
+    }
   }
 
   // Optimize ORDER BY based on available filters and user preferences to leverage composite indexes
@@ -580,14 +659,22 @@ export async function listBookings(options?: {
   // Since SELECT clause comes before WHERE clause, exactMatchArgs must come before args
   const allArgs = [...exactMatchArgs, ...args, fetchLimit]
   
-  console.log('[listBookings] Executing SELECT query:', {
-    selectClause: selectClause.substring(0, 100) + '...',
-    whereClause,
-    orderByClause,
-    argsCount: allArgs.length,
-    argsPreview: allArgs.slice(0, 5), // Log first 5 args for debugging
-    fetchLimit,
-  })
+  // Debug logging (development only)
+  if (process.env.NODE_ENV === 'development' && isSearching) {
+    try {
+      const { logDebug } = await import('./logger')
+      await logDebug('Executing SELECT query', {
+        selectClausePreview: selectClause.substring(0, 100) + '...',
+        whereClause,
+        orderByClause,
+        argsCount: allArgs.length,
+        argsPreview: allArgs.slice(0, 5), // Log first 5 args for debugging
+        fetchLimit,
+      })
+    } catch {
+      // Fallback if logger fails
+    }
+  }
   
   const result = await db.execute({
     sql: `
@@ -599,44 +686,60 @@ export async function listBookings(options?: {
     args: allArgs,
   })
   
-  console.log('[listBookings] SELECT query returned:', {
-    rowCount: result.rows.length,
-    hasRows: result.rows.length > 0,
-    firstRowKeys: result.rows[0] ? Object.keys(result.rows[0]).slice(0, 10) : null,
-  })
-
-  console.log('[listBookings] Raw DB result:', {
-    rowCount: result.rows.length,
-    firstRowSample: result.rows[0] ? {
-      id: result.rows[0].id,
-      reference_number: result.rows[0].reference_number,
-      name: result.rows[0].name,
-      status: result.rows[0].status,
-      fee_amount: result.rows[0].fee_amount,
-      fee_currency: result.rows[0].fee_currency,
-      fee_amount_original: result.rows[0].fee_amount_original,
-      hasFee: !!(result.rows[0].fee_amount && Number(result.rows[0].fee_amount) > 0),
-      allFeeKeys: Object.keys(result.rows[0]).filter(k => k.toLowerCase().includes('fee')),
-    } : null,
-    rowsWithFee: result.rows.filter((r: any) => r.fee_amount && Number(r.fee_amount) > 0).length,
-  })
+  // Debug logging (development only)
+  if (process.env.NODE_ENV === 'development' && isSearching) {
+    try {
+      const { logDebug } = await import('./logger')
+      await logDebug('SELECT query returned', {
+        rowCount: result.rows.length,
+        hasRows: result.rows.length > 0,
+        firstRowKeys: result.rows[0] ? Object.keys(result.rows[0]).slice(0, 10) : null,
+      })
+      
+      await logDebug('Raw DB result', {
+        rowCount: result.rows.length,
+        firstRowSample: result.rows[0] ? {
+          id: result.rows[0].id,
+          reference_number: result.rows[0].reference_number,
+          name: result.rows[0].name,
+          status: result.rows[0].status,
+          fee_amount: result.rows[0].fee_amount,
+          fee_currency: result.rows[0].fee_currency,
+          fee_amount_original: result.rows[0].fee_amount_original,
+          hasFee: !!(result.rows[0].fee_amount && Number(result.rows[0].fee_amount) > 0),
+          allFeeKeys: Object.keys(result.rows[0]).filter(k => k.toLowerCase().includes('fee')),
+        } : null,
+        rowsWithFee: result.rows.filter((r: any) => r.fee_amount && Number(r.fee_amount) > 0).length,
+      })
+    } catch {
+      // Fallback if logger fails
+    }
+  }
   
   let bookings = result.rows.map((row: any) => formatBooking(row))
   
-  console.log('[listBookings] After formatBooking:', {
-    bookingsCount: bookings.length,
-    firstBookingSample: bookings[0] ? {
-      id: bookings[0].id,
-      referenceNumber: bookings[0].referenceNumber,
-      name: bookings[0].name,
-      status: bookings[0].status,
-      feeAmount: bookings[0].feeAmount,
-      feeCurrency: bookings[0].feeCurrency,
-      feeAmountOriginal: bookings[0].feeAmountOriginal,
-      hasFee: !!(bookings[0].feeAmount && Number(bookings[0].feeAmount) > 0),
-    } : null,
-    bookingsWithFee: bookings.filter((b: Booking) => b.feeAmount && Number(b.feeAmount) > 0).length,
-  })
+  // Debug logging (development only) - after formatBooking
+  if (process.env.NODE_ENV === 'development' && isSearching) {
+    try {
+      const { logDebug } = await import('./logger')
+      await logDebug('After formatBooking', {
+        bookingsCount: bookings.length,
+        firstBookingSample: bookings[0] ? {
+          id: bookings[0].id,
+          referenceNumber: bookings[0].referenceNumber,
+          name: bookings[0].name,
+          status: bookings[0].status,
+          feeAmount: bookings[0].feeAmount,
+          feeCurrency: bookings[0].feeCurrency,
+          feeAmountOriginal: bookings[0].feeAmountOriginal,
+          hasFee: !!(bookings[0].feeAmount && Number(bookings[0].feeAmount) > 0),
+        } : null,
+        bookingsWithFee: bookings.filter((b: Booking) => b.feeAmount && Number(b.feeAmount) > 0).length,
+      })
+    } catch {
+      // Fallback if logger fails
+    }
+  }
 
   // Apply overlap filter if enabled
   if (options?.showOverlappingOnly) {
@@ -745,7 +848,17 @@ function parseTimeString(timeString: string | null): { hour24: number; minutes: 
       }
     }
   } catch (error) {
-    console.warn(`Failed to parse time string:`, error)
+    // Log warning asynchronously (non-blocking)
+    import('./logger').then(({ logWarn }) => {
+      logWarn('Failed to parse time string', {
+        timeString,
+        error: error instanceof Error ? error.message : String(error),
+      }).catch(() => {
+        // Ignore logger errors
+      })
+    }).catch(() => {
+      // Fallback if logger import fails
+    })
   }
   
   return null
@@ -777,7 +890,18 @@ async function calculateReservationStartTimestamp(
         const tzDateWithTime = new TZDate(year, month, day, parsed.hour24, parsed.minutes, 0, BANGKOK_TIMEZONE)
         startTimestamp = Math.floor(tzDateWithTime.getTime() / 1000)
       } catch (error) {
-        console.warn(`Failed to apply start_time:`, error)
+        // Log warning asynchronously (non-blocking)
+        import('./logger').then(({ logWarn }) => {
+          logWarn('Failed to apply start_time', {
+            startTime,
+            startDate,
+            error: error instanceof Error ? error.message : String(error),
+          }).catch(() => {
+            // Ignore logger errors
+          })
+        }).catch(() => {
+          // Fallback if logger import fails
+        })
       }
     }
   }
@@ -825,7 +949,18 @@ async function calculateReservationEndTimestamp(
         const tzDateWithTime = new TZDate(year, month, day, parsed.hour24, parsed.minutes, 0, BANGKOK_TIMEZONE)
         endTimestamp = Math.floor(tzDateWithTime.getTime() / 1000)
       } catch (error) {
-        console.warn(`Failed to apply end_time:`, error)
+        // Log warning asynchronously (non-blocking)
+        import('./logger').then(({ logWarn }) => {
+          logWarn('Failed to apply end_time', {
+            endTime,
+            endDate,
+            error: error instanceof Error ? error.message : String(error),
+          }).catch(() => {
+            // Ignore logger errors
+          })
+        }).catch(() => {
+          // Fallback if logger import fails
+        })
       }
     }
   } else if (!isEffectivelySingleDay && endTimestamp && !endTime) {
@@ -843,7 +978,17 @@ async function calculateReservationEndTimestamp(
       const tzDateEndOfDay = new TZDate(year, month, day, 23, 59, 59, BANGKOK_TIMEZONE)
       endTimestamp = Math.floor(tzDateEndOfDay.getTime() / 1000)
     } catch (error) {
-      console.warn(`Failed to set end of day for endDate:`, error)
+      // Log warning asynchronously (non-blocking)
+      import('./logger').then(({ logWarn }) => {
+        logWarn('Failed to set end of day for endDate', {
+          endDate,
+          error: error instanceof Error ? error.message : String(error),
+        }).catch(() => {
+          // Ignore logger errors
+        })
+      }).catch(() => {
+        // Fallback if logger import fails
+      })
     }
   }
 
@@ -851,7 +996,19 @@ async function calculateReservationEndTimestamp(
   // This provides an additional safety check even though validation exists elsewhere
   // Note: For single-day bookings, endTimestamp might equal startDate (which is valid)
   if (endTimestamp !== null && endTimestamp < startDate) {
-    console.warn(`Invalid timestamp range: endTimestamp (${endTimestamp}, ${new Date(endTimestamp * 1000).toISOString()}) < startDate (${startDate}, ${new Date(startDate * 1000).toISOString()})`)
+    // Log warning asynchronously (non-blocking)
+    import('./logger').then(({ logWarn }) => {
+      logWarn('Invalid timestamp range: endTimestamp < startDate', {
+        endTimestamp,
+        endTimestampISO: new Date(endTimestamp * 1000).toISOString(),
+        startDate,
+        startDateISO: new Date(startDate * 1000).toISOString(),
+      }).catch(() => {
+        // Ignore logger errors
+      })
+    }).catch(() => {
+      // Fallback if logger import fails
+    })
     // Return null to indicate invalid range - caller should handle this
     return null
   }
@@ -984,7 +1141,7 @@ export async function autoUpdateFinishedBookings(): Promise<{
           
           // If no rows affected, booking was modified - skip this update
           if (updateResult.rowsAffected === 0) {
-            console.log(`Skipping auto-update for booking ${bookingRow.id} - booking was modified`)
+            await logInfo('Skipping auto-update for booking - booking was modified', { bookingId: bookingRow.id })
             return
           }
 
@@ -1013,18 +1170,18 @@ export async function autoUpdateFinishedBookings(): Promise<{
           try {
             const { deleteImage } = await import("./blob")
             await deleteImage(bookingRow.deposit_evidence_url)
-            console.log(`[autoUpdateFinishedBookings] Deleted deposit evidence blob for cancelled booking ${bookingRow.id}`, { blobUrl: bookingRow.deposit_evidence_url })
+            await logInfo('Deleted deposit evidence blob for cancelled booking', { bookingId: bookingRow.id, blobUrl: bookingRow.deposit_evidence_url })
           } catch (blobError) {
             // Log error but continue - queue cleanup job as fallback
-            console.error(`[autoUpdateFinishedBookings] Failed to delete deposit evidence blob for booking ${bookingRow.id}:`, blobError)
+            await logError('Failed to delete deposit evidence blob for booking', { bookingId: bookingRow.id }, blobError instanceof Error ? blobError : new Error(String(blobError)))
             
             // Queue cleanup job for retry (fail-safe approach)
             try {
               const { enqueueJob } = await import("./job-queue")
               await enqueueJob("cleanup-orphaned-blob", { blobUrl: bookingRow.deposit_evidence_url }, { priority: 1 })
-              console.log(`[autoUpdateFinishedBookings] Queued orphaned blob cleanup job for deposit evidence`, { blobUrl: bookingRow.deposit_evidence_url })
+              await logInfo('Queued orphaned blob cleanup job for deposit evidence', { bookingId: bookingRow.id, blobUrl: bookingRow.deposit_evidence_url })
             } catch (queueError) {
-              console.error(`[autoUpdateFinishedBookings] Failed to queue orphaned blob cleanup:`, queueError)
+              await logError('Failed to queue orphaned blob cleanup', { bookingId: bookingRow.id }, queueError instanceof Error ? queueError : new Error(String(queueError)))
             }
           }
         }
@@ -1053,14 +1210,14 @@ export async function autoUpdateFinishedBookings(): Promise<{
                 changeReason: changeReason,
                 skipDuplicateCheck: true, // Always send - user needs to know booking was cancelled
               })
-              console.log(`Cancellation email sent to user for booking ${bookingRow.id} (pending/postponed - start date passed)`)
+              await logInfo('Cancellation email sent to user for booking (pending/postponed - start date passed)', { bookingId: bookingRow.id })
             } catch (emailError) {
-              console.error(`Failed to send cancellation email to user for booking ${bookingRow.id}:`, emailError)
+              await logError('Failed to send cancellation email to user for booking', { bookingId: bookingRow.id }, emailError instanceof Error ? emailError : new Error(String(emailError)))
               // Continue even if email fails
             }
           }
         } catch (error) {
-          console.error(`Failed to fetch full booking details for ${bookingRow.id}:`, error)
+          await logError('Failed to fetch full booking details for booking', { bookingId: bookingRow.id }, error instanceof Error ? error : new Error(String(error)))
           // Continue even if we can't fetch full details
         }
 
@@ -1107,7 +1264,7 @@ export async function autoUpdateFinishedBookings(): Promise<{
           
           // If no rows affected, booking was modified - skip this update
           if (updateResult.rowsAffected === 0) {
-            console.log(`Skipping auto-update for booking ${bookingRow.id} - booking was modified`)
+            await logInfo('Skipping auto-update for booking - booking was modified', { bookingId: bookingRow.id })
             return
           }
 
@@ -1137,18 +1294,18 @@ export async function autoUpdateFinishedBookings(): Promise<{
           try {
             const { deleteImage } = await import("./blob")
             await deleteImage(bookingRow.deposit_evidence_url)
-            console.log(`[autoUpdateFinishedBookings] Deleted deposit evidence blob for finished booking ${bookingRow.id}`, { blobUrl: bookingRow.deposit_evidence_url })
+            await logInfo('Deleted deposit evidence blob for finished booking', { bookingId: bookingRow.id, blobUrl: bookingRow.deposit_evidence_url })
           } catch (blobError) {
             // Log error but continue - queue cleanup job as fallback
-            console.error(`[autoUpdateFinishedBookings] Failed to delete deposit evidence blob for booking ${bookingRow.id}:`, blobError)
+            await logError('Failed to delete deposit evidence blob for finished booking', { bookingId: bookingRow.id }, blobError instanceof Error ? blobError : new Error(String(blobError)))
             
             // Queue cleanup job for retry (fail-safe approach)
             try {
               const { enqueueJob } = await import("./job-queue")
               await enqueueJob("cleanup-orphaned-blob", { blobUrl: bookingRow.deposit_evidence_url }, { priority: 1 })
-              console.log(`[autoUpdateFinishedBookings] Queued orphaned blob cleanup job for deposit evidence`, { blobUrl: bookingRow.deposit_evidence_url })
+              await logInfo('Queued orphaned blob cleanup job for deposit evidence (finished)', { bookingId: bookingRow.id, blobUrl: bookingRow.deposit_evidence_url })
             } catch (queueError) {
-              console.error(`[autoUpdateFinishedBookings] Failed to queue orphaned blob cleanup:`, queueError)
+              await logError('Failed to queue orphaned blob cleanup (finished)', { bookingId: bookingRow.id }, queueError instanceof Error ? queueError : new Error(String(queueError)))
             }
           }
         }
@@ -1177,14 +1334,14 @@ export async function autoUpdateFinishedBookings(): Promise<{
                 changeReason: changeReason,
                 skipDuplicateCheck: true, // Always send - user needs to know booking is finished
               })
-              console.log(`Finished email sent to user for booking ${bookingRow.id}`)
+              await logInfo('Finished email sent to user for booking', { bookingId: bookingRow.id })
             } catch (emailError) {
-              console.error(`Failed to send finished email to user for booking ${bookingRow.id}:`, emailError)
+              await logError('Failed to send finished email to user for booking', { bookingId: bookingRow.id }, emailError instanceof Error ? emailError : new Error(String(emailError)))
               // Continue even if email fails
             }
           }
         } catch (error) {
-          console.error(`Failed to fetch full booking details for ${bookingRow.id}:`, error)
+          await logError('Failed to fetch full booking details for finished booking', { bookingId: bookingRow.id }, error instanceof Error ? error : new Error(String(error)))
           // Continue even if we can't fetch full details
         }
       }
@@ -1196,7 +1353,7 @@ export async function autoUpdateFinishedBookings(): Promise<{
     try {
       await sendAdminAutoUpdateNotification(updatedBookings)
     } catch (emailError) {
-      console.error("Failed to send admin auto-update notification:", emailError)
+      await logError('Failed to send admin auto-update notification', { updatedCount: updatedBookings.length }, emailError instanceof Error ? emailError : new Error(String(emailError)))
       // Don't fail the function if email fails
     }
   }
@@ -1238,7 +1395,7 @@ export async function generateUniqueResponseToken(
     }
     
     // Token collision detected (extremely rare)
-    console.warn(`Token collision detected on attempt ${attempt + 1}/${maxRetries}, generating new token...`)
+    await logWarn('Token collision detected, generating new token', { attempt: attempt + 1, maxRetries })
     // Track monitoring metric
     try {
       const { trackCollisionRetry } = await import('./monitoring')
@@ -1270,7 +1427,7 @@ export async function updateBookingStatus(
     depositVerifiedFromOtherChannel?: boolean
   }
 ): Promise<Booking> {
-  return await dbTransaction(async (db) => {
+  const transactionResult = await dbTransaction(async (db) => {
     // Get current booking
     const currentResult = await db.execute({
       sql: "SELECT * FROM bookings WHERE id = ?",
@@ -1417,7 +1574,12 @@ export async function updateBookingStatus(
     
     // CRITICAL: Log token generation decision for pending -> pending_deposit transitions
     if (isPendingToPendingDeposit) {
-      console.log(`[updateBookingStatus] pending -> pending_deposit: needsNewToken=${needsNewToken}, hasExistingToken=${!!currentBooking.response_token}, tokenExpired=${currentBooking.token_expires_at ? currentBooking.token_expires_at < now : 'N/A'}`)
+      await logInfo('Token generation decision for pending -> pending_deposit transition', { 
+        bookingId, 
+        needsNewToken, 
+        hasExistingToken: !!currentBooking.response_token, 
+        tokenExpired: currentBooking.token_expires_at ? currentBooking.token_expires_at < now : 'N/A' 
+      })
     }
     
     // Prevent rapid token regeneration: if token was recently generated and status hasn't changed, preserve it
@@ -1426,13 +1588,13 @@ export async function updateBookingStatus(
       responseToken = currentBooking.response_token
       tokenExpiresAt = currentBooking.token_expires_at
       // Don't add to updateFields - keep existing token
-      console.log(`Preserving existing token for booking ${bookingId} (recently generated, preventing rapid regeneration)`)
+      await logInfo('Preserving existing token for booking (recently generated, preventing rapid regeneration)', { bookingId })
     } 
     else if (needsNewToken && (finalStatus === "pending_deposit" || finalStatus === "pending" || finalStatus === "paid_deposit")) {
       // Generate new token with collision handling
       // CRITICAL: For pending -> pending_deposit, this MUST generate a token
       if (isPendingToPendingDeposit) {
-        console.log(`[updateBookingStatus] Generating new token for pending -> pending_deposit transition (booking ${bookingId})`)
+        await logInfo('Generating new token for pending -> pending_deposit transition', { bookingId })
       }
       responseToken = await generateUniqueResponseToken(db)
       updateFields.push("response_token = ?")
@@ -1451,7 +1613,7 @@ export async function updateBookingStatus(
       if (startTimestamp < now) {
         // For past dates, set token to expire 30 days from now (allows time for deposit upload)
         tokenExpiresAt = now + (30 * 24 * 60 * 60) // 30 days in seconds
-        console.log(`[updateBookingStatus] Booking date is in the past, extending token expiration to 30 days from now for restored booking ${bookingId}`)
+        await logInfo('Booking date is in the past, extending token expiration to 30 days from now for restored booking', { bookingId })
       } else {
         // Normal case: Token expires at start date/time
         tokenExpiresAt = startTimestamp
@@ -1485,7 +1647,7 @@ export async function updateBookingStatus(
         if (startTimestamp < now) {
           // For past dates, set token to expire 30 days from now (allows time for deposit upload)
           tokenExpiresAt = now + (30 * 24 * 60 * 60) // 30 days in seconds
-          console.log(`[updateBookingStatus] Booking date is in the past, extending token expiration to 30 days from now for restored booking ${bookingId}`)
+          await logInfo('Booking date is in the past, extending token expiration to 30 days from now for restored booking', { bookingId })
         } else {
           // Normal case: Token expires at start date/time
           tokenExpiresAt = startTimestamp
@@ -1494,7 +1656,7 @@ export async function updateBookingStatus(
         updateFields.push("token_expires_at = ?")
         updateArgs.push(tokenExpiresAt)
         
-        console.log(`[updateBookingStatus] Generated new token for pending_deposit status (token was missing/expired), expires at: ${new Date(tokenExpiresAt * 1000).toISOString()}`)
+        await logInfo('Generated new token for pending_deposit status (token was missing/expired)', { bookingId, expiresAt: new Date(tokenExpiresAt * 1000).toISOString() })
       }
     } else if (finalStatus === "paid_deposit") {
       // For paid_deposit status, preserve existing token if valid (user needs token to access booking details)
@@ -1522,7 +1684,7 @@ export async function updateBookingStatus(
         if (startTimestamp < now) {
           // For past dates, set token to expire 30 days from now (allows time for user to access booking details)
           tokenExpiresAt = now + (30 * 24 * 60 * 60) // 30 days in seconds
-          console.log(`[updateBookingStatus] Booking date is in the past, extending token expiration to 30 days from now for restored paid_deposit booking ${bookingId}`)
+          await logInfo('Booking date is in the past, extending token expiration to 30 days from now for restored paid_deposit booking', { bookingId })
         } else {
           // Normal case: Token expires at start date/time
           tokenExpiresAt = startTimestamp
@@ -1531,7 +1693,7 @@ export async function updateBookingStatus(
         updateFields.push("token_expires_at = ?")
         updateArgs.push(tokenExpiresAt)
         
-        console.log(`[updateBookingStatus] Generated new token for paid_deposit status (token was missing/expired), expires at: ${new Date(tokenExpiresAt * 1000).toISOString()}`)
+        await logInfo('Generated new token for paid_deposit status (token was missing/expired)', { bookingId, expiresAt: new Date(tokenExpiresAt * 1000).toISOString() })
       }
     }
     // Note: confirmed status doesn't need tokens for deposit upload (deposit already verified)
@@ -1555,7 +1717,7 @@ export async function updateBookingStatus(
         // Update status field
         updateFields[0] = "status = ?"
         updateArgs[0] = finalStatus
-        console.log(`[updateBookingStatus] Start date passed, cancelling booking instead of rejecting deposit`)
+        await logInfo('Start date passed, cancelling booking instead of rejecting deposit', { bookingId })
       } else {
         // Generate new token with expiration at start date/time (same as original)
         responseToken = await generateUniqueResponseToken(db)
@@ -1567,7 +1729,7 @@ export async function updateBookingStatus(
       updateFields.push("token_expires_at = ?")
       updateArgs.push(tokenExpiresAt)
       
-        console.log(`[updateBookingStatus] Generated new token for deposit rejection, expires at start date/time: ${new Date(tokenExpiresAt * 1000).toISOString()}`)
+        await logInfo('Generated new token for deposit rejection, expires at start date/time', { bookingId, expiresAt: new Date(tokenExpiresAt * 1000).toISOString() })
       }
       
       // Clear deposit evidence URL and verification fields when rejecting or restoring to pending_deposit
@@ -1732,7 +1894,7 @@ export async function updateBookingStatus(
         updateFields: updateFields.filter(f => f.includes('response_token')),
         needsNewToken: true,
       }
-      console.error(`[updateBookingStatus] CRITICAL: Token missing for pending_deposit booking ${bookingId}`, errorDetails)
+      await logError('CRITICAL: Token missing for pending_deposit booking', { ...errorDetails }, new Error('Token generation failed for pending_deposit booking'))
       
       // CRITICAL: Throw error to cause transaction rollback
       // This ensures the booking status is not updated if token generation failed
@@ -1746,7 +1908,7 @@ export async function updateBookingStatus(
     // Log warning (non-critical) for other cases where token might be missing
     // This handles edge cases but doesn't require transaction rollback
     if (finalStatus === "pending_deposit" && !updatedBooking.responseToken && !requiresToken) {
-      console.warn(`[updateBookingStatus] Token missing for pending_deposit booking ${bookingId} (non-critical)`, {
+      await logWarn('Token missing for pending_deposit booking (non-critical)', {
         bookingId,
         oldStatus,
         finalStatus,
@@ -1772,15 +1934,42 @@ export async function updateBookingStatus(
     // Invalidate list caches (bookings list may have changed)
     await invalidateCache('bookings:list')
     
-    // Broadcast booking update via SSE (after successful DB update and cache invalidation)
+    // CRITICAL-1: Store broadcast data to send AFTER transaction commits
+    // This prevents broadcasts from being sent if transaction fails or before commit
+    const broadcastData = {
+      oldStatus,
+      finalStatus,
+      updatedBooking,
+      currentBooking,
+      dbRow,
+      options,
+    }
+    
+    return { updatedBooking, broadcastData }
+  })
+  
+  // Extract results from transaction
+  const { updatedBooking, broadcastData } = transactionResult
+  
+  // CRITICAL-1: Broadcasts happen AFTER transaction commits successfully
+  // This ensures data is committed before clients are notified
+  // Only broadcast if transaction succeeded (we have updatedBooking)
+  if (updatedBooking) {
     try {
       const { broadcastBookingEvent } = await import('../../app/api/v1/admin/bookings/stream/route')
       const { broadcastUserBookingEvent } = await import('../../app/api/v1/booking/[token]/stream/route')
       
+      const { oldStatus, finalStatus, currentBooking, dbRow, options } = broadcastData
+      
       // Determine event type based on what changed
+      // MEDIUM-4: Always broadcast status changes - if status changed, it's a status change event
       let eventType: 'booking:status_changed' | 'booking:updated' = 'booking:updated'
       if (oldStatus !== finalStatus) {
         eventType = 'booking:status_changed'
+        // MEDIUM-4: Status change always triggers broadcast (handled below)
+      } else {
+        // MEDIUM-4: Even if status didn't change, if booking was updated, broadcast it
+        eventType = 'booking:updated'
       }
       
       // Check if user response was added/updated
@@ -1806,87 +1995,103 @@ export async function updateBookingStatus(
       const depositWasVerified = updatedDepositVerifiedAt !== null && 
         (currentDepositVerifiedAt === null || updatedDepositVerifiedAt !== currentDepositVerifiedAt)
       
-      // Prepare booking data for broadcasts
-      // CRITICAL: Use raw database row data (timestamps) instead of formatted booking (date strings)
-      // The BookingUpdateEvent interface expects Unix timestamp numbers, not date strings
-      const bookingData = {
-        id: dbRow.id,
-        status: dbRow.status,
-        name: dbRow.name,
-        email: dbRow.email,
-        event_type: dbRow.event_type,
-        start_date: dbRow.start_date ?? null,
-        end_date: dbRow.end_date ?? null,
-        start_time: dbRow.start_time ?? null,
-        end_time: dbRow.end_time ?? null,
-        updated_at: dbRow.updated_at,
-        user_response: dbRow.user_response ?? null,
-        response_date: dbRow.response_date ?? null,
-        deposit_evidence_url: dbRow.deposit_evidence_url ?? null,
-        deposit_verified_at: dbRow.deposit_verified_at ?? null,
-        proposed_date: dbRow.proposed_date ?? null,
-        proposed_end_date: dbRow.proposed_end_date ?? null,
-        responseToken: dbRow.response_token ?? null, // Include token for user SSE
+      // CRITICAL-4: Fetch fresh booking data AFTER transaction commits to prevent staleness
+      // This ensures broadcast data matches the committed state
+      const { getTursoClient } = await import('./turso')
+      const { prepareBookingDataForSSE } = await import('./booking-sse-data')
+      const db = getTursoClient()
+      const freshBookingRow = await db.execute({
+        sql: "SELECT * FROM bookings WHERE id = ?",
+        args: [updatedBooking.id],
+      })
+      
+      if (freshBookingRow.rows.length === 0) {
+        // Booking was deleted or doesn't exist - don't broadcast
+        const { logWarn } = await import('./logger')
+        await logWarn('Cannot broadcast: booking not found after transaction', {
+          bookingId: updatedBooking.id,
+        })
+        return updatedBooking
       }
       
-      // Broadcast to admin clients (status change)
+      // Use fresh data from database (guaranteed to match committed state)
+      const freshDbRow = freshBookingRow.rows[0] as any
+      const bookingData = {
+        ...prepareBookingDataForSSE(freshDbRow),
+        responseToken: freshDbRow.response_token ?? null, // Include token for user SSE
+      }
+      
+      // HIGH-1: Consolidate broadcasts to prevent duplicate events
+      // Send primary event (status change takes priority), then additional events only if needed
+      
+      // Primary event: Status change (highest priority)
       if (eventType === 'booking:status_changed') {
-        broadcastBookingEvent(
+        await broadcastBookingEvent(
           'booking:status_changed',
           bookingData,
           {
             previousStatus: oldStatus,
             changedBy: options?.changedBy,
             changeReason: options?.changeReason,
+            // HIGH-1: Include flags in metadata to indicate what else changed
+            hasNewUserResponse: Boolean(isNewUserResponse),
+            hasNewDeposit: Boolean(isNewDeposit),
+            depositWasVerified: Boolean(depositWasVerified),
           }
         )
         
         // Broadcast to user clients (status change)
-        broadcastUserBookingEvent(
+        await broadcastUserBookingEvent(
           'booking:status_changed',
           bookingData,
           {
             previousStatus: oldStatus,
+            depositWasVerified: depositWasVerified,
           }
         )
-      }
-      
-      // Broadcast user response if new response was added (admin only - user already knows they submitted)
-      if (isNewUserResponse) {
-        broadcastBookingEvent(
-          'booking:user_response',
-          bookingData
-        )
-      }
-      
-      // Broadcast deposit upload if new deposit was uploaded (admin only - user already knows they uploaded)
-      if (isNewDeposit) {
-        broadcastBookingEvent(
-          'booking:deposit_uploaded',
-          bookingData
-        )
-      }
-      
-      // Broadcast deposit verification to user clients
-      if (depositWasVerified) {
-        broadcastUserBookingEvent(
-          'booking:deposit_verified',
-          bookingData
-        )
-      }
-      
-      // Broadcast general update if nothing specific changed but booking was updated
-      if (eventType === 'booking:updated' && !isNewUserResponse && !isNewDeposit) {
-        broadcastBookingEvent(
-          'booking:updated',
-          bookingData
-        )
         
-        // Also broadcast to user clients for general updates
-        broadcastUserBookingEvent(
-          'booking:updated',
-          bookingData
-        )
+        // HIGH-1: Don't send separate events if status changed (already included in status_changed metadata)
+        // Only send additional events if they happened WITHOUT a status change
+      } else {
+        // No status change - send specific events for what changed
+        
+        // Broadcast user response if new response was added (admin only - user already knows they submitted)
+        if (isNewUserResponse) {
+          await broadcastBookingEvent(
+            'booking:user_response',
+            bookingData
+          )
+        }
+        
+        // Broadcast deposit upload if new deposit was uploaded (admin only - user already knows they uploaded)
+        if (isNewDeposit) {
+          await broadcastBookingEvent(
+            'booking:deposit_uploaded',
+            bookingData
+          )
+        }
+        
+        // Broadcast deposit verification to user clients (only if no status change)
+        if (depositWasVerified) {
+          await broadcastUserBookingEvent(
+            'booking:deposit_verified',
+            bookingData
+          )
+        }
+        
+        // Broadcast general update if nothing specific changed but booking was updated
+        if (eventType === 'booking:updated' && !isNewUserResponse && !isNewDeposit && !depositWasVerified) {
+          await broadcastBookingEvent(
+            'booking:updated',
+            bookingData
+          )
+          
+          // Also broadcast to user clients for general updates
+          await broadcastUserBookingEvent(
+            'booking:updated',
+            bookingData
+          )
+        }
       }
 
       // Broadcast stats update (when booking status changes affect pending count)
@@ -1910,7 +2115,7 @@ export async function updateBookingStatus(
           const emailQueueStats = await getEmailQueueStats()
           const pendingEmailCount = (emailQueueStats.pending || 0) + (emailQueueStats.failed || 0)
           
-          broadcastStatsUpdate({
+          await broadcastStatsUpdate({
             bookings: {
               pending: pendingBookingsResult.total,
             },
@@ -1935,7 +2140,8 @@ export async function updateBookingStatus(
         }
       }
     } catch (broadcastError) {
-      // Don't fail if broadcast fails - logging is optional
+      // CRITICAL-2: Log broadcast failures but don't fail the request
+      // Broadcasts are best-effort and shouldn't block the main operation
       const errorMessage = broadcastError instanceof Error ? broadcastError.message : String(broadcastError)
       
       // Log with structured logger
@@ -1949,9 +2155,9 @@ export async function updateBookingStatus(
         // Fallback: if logger fails, silently continue (avoid infinite loops)
       }
     }
-    
-    return updatedBooking
-  })
+  }
+  
+  return updatedBooking
 }
 
 /**
@@ -2153,12 +2359,15 @@ export async function updateBookingFee(
       if (options?.feeConversionRate !== null && options?.feeConversionRate !== undefined) {
         // Rate provided, calculate base amount
         finalConversionRate = options.feeConversionRate
-        finalFeeAmount = feeAmountOriginal * finalConversionRate
+        // FIXED: Round to 2 decimal places to prevent floating point precision errors (Issue #17)
+        finalFeeAmount = Math.round((feeAmountOriginal * finalConversionRate) * 100) / 100
         finalRateDate = now
       } else if (options?.feeAmount !== null && options?.feeAmount !== undefined) {
         // Base amount provided, calculate rate
         finalFeeAmount = options.feeAmount
-        finalConversionRate = finalFeeAmount / feeAmountOriginal
+        // FIXED: Round to 4 decimal places for conversion rate, then round fee amount (Issue #17)
+        finalConversionRate = Math.round((finalFeeAmount / feeAmountOriginal) * 10000) / 10000
+        finalFeeAmount = Math.round((feeAmountOriginal * finalConversionRate) * 100) / 100
         finalRateDate = now
       } else {
         throw new Error("Either conversion rate or base amount (THB) must be provided for non-THB currency")
@@ -2290,10 +2499,44 @@ export async function updateBookingFee(
     })
 
     const updatedBooking = formatBooking(result.rows[0] as any)
+    const dbRow = result.rows[0] as any
     
     // Invalidate cache
     await invalidateCache(CacheKeys.booking(bookingId))
     await invalidateCache('bookings:list')
+    
+    // CRITICAL: Broadcast fee update event to admin clients (for real-time updates)
+    // Use raw database row data (Unix timestamps, not formatted dates)
+    try {
+      const { broadcastBookingEvent } = await import('../../app/api/v1/admin/bookings/stream/route')
+      
+      // Prepare booking data with raw timestamps (Unix timestamps, not date strings)
+      // FIXED: Use prepareBookingDataForSSE for consistent data preparation (Bug #83)
+      // This ensures all required fields have proper fallbacks and prevents type violations
+      const { prepareBookingDataForSSE } = await import('./booking-sse-data')
+      const bookingData = prepareBookingDataForSSE(dbRow)
+      
+      await broadcastBookingEvent('booking:updated', bookingData, {
+        changedBy: options?.changedBy,
+        changeReason: options?.changeReason || 'Fee updated',
+      })
+    } catch (broadcastError) {
+      // Don't fail if broadcast fails - it's non-critical
+      // Use logger if available, otherwise console.warn
+      try {
+        const { createRequestLogger } = await import('./logger')
+        const logger = createRequestLogger('updateBookingFee', 'updateBookingFee')
+        await logger.warn('Failed to broadcast fee update event', {
+          bookingId,
+          error: broadcastError instanceof Error ? broadcastError.message : String(broadcastError),
+        })
+      } catch {
+        // Fallback to console if logger fails (shouldn't happen, but fail-safe)
+        if (process.env.NODE_ENV === 'development') {
+          console.warn('Failed to broadcast fee update event', broadcastError)
+        }
+      }
+    }
     
     return updatedBooking
   })
@@ -2386,8 +2629,7 @@ export async function logAdminAction(data: {
 export function formatBooking(row: any): Booking {
   // Helper to convert timestamp to Bangkok timezone date string
   const timestampToBangkokDateString = (timestamp: number): string => {
-    const { TZDate } = require('@date-fns/tz')
-    const { format } = require('date-fns')
+    // FIXED: Use ES6 import instead of require() for consistency
     const BANGKOK_TIMEZONE = 'Asia/Bangkok'
     const utcDate = new Date(timestamp * 1000)
     const tzDate = new TZDate(utcDate.getTime(), BANGKOK_TIMEZONE)
@@ -2492,7 +2734,7 @@ export async function getBookingByToken(token: string): Promise<Booking | null> 
 
   if (result.rows.length === 0) {
     // Log for debugging - check if there are any bookings with NULL token that might need one
-    console.warn(`[getBookingByToken] No booking found with token: ${token.substring(0, 8)}...`)
+    await logWarn('No booking found with token', { tokenPrefix: token.substring(0, 8) + '...' })
     return null
   }
 
@@ -2516,12 +2758,12 @@ export async function getBookingByToken(token: string): Promise<Booking | null> 
     const currentDate = new TZDate(now * 1000, BANGKOK_TIMEZONE)
     const expiredAtStr = format(expiredDate, 'yyyy-MM-dd HH:mm:ss') + ' GMT+7'
     const currentTimeStr = format(currentDate, 'yyyy-MM-dd HH:mm:ss') + ' GMT+7'
-    console.warn(`[getBookingByToken] Token expired for booking ${booking.id}. Expired at: ${expiredAtStr}, Current time: ${currentTimeStr}, Grace period: 5 minutes`)
+    await logWarn('Token expired for booking', { bookingId: booking.id, expiredAt: expiredAtStr, currentTime: currentTimeStr, gracePeriod: '5 minutes' })
     return null
   }
   
   // Log successful token lookup for debugging
-  console.log(`[getBookingByToken] Found booking ${booking.id} with valid token. Status: ${booking.status}`)
+  await logInfo('Found booking with valid token', { bookingId: booking.id, status: booking.status })
 
   const formattedBooking = formatBooking(booking)
   
@@ -2533,15 +2775,14 @@ export async function getBookingByToken(token: string): Promise<Booking | null> 
 
 /**
  * Submit user response to booking
+ * 
+ * NOTE: Only "cancel" response is supported in the current booking flow.
+ * Legacy responses ("accept", "propose", "check-in") have been removed.
  */
 export async function submitUserResponse(
   bookingId: string,
-  response: "accept" | "propose" | "cancel" | "check-in",
+  response: "cancel",
   options?: {
-    proposedDate?: string
-    proposedEndDate?: string
-    proposedStartTime?: string
-    proposedEndTime?: string
     message?: string
   }
 ): Promise<Booking> {
@@ -2562,228 +2803,59 @@ export async function submitUserResponse(
 
     const currentBooking = currentResult.rows[0] as any
     const oldStatus = currentBooking.status
+    
+    // CRITICAL: Store original updated_at for optimistic locking
+    // This prevents race conditions when multiple users submit responses simultaneously
+    const originalUpdatedAt = currentBooking.updated_at
 
-    let newStatus: string
-    let userResponseText: string
-    let proposedTimestamp: number | null = null
-    let proposedEndTimestamp: number | null = null
-    let dateRange: number = currentBooking.date_range || 0
+    // Only "cancel" is supported - set status to cancelled
+    const newStatus = "cancelled"
+    const userResponseText = "User cancelled the booking"
 
-    if (response === "check-in") {
-      // Check-in is only allowed for accepted bookings
-      if (oldStatus !== "accepted") {
-        throw new Error("Check-in is only available for accepted bookings")
-      }
-      newStatus = "checked-in"
-      userResponseText = "User confirmed check-in"
-    } else if (response === "accept") {
-      newStatus = "pending"
-      userResponseText = "User accepted the proposed date"
-      // If accepting a proposal, update date_range if proposed dates indicate multiple days
-      if (currentBooking.proposed_end_date && currentBooking.proposed_end_date !== currentBooking.proposed_date) {
-        dateRange = 1 // Multiple days
-      } else {
-        dateRange = 0 // Single day
-      }
-    } else if (response === "propose") {
-      // User proposes new date - status becomes "postponed" (from any status)
-      newStatus = "postponed"
-      if (options?.proposedDate) {
-            // Validate proposed dates using GMT+7 timezone
-            const { getBangkokTime, createBangkokTimestamp } = await import("./timezone")
-            const { validateProposedDates } = await import("./booking-validations")
-
-            // Validate proposed date is in the future (GMT+7)
-            const validation = await validateProposedDates(
-              options.proposedDate,
-              options.proposedEndDate || null,
-              currentBooking.start_date
-            )
-
-            if (!validation.valid) {
-              // Format error message to be caught by withErrorHandling as validation error
-              const errorMessage = validation.reason || "Invalid proposed date"
-              const error = new Error(errorMessage)
-              error.name = 'ValidationError'
-              throw error
-            }
-        
-        // Create timestamps using GMT+7
-        // Extract date part from ISO string if needed (API might receive ISO strings)
-        const dateString = options.proposedDate.includes('T') 
-          ? options.proposedDate.split('T')[0] 
-          : options.proposedDate
-        proposedTimestamp = createBangkokTimestamp(dateString, options.proposedStartTime || null)
-        
-        // Build time information
-        const timeInfo: string[] = []
-        if (options?.proposedStartTime) {
-          timeInfo.push(`Start Time: ${options.proposedStartTime}`)
-        }
-        if (options?.proposedEndTime) {
-          timeInfo.push(`End Time: ${options.proposedEndTime}`)
-        }
-        const timeText = timeInfo.length > 0 ? ` (${timeInfo.join(", ")})` : ""
-        
-        // Check if multiple days (proposedEndDate provided and different from proposedDate)
-        if (options?.proposedEndDate && options.proposedEndDate !== options.proposedDate) {
-          // Extract date part from ISO string if needed
-          const endDateString = options.proposedEndDate.includes('T') 
-            ? options.proposedEndDate.split('T')[0] 
-            : options.proposedEndDate
-          proposedEndTimestamp = createBangkokTimestamp(endDateString, options.proposedEndTime || null)
-          userResponseText = `User proposed alternative dates: ${options.proposedDate} to ${options.proposedEndDate}${timeText}`
-          dateRange = 1 // Multiple days
-        } else {
-          userResponseText = `User proposed alternative date: ${options.proposedDate}${timeText}`
-          dateRange = 0 // Single day
-        }
-      } else {
-        userResponseText = "User proposed alternative date: N/A"
-      }
-    } else {
-      // cancel - allowed from pending, accepted, or postponed
-      newStatus = "cancelled"
-      userResponseText = "User cancelled the booking"
-    }
-
-    // Generate/regenerate response token for postponed status (to ensure user gets email with valid token)
-    let responseToken: string | null = null
-    let tokenExpiresAt: number | null = null
-    if (newStatus === "postponed") {
-      // Always generate new token when user proposes (status becomes postponed)
-      // This ensures user gets a valid token for future access
-      responseToken = generateResponseToken()
-      
-      // Calculate token expiration: reservation end date or 30 days from now, whichever is earlier
-      const thirtyDaysFromNow = now + (30 * 24 * 60 * 60) // 30 days in seconds
-      
-      // Use proposed dates if available, otherwise use original dates
-      let reservationEndDate: number | null = null
-      if (proposedEndTimestamp) {
-        reservationEndDate = proposedEndTimestamp
-      } else if (proposedTimestamp) {
-        reservationEndDate = proposedTimestamp
-      } else if (currentBooking.end_date) {
-        reservationEndDate = currentBooking.end_date
-      } else {
-        reservationEndDate = currentBooking.start_date
-      }
-      
-      // Add end time if available
-      // CRITICAL: Use Bangkok timezone to avoid timezone conversion issues
-      if (currentBooking.end_time && reservationEndDate !== null) {
-        const parsed = parseTimeString(currentBooking.end_time)
-        if (parsed) {
-          try {
-            const { TZDate } = await import('@date-fns/tz')
-            const BANGKOK_TIMEZONE = 'Asia/Bangkok'
-            const utcDate = new Date(reservationEndDate * 1000)
-            const tzDate = new TZDate(utcDate.getTime(), BANGKOK_TIMEZONE)
-            const year = tzDate.getFullYear()
-            const month = tzDate.getMonth()
-            const day = tzDate.getDate()
-            const tzDateWithTime = new TZDate(year, month, day, parsed.hour24, parsed.minutes, 0, BANGKOK_TIMEZONE)
-            reservationEndDate = Math.floor(tzDateWithTime.getTime() / 1000)
-          } catch (error) {
-            // Fallback to date without time
-          }
-        }
-      }
-      
-      tokenExpiresAt = reservationEndDate !== null ? Math.min(reservationEndDate, thirtyDaysFromNow) : thirtyDaysFromNow
-    } else if (newStatus === "cancelled" || newStatus === "checked-in") {
-      // Don't generate token for cancelled or checked-in
-      responseToken = null
-      tokenExpiresAt = null
-    } else {
-      // For other statuses, preserve existing token if valid, otherwise generate new one
-      if (currentBooking.response_token && currentBooking.token_expires_at && currentBooking.token_expires_at > now) {
-        responseToken = currentBooking.response_token
-        tokenExpiresAt = currentBooking.token_expires_at
-      } else {
-        responseToken = generateResponseToken()
-        const thirtyDaysFromNow = now + (30 * 24 * 60 * 60)
-        let reservationEndDate: number | null = null
-        if (currentBooking.end_date) {
-          reservationEndDate = currentBooking.end_date
-        } else {
-          reservationEndDate = currentBooking.start_date
-        }
-        // CRITICAL: Use Bangkok timezone to avoid timezone conversion issues
-        if (currentBooking.end_time && reservationEndDate !== null) {
-          const parsed = parseTimeString(currentBooking.end_time)
-          if (parsed) {
-            try {
-              const { TZDate } = await import('@date-fns/tz')
-              const BANGKOK_TIMEZONE = 'Asia/Bangkok'
-              const utcDate = new Date(reservationEndDate * 1000)
-              const tzDate = new TZDate(utcDate.getTime(), BANGKOK_TIMEZONE)
-              const year = tzDate.getFullYear()
-              const month = tzDate.getMonth()
-              const day = tzDate.getDate()
-              const tzDateWithTime = new TZDate(year, month, day, parsed.hour24, parsed.minutes, 0, BANGKOK_TIMEZONE)
-              reservationEndDate = Math.floor(tzDateWithTime.getTime() / 1000)
-            } catch (error) {
-              // Fallback
-            }
-          }
-        }
-        tokenExpiresAt = reservationEndDate !== null ? Math.min(reservationEndDate, thirtyDaysFromNow) : thirtyDaysFromNow
-      }
-    }
-
-    // Update booking
+    // Update booking - simplified for cancel-only flow
     const updateFields: string[] = [
       "status = ?",
       "user_response = ?",
       "response_date = ?",
-      "proposed_date = ?",
-      "proposed_end_date = ?",
-      "date_range = ?",
       "updated_at = ?"
     ]
     const updateArgs: any[] = [
         newStatus,
         userResponseText + (options?.message ? `\n\nMessage: ${options.message}` : ""),
         now,
-        proposedTimestamp,
-        proposedEndTimestamp,
-        dateRange,
         now,
     ]
 
-    // CRITICAL: Preserve deposit_verified_at when postponing a checked-in booking
-    // This ensures original dates remain blocked until admin accepts the new proposed date
-    if (newStatus === "postponed" && oldStatus === "checked-in" && currentBooking.deposit_verified_at) {
-      updateFields.push("deposit_verified_at = ?")
-      updateArgs.push(currentBooking.deposit_verified_at)
-      if (currentBooking.deposit_verified_by) {
-        updateFields.push("deposit_verified_by = ?")
-        updateArgs.push(currentBooking.deposit_verified_by)
-      }
-    }
-
-    // Add token update if token was generated
-    if (responseToken !== null) {
-      updateFields.push("response_token = ?")
-      updateArgs.push(responseToken)
-      if (tokenExpiresAt !== null) {
-        updateFields.push("token_expires_at = ?")
-        updateArgs.push(tokenExpiresAt)
-      }
-    }
-
-    updateArgs.push(bookingId) // Add bookingId at the end for WHERE clause
-
-    await db.execute({
+    // CRITICAL: Use optimistic locking to prevent race conditions
+    // Check updated_at to ensure booking hasn't been modified by another process
+    const updateResult = await db.execute({
       sql: `
         UPDATE bookings 
         SET ${updateFields.join(", ")}
-        WHERE id = ?
+        WHERE id = ? AND updated_at = ?
       `,
-      args: updateArgs,
+      args: [...updateArgs, bookingId, originalUpdatedAt],
     })
+    
+    // Check if update succeeded (rows affected > 0)
+    // If rows affected = 0, booking was modified by another process
+    if (updateResult.rowsAffected === 0) {
+      // Track monitoring metric
+      try {
+        const { trackOptimisticLockConflict } = await import('./monitoring')
+        trackOptimisticLockConflict('booking', bookingId, { 
+          action: 'submitUserResponse', 
+          response, 
+          oldStatus, 
+          attemptedNewStatus: newStatus 
+        })
+      } catch {
+        // Ignore monitoring errors
+      }
+      throw new Error(
+        "Booking was modified by another process. Please refresh the page and try again."
+      )
+    }
 
     // Record in status history
     const historyId = randomUUID()
@@ -2822,17 +2894,12 @@ export async function submitUserResponse(
       cacheKeysToInvalidate.push(CacheKeys.bookingByToken(currentBooking.response_token))
     }
     
-    // If new token was generated, invalidate old token cache
-    if (responseToken && currentBooking.response_token && responseToken !== currentBooking.response_token) {
-      cacheKeysToInvalidate.push(CacheKeys.bookingByToken(currentBooking.response_token))
-    }
-    
-    // Return both booking and cache keys
+    // Return booking and cache keys (no token changes for cancel)
     return {
       booking: updatedBooking,
       cacheKeys: cacheKeysToInvalidate,
       oldToken: currentBooking.response_token,
-      newToken: responseToken
+      newToken: null // No new token for cancellation
     }
   })
   
@@ -2855,7 +2922,48 @@ export async function submitUserResponse(
     await invalidateCache('bookings:list')
   } catch (cacheError) {
     // Don't fail if cache invalidation fails - it's non-critical
-    console.warn('Cache invalidation failed after user response submission', cacheError)
+    await logWarn('Cache invalidation failed after user response submission', { bookingId, error: cacheError instanceof Error ? cacheError.message : String(cacheError) })
+  }
+  
+  // CRITICAL: Broadcast user response event to admin clients (for real-time updates)
+  // Fetch booking from DB to get raw timestamps (not formatted dates)
+  try {
+    const db = getTursoClient()
+    const bookingRow = await db.execute({
+      sql: "SELECT * FROM bookings WHERE id = ?",
+      args: [bookingId],
+    })
+    
+    if (bookingRow.rows.length > 0) {
+      const dbRow = bookingRow.rows[0] as any
+      const { broadcastBookingEvent } = await import('../../app/api/v1/admin/bookings/stream/route')
+      
+      // Prepare booking data with raw timestamps (Unix timestamps, not date strings)
+      // FIXED: Use prepareBookingDataForSSE for consistent data preparation (Bug #83)
+      // This ensures all required fields have proper fallbacks and prevents type violations
+      const { prepareBookingDataForSSE } = await import('./booking-sse-data')
+      const bookingData = prepareBookingDataForSSE(dbRow)
+      
+      await broadcastBookingEvent('booking:user_response', bookingData, {
+        changeReason: `User ${response} response submitted`,
+      })
+    }
+  } catch (broadcastError) {
+    // Don't fail if broadcast fails - it's non-critical
+    // Use logger if available, otherwise console.warn
+    try {
+      const { createRequestLogger } = await import('./logger')
+      const logger = createRequestLogger('submitUserResponse', 'submitUserResponse')
+      await logger.warn('Failed to broadcast user response event', {
+        bookingId,
+        error: broadcastError instanceof Error ? broadcastError.message : String(broadcastError),
+      })
+    } catch {
+      // Fallback to console if logger fails (shouldn't happen, but fail-safe)
+      if (process.env.NODE_ENV === 'development') {
+        console.warn('Failed to broadcast user response event', broadcastError)
+      }
+    }
   }
   
   return transactionResult.booking

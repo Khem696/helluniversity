@@ -9,6 +9,7 @@ import { sendBookingStatusNotification } from "./email"
 import { formatBooking } from "./bookings"
 import { calculateStartTimestamp } from "./booking-validations"
 import { getBangkokTime } from "./timezone"
+import { logInfo, logError } from "./logger"
 
 // Note: formatBooking is imported from bookings.ts
 
@@ -105,11 +106,13 @@ export async function sendBookingReminders(): Promise<{
             // Log reminder sent
             await logEmailSent(bookingRow.id, "reminder", "7day", bookingRow.email)
             sent7Day++
-            console.log(`7-day reminder sent for booking ${bookingRow.id}`)
+            // Fire-and-forget logging
+            logInfo('7-day reminder sent', { bookingId: bookingRow.id }).catch(() => {})
           }
         }
       } catch (error) {
-        console.error(`Failed to send 7-day reminder for booking ${bookingRow.id}:`, error)
+        // Fire-and-forget logging
+        logError('Failed to send 7-day reminder', { bookingId: bookingRow.id }, error instanceof Error ? error : new Error(String(error))).catch(() => {})
         errors++
       }
     }
@@ -153,11 +156,13 @@ export async function sendBookingReminders(): Promise<{
             // Log reminder sent
             await logEmailSent(bookingRow.id, "reminder", "24hour", bookingRow.email)
             sent24Hour++
-            console.log(`24-hour reminder sent for booking ${bookingRow.id}`)
+            // Fire-and-forget logging
+            logInfo('24-hour reminder sent', { bookingId: bookingRow.id }).catch(() => {})
           }
         }
       } catch (error) {
-        console.error(`Failed to send 24-hour reminder for booking ${bookingRow.id}:`, error)
+        // Fire-and-forget logging
+        logError('Failed to send 24-hour reminder', { bookingId: bookingRow.id }, error instanceof Error ? error : new Error(String(error))).catch(() => {})
         errors++
       }
     }

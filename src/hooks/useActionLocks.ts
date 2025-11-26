@@ -132,7 +132,19 @@ export function useActionLocks(options: UseActionLocksOptions = {}) {
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : 'Unknown error'
       setError(errorMessage)
-      console.error('Error fetching lock status:', err)
+      // Use structured logger for errors
+      import('@/lib/logger').then(({ logError }) => {
+        logError('Error fetching lock status', {
+          error: errorMessage,
+          resourceType,
+          resourceId,
+          action,
+        }, err instanceof Error ? err : new Error(String(err))).catch(() => {
+          // Fallback if logger fails
+        })
+      }).catch(() => {
+        // Fallback if logger import fails
+      })
     } finally {
       setIsLoading(false)
     }

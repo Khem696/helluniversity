@@ -75,8 +75,47 @@ export const GET = withVersioning(async (
       blobUrl: booking.depositEvidenceUrl.substring(0, 50) + '...'
     })
     
+    // FIXED: Validate blob URL to prevent SSRF attacks (Issue #15)
+    // Only allow Vercel Blob Storage URLs
+    const blobUrl = booking.depositEvidenceUrl
+    try {
+      const urlObj = new URL(blobUrl)
+      // Vercel Blob Storage URLs follow pattern: https://*.public.blob.vercel-storage.com/*
+      const isValidBlobUrl = urlObj.protocol === 'https:' && 
+        (urlObj.hostname.endsWith('.public.blob.vercel-storage.com') ||
+         urlObj.hostname.endsWith('.blob.vercel-storage.com'))
+      
+      if (!isValidBlobUrl) {
+        await logger.warn('Deposit image proxy rejected: invalid blob URL', {
+          bookingId: booking.id,
+          hostname: urlObj.hostname,
+          blobUrl: blobUrl.substring(0, 100) + '...'
+        })
+        return errorResponse(
+          ErrorCodes.VALIDATION_ERROR,
+          "Invalid deposit evidence URL",
+          undefined,
+          400,
+          { requestId }
+        )
+      }
+    } catch (urlError) {
+      await logger.warn('Deposit image proxy rejected: malformed blob URL', {
+        bookingId: booking.id,
+        error: urlError instanceof Error ? urlError.message : String(urlError),
+        blobUrl: blobUrl.substring(0, 100) + '...'
+      })
+      return errorResponse(
+        ErrorCodes.VALIDATION_ERROR,
+        "Invalid deposit evidence URL format",
+        undefined,
+        400,
+        { requestId }
+      )
+    }
+    
     // Fetch image from blob storage
-    const imageResponse = await fetch(booking.depositEvidenceUrl, {
+    const imageResponse = await fetch(blobUrl, {
       headers: {
         'User-Agent': 'HellUniversity-Reservation-System/1.0',
       },

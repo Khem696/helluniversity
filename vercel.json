@@ -39,6 +39,14 @@
     {
       "path": "/api/v1/cron/cleanup-orphaned-deposits/",
       "schedule": "0 2 * * *"
+    },
+    {
+      "path": "/api/v1/cron/cleanup-expired-locks/",
+      "schedule": "*/30 * * * *"
+    },
+    {
+      "path": "/api/v1/cron/cleanup-error-logs/",
+      "schedule": "0 3 * * *"
     }
   ]
 }

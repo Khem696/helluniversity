@@ -109,6 +109,8 @@ export function useAdminEmailsSSE(
   const reconnectTimeoutRef = useRef<NodeJS.Timeout | null>(null)
   const reconnectAttemptsRef = useRef<number>(0)
   const fallbackPollIntervalRef = useRef<NodeJS.Timeout | null>(null)
+  // CRITICAL-3: Track if component is mounted to prevent operations after unmount
+  const isMountedRef = useRef<boolean>(true)
   
   // Store callbacks in refs to prevent recreation and stale closures
   const onEmailUpdateRef = useRef(onEmailUpdate)
@@ -116,8 +118,9 @@ export function useAdminEmailsSSE(
   const onStatsUpdateRef = useRef(onStatsUpdate)
   const enabledRef = useRef(enabled)
   
+  // MEDIUM-6: Base delay for exponential backoff (in milliseconds)
+  const BASE_RECONNECT_DELAY_MS = 1000 // 1 second base delay
   const maxReconnectAttempts = 5
-  const reconnectDelay = 3000 // 3 seconds
 
   // Update refs when callbacks change
   useEffect(() => {
@@ -133,38 +136,52 @@ export function useAdminEmailsSSE(
 
   /**
    * Handle email queue event from SSE
+   * MEDIUM-5: Added try-catch around callbacks to prevent one failure from breaking others
    */
   const handleEmailEvent = useCallback((event: EmailQueueUpdateEvent) => {
     setLastEvent(event)
     
-    // Call general callback
+    // MEDIUM-5: Call general callback with try-catch
     if (onEmailUpdateRef.current) {
-      onEmailUpdateRef.current(event)
+      try {
+        onEmailUpdateRef.current(event)
+      } catch (error) {
+        console.error('Error in onEmailUpdate callback:', error)
+      }
     }
     
-    // Call specific callbacks based on event type
-    if (
-      (event.type === 'email:queued' || 
-       event.type === 'email:processing' || 
-       event.type === 'email:sent' || 
-       event.type === 'email:failed') &&
-      onEmailStatusChangeRef.current
-    ) {
-      onEmailStatusChangeRef.current(event)
-    }
-    
-    // Handle stats updates
-    if (event.type === 'email:stats' && event.stats && onStatsUpdateRef.current) {
-      onStatsUpdateRef.current(event.stats)
+    // MEDIUM-5: Call specific callbacks based on event type with try-catch
+    try {
+      if (
+        (event.type === 'email:queued' || 
+         event.type === 'email:processing' || 
+         event.type === 'email:sent' || 
+         event.type === 'email:failed') &&
+        onEmailStatusChangeRef.current
+      ) {
+        onEmailStatusChangeRef.current(event)
+      }
+      
+      // Handle stats updates
+      if (event.type === 'email:stats' && event.stats && onStatsUpdateRef.current) {
+        onStatsUpdateRef.current(event.stats)
+      }
+    } catch (error) {
+      console.error('Error in email event callback:', error)
     }
   }, [])
 
   /**
    * Disconnect from SSE stream
+   * CRITICAL-3: Ensure cleanup is idempotent and safe
    */
   const disconnectSSE = useCallback(() => {
     if (eventSourceRef.current) {
-      eventSourceRef.current.close()
+      try {
+        eventSourceRef.current.close()
+      } catch (error) {
+        // Ignore errors during cleanup
+      }
       eventSourceRef.current = null
       setConnected(false)
     }
@@ -180,8 +197,14 @@ export function useAdminEmailsSSE(
   
   /**
    * Connect to SSE stream
+   * CRITICAL-3: Added mounted check to prevent operations after unmount
    */
   const connectSSE = useCallback(() => {
+    // CRITICAL-3: Don't connect if component is unmounted
+    if (!isMountedRef.current) {
+      return
+    }
+    
     // Only connect if enabled and session exists (check ref to avoid dependency on enabled)
     if (!enabledRef.current || !session) {
       return
@@ -189,7 +212,11 @@ export function useAdminEmailsSSE(
 
     // Clean up existing connection
     if (eventSourceRef.current) {
-      eventSourceRef.current.close()
+      try {
+        eventSourceRef.current.close()
+      } catch (error) {
+        // Ignore errors during cleanup
+      }
       eventSourceRef.current = null
     }
 
@@ -206,6 +233,15 @@ export function useAdminEmailsSSE(
 
       // Handle connection open
       eventSource.onopen = () => {
+        // CRITICAL-3: Check if still mounted before updating state
+        if (!isMountedRef.current) {
+          try {
+            eventSource.close()
+          } catch (error) {
+            // Ignore errors
+          }
+          return
+        }
         setConnected(true)
         setError(null)
         reconnectAttemptsRef.current = 0
@@ -214,6 +250,11 @@ export function useAdminEmailsSSE(
 
       // Handle messages
       eventSource.onmessage = (event) => {
+        // CRITICAL-3: Check if still mounted before processing
+        if (!isMountedRef.current) {
+          return
+        }
+        
         try {
           // Ignore heartbeat messages (lines starting with :)
           if (!event.data || event.data.trim() === '' || event.data.startsWith(':')) {
@@ -229,23 +270,64 @@ export function useAdminEmailsSSE(
 
       // Handle errors
       eventSource.onerror = () => {
+        // CRITICAL-3: Check if still mounted before processing
+        if (!isMountedRef.current) {
+          return
+        }
+        
         setConnected(false)
-        eventSource.close()
+        try {
+          eventSource.close()
+        } catch (error) {
+          // Ignore errors during cleanup
+        }
         eventSourceRef.current = null
+
+        // CRITICAL-3: Check if still mounted before attempting reconnection
+        if (!isMountedRef.current) {
+          return
+        }
+
+        // HIGH-4: Check if still enabled before attempting reconnection
+        if (!enabledRef.current) {
+          return
+        }
 
         // Attempt reconnection
         if (reconnectAttemptsRef.current < maxReconnectAttempts) {
           reconnectAttemptsRef.current++
+          // MEDIUM-6: Exponential backoff: delay = baseDelay * 2^(attempt-1)
+          const reconnectDelay = BASE_RECONNECT_DELAY_MS * Math.pow(2, reconnectAttemptsRef.current - 1)
           reconnectTimeoutRef.current = setTimeout(() => {
-            connectSSE()
+            // CRITICAL-3: Check if still mounted before reconnecting
+            // HIGH-4: Check if still enabled before reconnecting
+            if (isMountedRef.current && enabledRef.current) {
+              connectSSE()
+            }
           }, reconnectDelay)
         } else {
           // Max reconnection attempts reached, fallback to polling
-          setError(new Error("SSE connection failed after multiple attempts. Falling back to polling."))
+          if (isMountedRef.current) {
+            setError(new Error("SSE connection failed after multiple attempts. Falling back to polling."))
+          }
+          
+          // CRITICAL-3: Only set up polling if still mounted
+          if (!isMountedRef.current) {
+            return
+          }
           
           // Fallback polling (every 10 seconds)
           if (!fallbackPollIntervalRef.current) {
             fallbackPollIntervalRef.current = setInterval(async () => {
+              // CRITICAL-3: Check if still mounted before polling
+              if (!isMountedRef.current) {
+                if (fallbackPollIntervalRef.current) {
+                  clearInterval(fallbackPollIntervalRef.current)
+                  fallbackPollIntervalRef.current = null
+                }
+                return
+              }
+              
               try {
                 const response = await fetch(API_PATHS.adminEmailQueue)
                 const json = await response.json()
@@ -253,7 +335,11 @@ export function useAdminEmailsSSE(
                 if (json.success && json.data) {
                   // Trigger stats update if available
                   if (json.data.stats && onStatsUpdateRef.current) {
-                    onStatsUpdateRef.current(json.data.stats)
+                    try {
+                      onStatsUpdateRef.current(json.data.stats)
+                    } catch (error) {
+                      console.error('Error in onStatsUpdate callback:', error)
+                    }
                   }
                 }
               } catch (fetchError) {
@@ -264,8 +350,11 @@ export function useAdminEmailsSSE(
         }
       }
     } catch (initError) {
-      setError(initError instanceof Error ? initError : new Error(String(initError)))
-      setConnected(false)
+      // CRITICAL-3: Only set error if still mounted
+      if (isMountedRef.current) {
+        setError(initError instanceof Error ? initError : new Error(String(initError)))
+        setConnected(false)
+      }
     }
   }, [session, handleEmailEvent]) // Removed 'enabled' from dependencies
 
@@ -292,12 +381,16 @@ export function useAdminEmailsSSE(
    * Initialize SSE connection (only on mount or when connection params change)
    * This effect handles reconnection when connection parameters (session) change
    * It does NOT depend on 'enabled' to avoid reconnecting when dialogs open/close
+   * CRITICAL-3: Added proper cleanup and mounted tracking
    */
   useEffect(() => {
     // Only connect on client side
     if (typeof window === 'undefined') {
       return
     }
+
+    // CRITICAL-3: Mark as mounted
+    isMountedRef.current = true
 
     // Only connect if enabled (check ref to avoid dependency on enabled)
     if (enabledRef.current && session) {
@@ -306,6 +399,8 @@ export function useAdminEmailsSSE(
 
     // Cleanup on unmount or when connection params change
     return () => {
+      // CRITICAL-3: Mark as unmounted first to prevent operations
+      isMountedRef.current = false
       disconnectSSE()
     }
   }, [session, connectSSE, disconnectSSE]) // Removed 'enabled' from dependencies

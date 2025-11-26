@@ -256,6 +256,8 @@ export function AISpaceGenerator() {
   const [loadingProgress, setLoadingProgress] = useState(0)
   const [imageLoadErrors, setImageLoadErrors] = useState<Set<number>>(new Set())
   const recaptchaKeyRef = useRef(0) // Force reCAPTCHA re-render
+  const timeoutIdRef = useRef<NodeJS.Timeout | null>(null) // Store timeout for cleanup on unmount
+  const abortControllerRef = useRef<AbortController | null>(null) // Store AbortController for cleanup on unmount
 
   // Event types available for selection (excluding "Other")
   const eventTypes = [
@@ -284,7 +286,16 @@ export function AISpaceGenerator() {
             localStorage.removeItem(STORAGE_KEY)
           }
         } catch (e) {
-          console.error("Failed to parse stored generated images:", e)
+          // Use structured logger for errors (non-blocking)
+          import('@/lib/logger').then(({ logError }) => {
+            logError('Failed to parse stored generated images', {
+              error: e instanceof Error ? e.message : String(e),
+            }, e instanceof Error ? e : new Error(String(e))).catch(() => {
+              // Fallback if logger fails
+            })
+          }).catch(() => {
+            // Fallback if logger import fails
+          })
           localStorage.removeItem(STORAGE_KEY)
         }
       }
@@ -357,7 +368,16 @@ export function AISpaceGenerator() {
     
     // Create AbortController to handle request cancellation
     const abortController = new AbortController()
-    const timeoutId = setTimeout(() => {
+    abortControllerRef.current = abortController // Store for cleanup on unmount
+    
+    // Clear any existing timeout before creating new one
+    if (timeoutIdRef.current) {
+      clearTimeout(timeoutIdRef.current)
+      timeoutIdRef.current = null
+    }
+    
+    // Set timeout for request cancellation (5 minutes)
+    timeoutIdRef.current = setTimeout(() => {
       abortController.abort()
     }, 300000) // 5 minutes timeout (generation can take a while)
     
@@ -467,14 +487,31 @@ export function AISpaceGenerator() {
             }
             localStorage.setItem(STORAGE_KEY, JSON.stringify(dataToSave))
           } catch (e) {
-            console.error("Failed to save generated images to localStorage:", e)
+            // Use structured logger for errors (non-blocking)
+            import('@/lib/logger').then(({ logError }) => {
+              logError('Failed to save generated images to localStorage', {
+                error: e instanceof Error ? e.message : String(e),
+              }, e instanceof Error ? e : new Error(String(e))).catch(() => {
+                // Fallback if logger fails
+              })
+            }).catch(() => {
+              // Fallback if logger import fails
+            })
           }
         }, 0)
       }
       
-      // Log batch information if available
-      if (responseData.totalImages) {
-        console.log(`Successfully generated ${responseData.totalImages} image(s)`)
+      // Log batch information if available (development only)
+      if (responseData.totalImages && process.env.NODE_ENV === 'development') {
+        import('@/lib/logger').then(({ logDebug }) => {
+          logDebug('Successfully generated images', {
+            totalImages: responseData.totalImages,
+          }).catch(() => {
+            // Fallback if logger fails
+          })
+        }).catch(() => {
+          // Fallback if logger import fails
+        })
       }
       
       // Reset CAPTCHA after successful generation (user needs to verify again to generate more)
@@ -502,12 +539,43 @@ export function AISpaceGenerator() {
         setError("Unknown error occurred")
       }
       
-      console.error("AI generation error:", e)
+      // Use structured logger for errors (non-blocking)
+      import('@/lib/logger').then(({ logError }) => {
+        logError('AI generation error', {
+          error: e instanceof Error ? e.message : String(e),
+          errorName: e instanceof Error ? e.name : undefined,
+        }, e instanceof Error ? e : new Error(String(e))).catch(() => {
+          // Fallback if logger fails
+        })
+      }).catch(() => {
+        // Fallback if logger import fails
+      })
     } finally {
-      clearTimeout(timeoutId)
+      // Always clear timeout and reset refs
+      if (timeoutIdRef.current) {
+        clearTimeout(timeoutIdRef.current)
+        timeoutIdRef.current = null
+      }
+      abortControllerRef.current = null
       setIsLoading(false)
     }
   }
+  
+  // Cleanup on component unmount to prevent memory leaks
+  useEffect(() => {
+    return () => {
+      // Clear timeout if component unmounts while request is in progress
+      if (timeoutIdRef.current) {
+        clearTimeout(timeoutIdRef.current)
+        timeoutIdRef.current = null
+      }
+      // Abort any pending requests
+      if (abortControllerRef.current) {
+        abortControllerRef.current.abort()
+        abortControllerRef.current = null
+      }
+    }
+  }, [])
 
 
   // Handle carousel navigation

@@ -6,20 +6,29 @@
  * GET /api/v1/booking/[token]/stream - Stream booking updates for a specific booking
  * Public endpoint (authenticated by token)
  * 
- * This endpoint streams updates for the booking associated with the provided token.
- * Users can subscribe to real-time updates for their booking status.
- * Clients should use EventSource API to connect to this endpoint.
+ * Uses Redis Queue pattern (1-to-1) for cross-instance communication when configured.
  */
 
 import { NextResponse } from "next/server"
-import { getTursoClient } from "@/lib/turso"
 import { createRequestLogger } from "@/lib/logger"
 import { withVersioning } from "@/lib/api-version-wrapper"
 import { getRequestPath } from "@/lib/api-versioning"
 import { getBookingByToken } from "@/lib/bookings"
+import {
+  isRedisConfigured,
+  pushToQueue,
+  popFromQueue,
+  SSE_CHANNELS,
+  encodeSSEMessage,
+  encodeSSEHeartbeat,
+} from "@/lib/redis-sse"
 
-// In-memory store for SSE connections
-// In production, consider using Redis or a more robust solution for multi-instance deployments
+// Constants
+const MAX_SSE_CLIENTS = 500
+const STALE_CONNECTION_TIMEOUT_MS = 5 * 60 * 1000
+const HEARTBEAT_INTERVAL_MS = 30 * 1000
+const REDIS_POLL_INTERVAL_MS = 1000
+
 interface SSEClient {
   controller: ReadableStreamDefaultController
   bookingId: string
@@ -28,36 +37,23 @@ interface SSEClient {
 }
 
 const sseClients = new Set<SSEClient>()
-
-// Periodic cleanup interval for stale connections (every 5 minutes)
-const STALE_CONNECTION_TIMEOUT = 5 * 60 * 1000 // 5 minutes in milliseconds
 let cleanupInterval: NodeJS.Timeout | null = null
 
-/**
- * Clean up stale SSE connections that haven't sent a heartbeat recently
- */
 async function cleanupStaleConnections() {
   const now = Date.now()
   const staleClients: SSEClient[] = []
   
   for (const client of sseClients) {
-    // If last heartbeat was more than timeout ago, consider it stale
-    if (now - client.lastHeartbeat > STALE_CONNECTION_TIMEOUT) {
+    if (now - client.lastHeartbeat > STALE_CONNECTION_TIMEOUT_MS) {
       staleClients.push(client)
     }
   }
   
-  // Remove stale clients
   for (const client of staleClients) {
-    try {
-      client.controller.close()
-    } catch (error) {
-      // Already closed or error closing
-    }
+    try { client.controller.close() } catch {}
     sseClients.delete(client)
   }
   
-  // Log cleanup if any clients were removed
   if (staleClients.length > 0) {
     try {
       const { logDebug } = await import('@/lib/logger')
@@ -65,49 +61,26 @@ async function cleanupStaleConnections() {
         endpoint: 'user-booking-sse',
         staleCount: staleClients.length,
       })
-    } catch (logError) {
-      // Fallback: if logger fails, silently continue (avoid infinite loops)
-    }
+    } catch {}
   }
 }
 
-/**
- * Start periodic cleanup of stale connections
- */
 function startCleanupInterval() {
-  if (cleanupInterval) {
-    return // Already started
-  }
-  
+  if (cleanupInterval) return
   cleanupInterval = setInterval(() => {
-    cleanupStaleConnections().catch(() => {
-      // Ignore errors in cleanup to prevent interval from stopping
-    })
-  }, STALE_CONNECTION_TIMEOUT)
+    cleanupStaleConnections().catch(() => {})
+  }, STALE_CONNECTION_TIMEOUT_MS)
 }
 
-/**
- * Stop periodic cleanup (for testing or shutdown)
- */
-function stopCleanupInterval() {
-  if (cleanupInterval) {
-    clearInterval(cleanupInterval)
-    cleanupInterval = null
-  }
-}
-
-/**
- * Get the number of connected SSE clients (for debugging)
- */
 export function getUserBookingSSEClientCount(): number {
   return sseClients.size
 }
 
 /**
- * Broadcast booking event to all connected SSE clients for a specific booking
- * Only sends to clients whose token matches the booking
+ * Broadcast booking event to user's SSE connection
+ * Uses Redis Queue pattern (1-to-1) for cross-instance delivery
  */
-export function broadcastUserBookingEvent(
+export async function broadcastUserBookingEvent(
   eventType: 'booking:status_changed' | 'booking:deposit_verified' | 'booking:updated',
   booking: {
     id: string
@@ -117,30 +90,28 @@ export function broadcastUserBookingEvent(
   },
   metadata?: {
     previousStatus?: string
+    depositWasVerified?: boolean
   }
-) {
-  // Only broadcast if booking has a token (user-facing bookings)
+): Promise<{ sentCount: number; totalClients: number; errors: number; redisPublished: boolean }> {
   if (!booking.responseToken) {
-    return
+    return { sentCount: 0, totalClients: 0, errors: 0, redisPublished: false }
   }
 
-  const message = JSON.stringify({
+  const eventData = {
     type: eventType,
     bookingId: booking.id,
     status: booking.status,
     booking: {
-      // Send only essential fields to reduce payload size
       id: booking.id,
       status: booking.status,
-      name: booking.name,
-      email: booking.email,
-      event_type: booking.event_type || booking.eventType,
-      start_date: booking.start_date || booking.startDate,
+      name: booking.name || '',
+      email: booking.email || '',
+      event_type: booking.event_type || booking.eventType || '',
+      start_date: booking.start_date || booking.startDate || Math.floor(Date.now() / 1000),
       end_date: booking.end_date || booking.endDate,
       start_time: booking.start_time || booking.startTime,
       end_time: booking.end_time || booking.endTime,
-      updated_at: booking.updated_at || booking.updatedAt,
-      // Include fields that might have changed
+      updated_at: booking.updated_at || booking.updatedAt || Math.floor(Date.now() / 1000),
       deposit_evidence_url: booking.deposit_evidence_url || booking.depositEvidenceUrl,
       deposit_verified_at: booking.deposit_verified_at || booking.depositVerifiedAt,
       proposed_date: booking.proposed_date || booking.proposedDate,
@@ -148,45 +119,46 @@ export function broadcastUserBookingEvent(
     },
     metadata: metadata || {},
     timestamp: Date.now(),
-  })
-  const sseData = `data: ${message}\n\n`
-  
-  const clientCount = sseClients.size
-  
-  // If no clients connected, return early
-  if (clientCount === 0) {
-    return
   }
   
-  // Send to all connected clients for this booking
+  // Publish to Redis Queue for cross-instance delivery
+  let redisPublished = false
+  if (isRedisConfigured()) {
+    redisPublished = await pushToQueue(
+      SSE_CHANNELS.userBooking(booking.id),
+      eventType,
+      eventData
+    )
+  }
+  
+  // Also deliver locally to in-memory clients
+  const clientCount = sseClients.size
+  if (clientCount === 0) {
+    return { sentCount: 0, totalClients: 0, errors: 0, redisPublished }
+  }
+  
   const disconnectedClients: SSEClient[] = []
   let sentCount = 0
+  let errorCount = 0
   
   for (const client of sseClients) {
-    // Only send to clients watching this specific booking
-    if (client.bookingId !== booking.id) {
-      continue
-    }
+    if (client.bookingId !== booking.id) continue
     
     try {
-      const encoder = new TextEncoder()
-      const encodedData = encoder.encode(sseData)
-      client.controller.enqueue(encodedData)
+      client.controller.enqueue(encodeSSEMessage(eventData))
       client.lastHeartbeat = Date.now()
       sentCount++
-    } catch (error) {
-      // Client disconnected, mark for removal
+    } catch {
+      errorCount++
       disconnectedClients.push(client)
     }
   }
   
-  // Remove disconnected clients
   for (const client of disconnectedClients) {
     sseClients.delete(client)
   }
   
-  // Return count for logging/debugging
-  return { sentCount, totalClients: clientCount }
+  return { sentCount, totalClients: clientCount, errors: errorCount, redisPublished }
 }
 
 export const GET = withVersioning(async (
@@ -228,10 +200,25 @@ export const GET = withVersioning(async (
     )
   }
   
-  // Create a readable stream for SSE
   const stream = new ReadableStream({
     async start(controller) {
-      // Add client to the set
+      if (sseClients.size >= MAX_SSE_CLIENTS) {
+        await logger.warn('SSE client limit reached', {
+          currentClients: sseClients.size,
+          maxClients: MAX_SSE_CLIENTS,
+        })
+        try {
+          controller.enqueue(encodeSSEMessage({
+            type: 'error',
+            error: 'connection_limit_reached',
+            message: 'Server connection limit reached. Please try again later.',
+            timestamp: Date.now(),
+          }))
+        } catch {}
+        try { controller.close() } catch {}
+        return
+      }
+      
       const client: SSEClient = {
         controller,
         bookingId: booking.id,
@@ -239,123 +226,98 @@ export const GET = withVersioning(async (
         lastHeartbeat: Date.now(),
       }
       sseClients.add(client)
-      
-      // Start cleanup interval if not already started
       startCleanupInterval()
       
-      // Store heartbeat interval in client for cleanup
       let heartbeatInterval: NodeJS.Timeout | null = null
+      let redisPollInterval: NodeJS.Timeout | null = null
+      let abortListenerAdded = false
       
-      // Handle client disconnect - defined outside try block so we can always remove it
-      const abortHandler = () => {
-        // Remove the event listener to prevent memory leak
-        request.signal.removeEventListener('abort', abortHandler)
-        
-        if (heartbeatInterval) {
-          clearInterval(heartbeatInterval)
-          heartbeatInterval = null
+      const cleanup = () => {
+        if (heartbeatInterval) { clearInterval(heartbeatInterval); heartbeatInterval = null }
+        if (redisPollInterval) { clearInterval(redisPollInterval); redisPollInterval = null }
+        if (abortListenerAdded) {
+          try { request.signal.removeEventListener('abort', abortHandler) } catch {}
+          abortListenerAdded = false
         }
         sseClients.delete(client)
-        try {
-          controller.close()
-        } catch (error) {
-          // Already closed
-        }
-        // Note: logger.info is async but we can't await in event listener
-        logger.info('User booking SSE connection closed by client').catch(() => {
-          // Ignore logging errors on disconnect
-        })
+        try { controller.close() } catch {}
+      }
+      
+      const abortHandler = () => {
+        cleanup()
+        logger.info('User booking SSE connection closed by client').catch(() => {})
       }
       
       try {
-        // Send initial booking state immediately
-        const encoder = new TextEncoder()
-        const initialMessage = JSON.stringify({
+        // Send initial booking state
+        controller.enqueue(encodeSSEMessage({
           type: 'booking:initial',
-          bookingId: booking.id,
-          status: booking.status,
+          bookingId: booking.id || '',
+          status: booking.status || '',
           booking: {
-            id: booking.id,
-            status: booking.status,
-            name: booking.name,
-            email: booking.email,
-            event_type: booking.eventType,
-            start_date: booking.startDate,
-            end_date: booking.endDate,
-            start_time: booking.startTime,
-            end_time: booking.endTime,
-            updated_at: booking.updatedAt,
-            deposit_evidence_url: booking.depositEvidenceUrl,
-            deposit_verified_at: booking.depositVerifiedAt,
-            proposed_date: booking.proposedDate,
-            proposed_end_date: booking.proposedEndDate,
+            id: booking.id || '',
+            status: booking.status || '',
+            name: booking.name || '',
+            email: booking.email || '',
+            event_type: booking.eventType || '',
+            start_date: booking.startDate || Math.floor(Date.now() / 1000),
+            end_date: booking.endDate || null,
+            start_time: booking.startTime || null,
+            end_time: booking.endTime || null,
+            updated_at: booking.updatedAt || Math.floor(Date.now() / 1000),
+            deposit_evidence_url: booking.depositEvidenceUrl || null,
+            deposit_verified_at: booking.depositVerifiedAt || null,
+            proposed_date: booking.proposedDate || null,
+            proposed_end_date: booking.proposedEndDate || null,
           },
           timestamp: Date.now(),
-        })
-        controller.enqueue(encoder.encode(`data: ${initialMessage}\n\n`))
+        }))
         
         await logger.info('User booking SSE connection established', {
           bookingId: booking.id,
           status: booking.status,
+          redisEnabled: isRedisConfigured(),
         })
         
-        // Send periodic heartbeat to keep connection alive (every 30 seconds)
         heartbeatInterval = setInterval(() => {
           try {
-            controller.enqueue(new TextEncoder().encode(`: heartbeat\n\n`))
+            controller.enqueue(encodeSSEHeartbeat())
             client.lastHeartbeat = Date.now()
-          } catch (error) {
-            // Client disconnected - clean up everything
-            if (heartbeatInterval) {
-              clearInterval(heartbeatInterval)
-              heartbeatInterval = null
-            }
-            // Remove abort event listener to prevent memory leak
-            request.signal.removeEventListener('abort', abortHandler)
-            sseClients.delete(client)
-            // Close controller to ensure stream is properly cleaned up
+          } catch { cleanup() }
+        }, HEARTBEAT_INTERVAL_MS)
+        
+        // Redis Queue polling (for cross-instance messages)
+        if (isRedisConfigured()) {
+          redisPollInterval = setInterval(async () => {
             try {
-              controller.close()
-            } catch (closeError) {
-              // Already closed
-            }
-          }
-        }, 30000)
+              const message = await popFromQueue(SSE_CHANNELS.userBooking(booking.id))
+              if (message) {
+                try {
+                  controller.enqueue(encodeSSEMessage(message.data))
+                  client.lastHeartbeat = Date.now()
+                } catch { cleanup(); return }
+              }
+            } catch {}
+          }, REDIS_POLL_INTERVAL_MS)
+        }
         
-        // Add abort event listener
         request.signal.addEventListener('abort', abortHandler)
+        abortListenerAdded = true
       } catch (error) {
-        // Clean up heartbeat interval if it was created
-        if (heartbeatInterval) {
-          clearInterval(heartbeatInterval)
-          heartbeatInterval = null
-        }
-        
-        // Remove abort event listener to prevent memory leak (safe to call even if not added)
-        request.signal.removeEventListener('abort', abortHandler)
-        
-        await logger.error(
-          'User booking SSE connection error',
-          error instanceof Error ? error : new Error(String(error))
-        )
-        sseClients.delete(client)
+        cleanup()
         try {
-          controller.close()
-        } catch (closeError) {
-          // Already closed
-        }
+          await logger.error('User booking SSE connection error', error instanceof Error ? error : new Error(String(error)))
+        } catch {}
       }
     },
   })
   
-  // Return SSE response with proper headers
   return new NextResponse(stream, {
     headers: {
       'Content-Type': 'text/event-stream',
       'Cache-Control': 'no-cache, no-transform',
       'Connection': 'keep-alive',
-      'X-Accel-Buffering': 'no', // Disable nginx buffering
+      'X-Accel-Buffering': 'no',
     },
   })
 })
-

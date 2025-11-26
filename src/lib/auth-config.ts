@@ -1,5 +1,6 @@
 import NextAuth from "next-auth"
 import Google from "next-auth/providers/google"
+import { logWarn } from "./logger"
 
 /**
  * NextAuth.js v5 Configuration (2025)
@@ -39,7 +40,8 @@ export const { auth, handlers } = NextAuth({
       const allowedDomain = process.env.GOOGLE_WORKSPACE_DOMAIN
       
       if (!allowedDomain) {
-        console.warn("GOOGLE_WORKSPACE_DOMAIN not set - allowing all Google accounts")
+        // Fire-and-forget security warning
+        logWarn("GOOGLE_WORKSPACE_DOMAIN not set - allowing all Google accounts", {}).catch(() => {})
         return true
       }
 
@@ -47,11 +49,14 @@ export const { auth, handlers } = NextAuth({
       if (user.email) {
         const emailDomain = user.email.split("@")[1]
         if (emailDomain !== allowedDomain) {
-          console.warn(`Sign-in rejected: ${user.email} is not from ${allowedDomain}`)
+          // Fire-and-forget security warning (redact part of email)
+          const redactedEmail = user.email.replace(/(.{3}).*@/, '$1***@')
+          logWarn("Sign-in rejected: unauthorized domain", { redactedEmail, expectedDomain: allowedDomain }).catch(() => {})
           return false
         }
       } else {
-        console.warn("Sign-in rejected: No email in user profile")
+        // Fire-and-forget security warning
+        logWarn("Sign-in rejected: No email in user profile", {}).catch(() => {})
         return false
       }
 
@@ -75,8 +80,9 @@ export const { auth, handlers } = NextAuth({
       if (user) {
         token.id = user.id
         token.email = user.email
-        token.name = user.name
-        token.picture = user.image
+        // FIXED: Convert null to undefined for JWT token (JWT expects string | undefined, not string | null)
+        token.name = user.name ?? undefined
+        token.picture = user.image ?? undefined
         if (user.email) {
           token.domain = user.email.split("@")[1]
         }

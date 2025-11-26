@@ -129,8 +129,8 @@ function parseTimeString(timeString: string | null): { hour24: number; minutes: 
         return { hour24, minutes }
       }
     }
-  } catch (error) {
-    console.warn(`Failed to parse time string:`, error)
+  } catch {
+    // Silently fail for invalid time strings - validation will catch this
   }
   
   return null
@@ -163,8 +163,8 @@ export function calculateStartTimestamp(
         // Create new TZDate with the time in Bangkok timezone
         const tzDateWithTime = new TZDate(year, month, day, parsed.hour24, parsed.minutes, 0, BANGKOK_TIMEZONE)
         startTimestamp = Math.floor(tzDateWithTime.getTime() / 1000)
-      } catch (error) {
-        console.warn(`Failed to apply start_time:`, error)
+      } catch {
+        // Fallback to original timestamp if time parsing fails
       }
     }
   }
@@ -596,34 +596,22 @@ export async function checkBookingOverlap(
     // This includes boundary touches (e.g., 21-25 overlaps with 25-26)
     const overlaps = startTimestamp <= existingEndTimestamp && endTimestamp >= existingStartTimestamp
     
-    // Debug logging for overlap detection
-    if (overlaps || (endDate && existingBooking.end_date)) {
+    // Debug logging for overlap detection (only in development)
+    // SECURITY: Don't log booking details in production to avoid data exposure
+    if (process.env.NODE_ENV !== 'production' && (overlaps || (endDate && existingBooking.end_date))) {
       console.log('[Overlap Debug]', {
         newBooking: {
           startDate: new Date(startTimestamp * 1000).toISOString(),
           endDate: new Date(endTimestamp * 1000).toISOString(),
-          startTimestamp,
-          endTimestamp,
           hasEndDate: !!endDate,
           hasEndTime: !!endTime,
         },
         existingBooking: {
-          id: existingBooking.id,
-          reference: existingBooking.reference_number,
+          id: existingBooking.id.substring(0, 8) + '...', // Truncate ID
           startDate: new Date(existingStartTimestamp * 1000).toISOString(),
           endDate: new Date(existingEndTimestamp * 1000).toISOString(),
-          startTimestamp: existingStartTimestamp,
-          endTimestamp: existingEndTimestamp,
-          hasEndDate: !!existingBooking.end_date,
-          hasEndTime: !!existingBooking.end_time,
         },
-        overlapCheck: {
-          condition1: `${startTimestamp} <= ${existingEndTimestamp}`,
-          condition1Result: startTimestamp <= existingEndTimestamp,
-          condition2: `${endTimestamp} >= ${existingStartTimestamp}`,
-          condition2Result: endTimestamp >= existingStartTimestamp,
-          overlaps,
-        }
+        overlaps,
       })
     }
     
@@ -885,7 +873,10 @@ export async function getUnavailableDates(excludeBookingId?: string | null): Pro
   const args = excludeBookingId ? [excludeBookingId] : []
   const result = await db.execute({ sql: query, args })
   
-  console.log(`[getUnavailableDates] Query executed, found ${result.rows.length} confirmed bookings blocking calendar`)
+  // Debug logging only in development
+  if (process.env.NODE_ENV !== 'production') {
+    console.log(`[getUnavailableDates] Query executed, found ${result.rows.length} confirmed bookings blocking calendar`)
+  }
 
   const unavailableDates = new Set<string>()
   const unavailableTimeRanges: Array<{
@@ -1022,12 +1013,7 @@ export async function getUnavailableDates(excludeBookingId?: string | null): Pro
 
   const sortedDates = Array.from(unavailableDates).sort()
   
-  // Debug: Log final unavailable dates
-  if (sortedDates.length > 0) {
-    console.log(`[getUnavailableDates] Final unavailable dates (${sortedDates.length}):`, sortedDates.slice(0, 10), sortedDates.length > 10 ? '...' : '')
-  } else {
-    console.log('[getUnavailableDates] No unavailable dates found')
-  }
+  // Debug logging only in development (removed from production to reduce log noise)
   
   return {
     unavailableDates: sortedDates,
