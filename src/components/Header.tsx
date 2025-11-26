@@ -84,6 +84,7 @@ export function Header({ initialBookingEnabled }: HeaderProps = {}) {
   const [recaptchaToken, setRecaptchaToken] = useState<string | null>(null)
   const [isRecaptchaVerified, setIsRecaptchaVerified] = useState(false)
   const [showRecaptcha, setShowRecaptcha] = useState(false)
+  const recaptchaShownAtRef = useRef<number | null>(null) // Track when reCAPTCHA overlay was shown
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [formData, setFormData] = useState<FormData>({
     name: "",
@@ -157,6 +158,7 @@ export function Header({ initialBookingEnabled }: HeaderProps = {}) {
         setShowRecaptcha(false)
         setRecaptchaToken(null)
         setIsRecaptchaVerified(false)
+        recaptchaShownAtRef.current = null
         setBookingOpen(false)
       }
       // Note: The else if (!newEnabled && bookingOpen) condition was unreachable
@@ -171,6 +173,7 @@ export function Header({ initialBookingEnabled }: HeaderProps = {}) {
         setShowRecaptcha(false)
         setRecaptchaToken(null)
         setIsRecaptchaVerified(false)
+        recaptchaShownAtRef.current = null
         setBookingOpen(false)
       }
     }, []), // Empty deps - use ref for bookingOpen
@@ -450,6 +453,14 @@ export function Header({ initialBookingEnabled }: HeaderProps = {}) {
     if (isSubmitting || !bookingOpen) {
       return
     }
+    
+    // Prevent error from firing too quickly after showing reCAPTCHA (during initialization)
+    // Give the widget at least 1 second to initialize before showing errors
+    if (recaptchaShownAtRef.current && Date.now() - recaptchaShownAtRef.current < 1000) {
+      console.warn("reCAPTCHA error occurred during initialization, ignoring")
+      return
+    }
+    
     setRecaptchaToken(null)
     setIsRecaptchaVerified(false)
     setShowRecaptcha(false)
@@ -547,6 +558,7 @@ export function Header({ initialBookingEnabled }: HeaderProps = {}) {
       setRecaptchaToken(null)
       setIsRecaptchaVerified(false)
       setShowRecaptcha(false)
+      recaptchaShownAtRef.current = null
       setError(null)
       setRetryCount(0)
       // Force reCAPTCHA to re-render by incrementing key
@@ -1145,6 +1157,8 @@ export function Header({ initialBookingEnabled }: HeaderProps = {}) {
     setIsRecaptchaVerified(false)
     // Reset reCAPTCHA key to force fresh component state on retry
     recaptchaKeyRef.current += 1
+    // Track when we show the reCAPTCHA to prevent premature error handling
+    recaptchaShownAtRef.current = Date.now()
     setShowRecaptcha(true)
   }
 
@@ -1156,6 +1170,7 @@ export function Header({ initialBookingEnabled }: HeaderProps = {}) {
       // Reset captcha to force re-verification
       setRecaptchaToken(null)
       setIsRecaptchaVerified(false)
+      recaptchaShownAtRef.current = null
       recaptchaKeyRef.current += 1
     }
   }
@@ -1838,6 +1853,7 @@ export function Header({ initialBookingEnabled }: HeaderProps = {}) {
                     setShowRecaptcha(false)
                     setRecaptchaToken(null)
                     setIsRecaptchaVerified(false)
+                    recaptchaShownAtRef.current = null
                     recaptchaKeyRef.current += 1
                   }
                 }}
@@ -1877,6 +1893,7 @@ export function Header({ initialBookingEnabled }: HeaderProps = {}) {
                           setShowRecaptcha(false)
                           setRecaptchaToken(null)
                           setIsRecaptchaVerified(false)
+                          recaptchaShownAtRef.current = null
                           recaptchaKeyRef.current += 1
                         }}
                         className="font-comfortaa mt-2"

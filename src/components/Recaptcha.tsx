@@ -19,6 +19,7 @@ export function Recaptcha({
   const siteKey = process.env.NEXT_PUBLIC_RECAPTCHA_SITE_KEY
   const [mounted, setMounted] = useState(false)
   const recaptchaRef = useRef<ReCAPTCHA>(null)
+  const hasVerifiedRef = useRef(false) // Track if we've ever received a valid token
 
   // Delay loading reCAPTCHA until component is mounted
   useEffect(() => {
@@ -73,11 +74,16 @@ export function Recaptcha({
 
   const handleChange = (token: string | null) => {
     if (token) {
+      // Mark that we've verified at least once
+      hasVerifiedRef.current = true
       onVerify(token)
     } else {
-      // Token expired or user closed the challenge
-      if (onExpire) {
+      // Only call onExpire if we've previously verified (token actually expired)
+      // Don't call onExpire on initial null state or when widget resets
+      if (hasVerifiedRef.current && onExpire) {
         onExpire()
+        // Reset the flag so we don't call onExpire again until next verification
+        hasVerifiedRef.current = false
       }
     }
   }
@@ -89,8 +95,10 @@ export function Recaptcha({
   }
 
   const handleExpired = () => {
-    if (onExpire) {
+    // Only call onExpire if we've previously verified (token actually expired)
+    if (hasVerifiedRef.current && onExpire) {
       onExpire()
+      hasVerifiedRef.current = false
     }
   }
 
