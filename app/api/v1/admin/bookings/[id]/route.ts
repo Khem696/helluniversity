@@ -126,6 +126,7 @@ export const GET = withVersioning(async (
     // CRITICAL: Use createBangkokTimestamp to handle YYYY-MM-DD strings in Bangkok timezone
     const transformedBooking = {
       id: booking.id,
+      reference_number: booking.referenceNumber,
       name: booking.name,
       email: booking.email,
       phone: booking.phone,
