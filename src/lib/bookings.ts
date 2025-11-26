@@ -2636,19 +2636,14 @@ export function formatBooking(row: any): Booking {
     return format(tzDate, 'yyyy-MM-dd')
   }
   
-  // Generate reference number if missing (for backward compatibility with old records)
-  // Updated to match new format: 3 chars timestamp + 3 chars random (HU-XXXXXX)
+  // Get reference number - return "N/A" if missing (indicates data integrity issue)
   const getReferenceNumber = (): string => {
     if (row.reference_number) {
       return row.reference_number
     }
-    // For old records without reference_number, generate one based on ID
-    // Use last 8 characters of UUID and convert to base36-like format
-    // Updated to new format: 3 chars + 3 chars (was 3 chars + 2 chars)
-    const idPart = row.id.replace(/-/g, '').slice(-8)
-    const numValue = parseInt(idPart, 16) % 46656 // 36^3
-    const deterministicPart = parseInt(idPart.slice(0, 4), 16) % 46656 // 36^3
-    return `HU-${numValue.toString(36).toUpperCase().padStart(3, '0')}${deterministicPart.toString(36).toUpperCase().padStart(3, '0')}`
+    // If reference_number is missing, return "N/A" instead of generating a fallback
+    // This indicates a data integrity issue that should be fixed, not masked
+    return "N/A"
   }
   
   return {

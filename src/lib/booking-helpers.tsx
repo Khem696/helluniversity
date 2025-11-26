@@ -29,23 +29,16 @@ export function formatTimeForDisplay(time24: string | null | undefined): string 
 }
 
 /**
- * Helper function to get booking reference number with fallback for old records
- * Generates a deterministic reference number based on booking ID if missing
- * Updated to match new format: 3 chars timestamp + 3 chars random (HU-XXXXXX)
+ * Helper function to get booking reference number
+ * Returns "N/A" if reference_number is missing (indicates data integrity issue)
  */
 export function getBookingReferenceNumber(booking: Booking): string {
   if (booking.reference_number) {
     return booking.reference_number
   }
-  // For old records without reference_number, generate a deterministic one based on ID
-  // Use last 8 characters of UUID and convert to base36-like format
-  // This ensures the same booking always gets the same reference number
-  // Updated to new format: 3 chars + 3 chars (was 3 chars + 2 chars)
-  const idPart = booking.id.replace(/-/g, '').slice(-8)
-  const numValue = parseInt(idPart, 16) % 46656 // 36^3
-  // Use first 4 hex chars of ID for deterministic "random" part (was 2 chars)
-  const deterministicPart = parseInt(idPart.slice(0, 4), 16) % 46656 // 36^3
-  return `HU-${numValue.toString(36).toUpperCase().padStart(3, '0')}${deterministicPart.toString(36).toUpperCase().padStart(3, '0')}`
+  // If reference_number is missing, return "N/A" instead of generating a fallback
+  // This indicates a data integrity issue that should be fixed, not masked
+  return "N/A"
 }
 
 /**

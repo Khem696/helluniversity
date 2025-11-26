@@ -1916,11 +1916,9 @@ export default function BookingsArchivePage() {
     if (booking.reference_number) {
       return booking.reference_number
     }
-    // For old records without reference_number, generate a deterministic one based on ID
-    const idPart = booking.id.replace(/-/g, '').slice(-8)
-    const numValue = parseInt(idPart, 16) % 46656 // 36^3
-    const deterministicPart = parseInt(idPart.slice(0, 2), 16) % 1296 // 36^2
-    return `HU-${numValue.toString(36).toUpperCase().padStart(3, '0')}${deterministicPart.toString(36).toUpperCase().padStart(2, '0')}`
+    // If reference_number is missing, return "N/A" instead of generating a fallback
+    // This indicates a data integrity issue that should be fixed, not masked
+    return "N/A"
   }
 
   const getDepositStatusBadge = (booking: Booking) => {
