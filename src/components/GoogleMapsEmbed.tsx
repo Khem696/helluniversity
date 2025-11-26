@@ -1,22 +1,24 @@
 "use client"
 
 interface GoogleMapsEmbedProps {
-  latitude: string
-  longitude: string
+  embedUrl?: string
+  latitude?: string
+  longitude?: string
   className?: string
   height?: string
 }
 
 export function GoogleMapsEmbed({ 
+  embedUrl,
   latitude, 
   longitude, 
   className = "",
   height = "400px"
 }: GoogleMapsEmbedProps) {
-  // Google Maps embed URL using coordinates
-  // Format: https://www.google.com/maps/embed/v1/place?key=API_KEY&q=lat,lng
-  // For public embed without API key, use the standard embed format
-  const embedUrl = `https://www.google.com/maps?q=${latitude},${longitude}&hl=en&z=14&output=embed`
+  // Use provided embedUrl if available, otherwise construct from coordinates
+  const mapUrl = embedUrl || (latitude && longitude 
+    ? `https://www.google.com/maps?q=${latitude},${longitude}&hl=en&z=14&output=embed`
+    : "")
   
   return (
     <div 
@@ -24,7 +26,7 @@ export function GoogleMapsEmbed({
       style={{ height }}
     >
       <iframe
-        src={embedUrl}
+        src={mapUrl}
         width="100%"
         height="100%"
         style={{ border: 0 }}

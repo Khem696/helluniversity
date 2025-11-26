@@ -1583,9 +1583,9 @@ export function Header({ initialBookingEnabled }: HeaderProps = {}) {
                               aria-labelledby="eventType-label"
                             >
                               <option value="">Select event type</option>
-                              <option value="Arts & Design Coaching">Arts & Design Coaching Workshop</option>
-                              <option value="Seminar & Workshop">Seminar & Workshop</option>
-                              <option value="Family Gathering">Family Gathering</option>
+                              <option value="Arts & Design Coaching Space">Arts & Design Coaching Space</option>
+                              <option value="Meeting, Seminar, Workshop">Meeting, Seminar, Workshop</option>
+                              <option value="Family & Friends Gathering">Family & Friends Gathering</option>
                               <option value="Holiday Festive">Holiday Festive</option>
                               <option value="Other">Other</option>
                             </select>
@@ -1600,13 +1600,24 @@ export function Header({ initialBookingEnabled }: HeaderProps = {}) {
                                 <SelectValue placeholder="Select event type" />
                               </SelectTrigger>
                               <SelectContent>
-                                <SelectItem value="Arts & Design Coaching">Arts & Design Coaching Workshop</SelectItem>
-                                <SelectItem value="Seminar & Workshop">Seminar & Workshop</SelectItem>
-                                <SelectItem value="Family Gathering">Family Gathering</SelectItem>
+                                <SelectItem value="Arts & Design Coaching Space">Arts & Design Coaching Space</SelectItem>
+                                <SelectItem value="Meeting, Seminar, Workshop">Meeting, Seminar, Workshop</SelectItem>
+                                <SelectItem value="Family & Friends Gathering">Family & Friends Gathering</SelectItem>
                                 <SelectItem value="Holiday Festive">Holiday Festive</SelectItem>
                                 <SelectItem value="Other">Other</SelectItem>
                               </SelectContent>
                             </Select>
+                            {/* Event Type Remarks */}
+                            {formData.eventType === "Family & Friends Gathering" && (
+                              <p className="text-[#5a3a2a]/70 font-comfortaa italic" style={{ fontSize: 'clamp(0.75rem, 0.8vw, 0.875rem)', marginTop: 'clamp(0.25rem, 0.3vw, 0.375rem)' }}>
+                                eg. Engagement/Pre-wedding/Wedding, Reunion, Baby Shower, Private Dining, etc.
+                              </p>
+                            )}
+                            {formData.eventType === "Holiday Festive" && (
+                              <p className="text-[#5a3a2a]/70 font-comfortaa italic" style={{ fontSize: 'clamp(0.75rem, 0.8vw, 0.875rem)', marginTop: 'clamp(0.25rem, 0.3vw, 0.375rem)' }}>
+                                eg. Christmas, New Year, Easter, etc.
+                              </p>
+                            )}
                           </div>
                         </div>
 

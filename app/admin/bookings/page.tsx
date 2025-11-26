@@ -318,9 +318,9 @@ export default function BookingsPage() {
   // Event types for filter dropdown
   const eventTypes = [
     { value: "all", label: "All Event Types" },
-    { value: "Arts & Design Coaching", label: "Arts & Design Coaching Workshop" },
-    { value: "Seminar & Workshop", label: "Seminar & Workshop" },
-    { value: "Family Gathering", label: "Family Gathering" },
+    { value: "Arts & Design Coaching Space", label: "Arts & Design Coaching Space" },
+    { value: "Meeting, Seminar, Workshop", label: "Meeting, Seminar, Workshop" },
+    { value: "Family & Friends Gathering", label: "Family & Friends Gathering" },
     { value: "Holiday Festive", label: "Holiday Festive" },
     { value: "Other", label: "Other" },
   ]
