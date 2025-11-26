@@ -194,13 +194,13 @@ export function Hero() {
           {/* Social Icons */}
           <div className="absolute bottom-3 sm:bottom-5 min-[769px]:bottom-10 right-2 sm:right-4 min-[769px]:right-6 lg:right-12 3xl:right-16 4xl:right-24 5xl:right-32 flex flex-row min-[769px]:flex-col gap-3 sm:gap-4 min-[769px]:gap-6 z-30">
             <a 
-              href="https://www.facebook.com/kadejavanalikhikara" 
+              href="https://www.facebook.com/profile.php?id=61584042783910" 
               target="_blank" 
               rel="noopener noreferrer"
               className="inline-flex items-center gap-2 text-white hover:text-[#D4AF37] transition-colors cursor-pointer"
             >
               <Facebook size={18} className="flex-shrink-0" />
-              <span className="text-[clamp(12px,1vw,16px)]">Kade Javanalikhikara</span>
+              <span className="text-[clamp(12px,1vw,16px)]">HU Culture Hub</span>
             </a>
           </div>
 
