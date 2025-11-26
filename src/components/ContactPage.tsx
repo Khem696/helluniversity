@@ -37,7 +37,7 @@ export function ContactPage() {
               <div className="mb-3 lg:mb-2.5 space-y-2">
                 <div>
                   <a 
-                    href="https://maps.app.goo.gl/gnW3rP7SsAdhd2ft9?g_st=ipc" 
+                    href="https://maps.app.goo.gl/NPccHd3qfANFjrx7A" 
                     target="_blank"
                     rel="noopener noreferrer"
                     className="inline-flex items-center gap-2 text-white/70 hover:text-[#87CEEB] transition-colors text-[clamp(0.95rem,1vw,1.125rem)]"
@@ -48,7 +48,7 @@ export function ContactPage() {
                 </div>
                 <div>
                   <a 
-                    href="https://www.google.com/maps/dir/?api=1&destination=19.0882,98.8565" 
+                    href="https://maps.app.goo.gl/NPccHd3qfANFjrx7A" 
                     target="_blank"
                     rel="noopener noreferrer"
                     className="inline-flex items-center gap-2 text-[#87CEEB] hover:text-[#5B9AB8] transition-colors text-[clamp(0.875rem,0.9vw,1rem)] font-medium"
@@ -62,8 +62,7 @@ export function ContactPage() {
               {/* Google Maps Embed - Reduced height on desktop */}
               <div className="mb-[clamp(1rem,2vw,1.5rem)]">
                 <GoogleMapsEmbed
-                  latitude="19.0882"
-                  longitude="98.8565"
+                  embedUrl="https://www.google.com/maps/embed?pb=!1m18!1m12!1m3!1d1333.054231915263!2d98.85687943823457!3d19.088047521415692!2m3!1f0!2f0!3f0!3m2!1i1024!2i768!4f13.1!3m3!1m2!1s0x30da1300201ef065%3A0x50b5099c5a98575e!2sHU%20Culture%20Hub%20(Hell%20University%20Hub)!5e0!3m2!1sen!2sth!4v1764177163777!5m2!1sen!2sth"
                   height="clamp(200px, 25vh, 250px)"
                   className="rounded-lg shadow-lg"
                 />
@@ -97,13 +96,13 @@ export function ContactPage() {
 
             <div className="flex gap-[clamp(1rem,2vw,2rem)] mb-[clamp(1rem,2vw,1.5rem)]">
               <a 
-                href="https://www.facebook.com/kadejavanalikhikara" 
+                href="https://www.facebook.com/profile.php?id=61584042783910" 
                 target="_blank" 
                 rel="noopener noreferrer"
                 className="inline-flex items-center gap-2 text-white hover:text-[#87CEEB] transition-colors"
               >
                 <Facebook size={20} className="flex-shrink-0" />
-                <span className="text-[clamp(0.95rem,1vw,1.125rem)]">Kade Javanalikhikara</span>
+                <span className="text-[clamp(0.95rem,1vw,1.125rem)]">HU Culture Hub</span>
               </a>
             </div>
 
