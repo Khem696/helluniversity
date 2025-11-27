@@ -1,6 +1,7 @@
 import nodemailer, { type Transporter } from 'nodemailer'
 import type { Booking } from './bookings'
 import { addEmailToQueue } from './email-queue'
+import { logInfo, logWarn, logError, logDebug } from './logger'
 
 interface ReservationData {
   name: string
@@ -60,9 +61,9 @@ export async function getTransporter(): Promise<Transporter> {
   try {
     await transporter.verify()
     transporterVerified = true
-    console.log('SMTP connection verified successfully')
+    await logInfo('SMTP connection verified successfully')
   } catch (error) {
-    console.error('SMTP connection verification failed:', error)
+    await logError('SMTP connection verification failed', undefined, error instanceof Error ? error : new Error(String(error)))
     // Don't throw here - allow retry on next attempt
     transporterVerified = false
     throw new Error(
@@ -124,7 +125,8 @@ function formatTime24WithAMPM(time24: string | null | undefined): string {
     const period = hour24 < 12 ? 'AM' : 'PM'
     return `${trimmed} ${period}`
   } catch (error) {
-    console.error('❌ formatTime24WithAMPM error:', error)
+    // Fire-and-forget logging for utility function
+    logError('formatTime24WithAMPM error', { time24 }, error instanceof Error ? error : new Error(String(error))).catch(() => {})
     return time24 || ''
   }
 }
@@ -163,7 +165,8 @@ function formatDateTime(dateString: string | null | undefined, timeString?: stri
     
     return dateFormatted
   } catch (error) {
-    console.error('❌ formatDateTime error:', error)
+    // Fire-and-forget logging for utility function
+    logError('formatDateTime error', { dateString }, error instanceof Error ? error : new Error(String(error))).catch(() => {})
     return dateString || "Not specified"
   }
 }
@@ -195,7 +198,8 @@ function formatDateRange(data: ReservationData): string {
     const endDateTime = formatDateTime(data.endDate, data.endTime)
     return `${startDateTime} to ${endDateTime}`
   } catch (error) {
-    console.error('❌ formatDateRange error:', error)
+    // Fire-and-forget logging for utility function
+    logError('formatDateRange error', undefined, error instanceof Error ? error : new Error(String(error))).catch(() => {})
     return "Not specified"
   }
 }
@@ -231,7 +235,9 @@ function sanitizeHTML(html: string | null | undefined): string {
     }
     return result
   } catch (error) {
-    console.error('❌ sanitizeHTML error:', error, 'Input:', html)
+    // Fire-and-forget logging for utility function
+    const htmlPreview = html ? html.substring(0, 100) : 'null'
+    logError('sanitizeHTML error', { htmlPreview }, error instanceof Error ? error : new Error(String(error))).catch(() => {})
     return ''
   }
 }
@@ -251,7 +257,8 @@ function sanitizeUserInput(input: string | null | undefined): string {
     // The main XSS protection comes from sanitizeHTML
     return str
   } catch (error) {
-    console.error('❌ sanitizeUserInput error:', error, 'Input:', input)
+    // Fire-and-forget logging for utility function
+    logError('sanitizeUserInput error', { inputPreview: String(input).substring(0, 100) }, error instanceof Error ? error : new Error(String(error))).catch(() => {})
     return ''
   }
 }
@@ -623,7 +630,7 @@ For inquiries: admin@huculturehub.com
  * Send reservation notification email to admin
  * Uses nodemailer v7 compatible API
  */
-export async function sendAdminNotification(data: ReservationData, bookingId?: string): Promise<void> {
+export async function sendAdminNotification(data: ReservationData, referenceNumber?: string): Promise<void> {
   const recipientEmail = process.env.RESERVATION_EMAIL || process.env.SMTP_USER
 
   if (!recipientEmail) {
@@ -632,9 +639,9 @@ export async function sendAdminNotification(data: ReservationData, bookingId?: s
 
   const formattedEventType = formatEventType(data.eventType, data.otherEventType)
   const formattedDateRange = formatDateRange(data)
-  // CRITICAL: Always start subject with booking reference number for easy identification
-  // Use referenceNumber if provided, otherwise fall back to bookingId
-  const referenceNumber = bookingId || undefined
+  // FIXED: Always use referenceNumber in subject line (Issue #16)
+  // Use referenceNumber if provided, with proper formatting
+  // Never use bookingId - always use referenceNumber for user-friendly identification
   const referencePrefix = referenceNumber ? `[${referenceNumber}] ` : ''
 
   const mailOptions: nodemailer.SendMailOptions = {
@@ -651,11 +658,11 @@ export async function sendAdminNotification(data: ReservationData, bookingId?: s
     const result = await emailTransporter.sendMail(mailOptions)
     
     // Log successful send (nodemailer v7 returns messageId)
-    console.log('Admin notification email sent:', result.messageId)
+    await logInfo('Admin notification email sent', { messageId: result.messageId })
   } catch (error) {
     // Queue email for retry
     const errorMessage = error instanceof Error ? error.message : 'Unknown error'
-    console.error(`[sendAdminNotification] ❌ Failed to send admin notification, queuing for retry:`, errorMessage)
+    await logError('Failed to send admin notification, queuing for retry', { recipientEmail, referenceNumber }, error instanceof Error ? error : new Error(errorMessage))
     
     try {
       await addEmailToQueue(
@@ -664,14 +671,14 @@ export async function sendAdminNotification(data: ReservationData, bookingId?: s
         mailOptions.subject as string,
         mailOptions.html as string,
         mailOptions.text as string,
-        { bookingData: data, replyTo: data.email, bookingId: bookingId }
+        { bookingData: data, replyTo: data.email, referenceNumber: referenceNumber }
       )
-      console.log(`[sendAdminNotification] ✅ Admin notification queued for retry`)
+      await logInfo('Admin notification queued for retry', { recipientEmail, referenceNumber })
       // Don't throw error if email was successfully queued - it will be sent by the queue processor
       // Return normally so calling function knows it was queued (not sent, but will be sent)
       return
     } catch (queueError) {
-      console.error(`[sendAdminNotification] ❌ Failed to queue admin notification for retry:`, queueError)
+      await logError('Failed to queue admin notification for retry', { recipientEmail, referenceNumber }, queueError instanceof Error ? queueError : new Error(String(queueError)))
       // Only throw if queueing also fails - this is a critical error
       throw error
     }
@@ -682,10 +689,10 @@ export async function sendAdminNotification(data: ReservationData, bookingId?: s
  * Send auto-reply confirmation email to user
  * Uses nodemailer v7 compatible API
  */
-export async function sendUserConfirmation(data: ReservationData, bookingId?: string): Promise<void> {
-  // CRITICAL: Always start subject with booking reference number for easy identification
-  // Use referenceNumber if provided, otherwise fall back to bookingId
-  const referenceNumber = bookingId || undefined
+export async function sendUserConfirmation(data: ReservationData, referenceNumber?: string): Promise<void> {
+  // FIXED: Always use referenceNumber in subject line (Issue #16)
+  // Use referenceNumber if provided, with proper formatting
+  // Never use bookingId - always use referenceNumber for user-friendly identification
   const referencePrefix = referenceNumber ? `[${referenceNumber}] ` : ''
   const mailOptions: nodemailer.SendMailOptions = {
     from: `"Hell University" <${process.env.SMTP_USER}>`,
@@ -695,18 +702,18 @@ export async function sendUserConfirmation(data: ReservationData, bookingId?: st
     html: generateUserEmailHTML(data, referenceNumber),
   }
 
-  console.log(`[sendUserConfirmation] Attempting to send user confirmation email to ${data.email} (booking: ${bookingId || 'N/A'})`)
+  await logInfo('Attempting to send user confirmation email', { email: data.email, referenceNumber: referenceNumber || 'N/A' })
   
   try {
     const emailTransporter = await getTransporter()
     const result = await emailTransporter.sendMail(mailOptions)
     
     // Log successful send (nodemailer v7 returns messageId)
-    console.log(`[sendUserConfirmation] ✅ User confirmation email sent successfully: ${result.messageId} to ${data.email}`)
+    await logInfo('User confirmation email sent successfully', { messageId: result.messageId, email: data.email })
   } catch (error) {
     // Queue email for retry
     const errorMessage = error instanceof Error ? error.message : 'Unknown error'
-    console.error(`[sendUserConfirmation] ❌ Failed to send user confirmation to ${data.email} (booking: ${bookingId || 'N/A'}), queuing for retry:`, errorMessage)
+    await logError('Failed to send user confirmation, queuing for retry', { email: data.email, referenceNumber: referenceNumber || 'N/A' }, error instanceof Error ? error : new Error(errorMessage))
     
     try {
       await addEmailToQueue(
@@ -715,14 +722,14 @@ export async function sendUserConfirmation(data: ReservationData, bookingId?: st
         mailOptions.subject as string,
         mailOptions.html as string,
         mailOptions.text as string,
-        { bookingData: data, bookingId: bookingId }
+        { bookingData: data, referenceNumber: referenceNumber }
       )
-      console.log(`[sendUserConfirmation] ✅ User confirmation queued for retry to ${data.email}`)
+      await logInfo('User confirmation queued for retry', { email: data.email, referenceNumber })
       // Don't throw error if email was successfully queued - it will be sent by the queue processor
       // Return normally so calling function knows it was queued (not sent, but will be sent)
       return
     } catch (queueError) {
-      console.error(`[sendUserConfirmation] ❌ Failed to queue user confirmation for retry:`, queueError)
+      await logError('Failed to queue user confirmation for retry', { email: data.email, referenceNumber }, queueError instanceof Error ? queueError : new Error(String(queueError)))
       // Only throw if queueing also fails - this is a critical error
       throw error
     }
@@ -746,13 +753,10 @@ export async function sendReservationEmails(
   // Note: If email fails but gets queued, sendAdminNotification returns normally (doesn't throw)
   // This allows user email to still be sent even if admin email was queued
   try {
-    console.error('='.repeat(60))
-    console.error('STEP 1: Attempting to send admin notification email...')
-    console.error('='.repeat(60))
+    await logInfo('STEP 1: Attempting to send admin notification email', { bookingReference })
     await sendAdminNotification(data, bookingReference)
     adminSent = true
-    console.error('✅ Admin notification sent or queued successfully')
-    console.error('='.repeat(60))
+    await logInfo('Admin notification sent or queued successfully', { bookingReference })
   } catch (error) {
     // Handle different types of errors
     let errorMessage = 'Unknown error'
@@ -775,17 +779,12 @@ export async function sendReservationEmails(
     }
     
     errors.push(`Admin notification failed: ${errorMessage}`)
-    console.error('❌ FAILED to send admin notification email')
-    console.error('Error type:', error?.constructor?.name || 'Unknown')
-    console.error('Error message:', errorMessage)
-    console.error('Error code:', errorCode)
-    console.error('Full error object:', error)
-    if (error instanceof Error) {
-      console.error('Error stack:', error.stack)
-    }
-    console.error('='.repeat(60))
-    console.error('⚠️ CRITICAL: Admin email failed. User email will NOT be sent to avoid confusion.')
-    console.error('='.repeat(60))
+    await logError('FAILED to send admin notification email', {
+      bookingReference,
+      errorType: error?.constructor?.name || 'Unknown',
+      errorCode,
+      errorMessage,
+    }, error instanceof Error ? error : new Error(errorMessage))
     
     // Reset transporter if connection failed (allows retry on next attempt)
     if (errorMessage.includes('connection') || errorMessage.includes('SMTP')) {
@@ -795,32 +794,27 @@ export async function sendReservationEmails(
     // Return early - don't send user email if admin email failed
     // This MUST return immediately to prevent user email from being sent
     const result = { adminSent: false, userSent: false, errors }
-    console.error('🚫 RETURNING EARLY - User email will NOT be sent:', JSON.stringify(result))
-    console.error('🚫 EXITING FUNCTION - User email code will NOT execute')
+    await logError('CRITICAL: Admin email failed. User email will NOT be sent to avoid confusion', { bookingReference, result })
     return result
   }
 
   // CRITICAL: Double-check admin email succeeded before proceeding
   // This should NEVER execute if admin email failed (due to early return above)
   if (!adminSent) {
-    console.error('❌ CRITICAL ERROR: Admin email failed but code reached user email section!')
-    console.error('❌ This should never happen - early return should have prevented this!')
+    await logError('CRITICAL ERROR: Admin email failed but code reached user email section!', { bookingReference })
     const result = { adminSent: false, userSent: false, errors }
-    console.error('🚫 FORCING RETURN (second check) - User email will NOT be sent:', JSON.stringify(result))
+    await logError('FORCING RETURN (second check) - User email will NOT be sent', { bookingReference, result })
     return result
   }
   
   // Only execute if admin email succeeded or was queued
   // Note: If user email fails but gets queued, sendUserConfirmation returns normally (doesn't throw)
-  console.error('✅ Admin email succeeded or queued, proceeding to send user email...')
+  await logInfo('Admin email succeeded or queued, proceeding to send user email', { bookingReference })
   try {
-    console.error('='.repeat(60))
-    console.error('STEP 2: Attempting to send user confirmation email...')
-    console.error('='.repeat(60))
+    await logInfo('STEP 2: Attempting to send user confirmation email', { bookingReference })
     await sendUserConfirmation(data, bookingReference)
     userSent = true
-    console.error('✅ User confirmation sent or queued successfully')
-    console.error('='.repeat(60))
+    await logInfo('User confirmation sent or queued successfully', { bookingReference })
   } catch (error) {
     // Handle different types of errors
     let errorMessage = 'Unknown error'
@@ -842,14 +836,11 @@ export async function sendReservationEmails(
     }
     
     errors.push(`User confirmation failed: ${errorMessage}`)
-    console.error('❌ FAILED to send user confirmation email')
-    console.error('Error type:', error?.constructor?.name || 'Unknown')
-    console.error('Error message:', errorMessage)
-    console.error('Full error object:', error)
-    if (error instanceof Error) {
-      console.error('Error stack:', error.stack)
-    }
-    console.error('='.repeat(60))
+    await logError('FAILED to send user confirmation email', {
+      bookingReference,
+      errorType: error?.constructor?.name || 'Unknown',
+      errorMessage,
+    }, error instanceof Error ? error : new Error(errorMessage))
     
     // Reset transporter if connection failed (allows retry on next attempt)
     if (errorMessage.includes('connection') || errorMessage.includes('SMTP')) {
@@ -857,16 +848,13 @@ export async function sendReservationEmails(
     }
   }
 
-  // Final summary (using error so it shows in production)
-  console.error('='.repeat(60))
-  console.error('EMAIL SENDING SUMMARY:')
-  console.error('='.repeat(60))
-  console.error('Admin notification:', adminSent ? '✅ SENT' : '❌ FAILED')
-  console.error('User confirmation:', userSent ? '✅ SENT' : '❌ FAILED')
-  if (errors.length > 0) {
-    console.error('Errors:', errors)
-  }
-  console.error('='.repeat(60))
+  // Final summary
+  await logInfo('EMAIL SENDING SUMMARY', {
+    bookingReference,
+    adminSent,
+    userSent,
+    errors: errors.length > 0 ? errors : undefined,
+  })
   
   return { adminSent, userSent, errors }
 }
@@ -925,10 +913,22 @@ function generateStatusChangeEmailHTML(
     ? `${siteUrl}/booking/deposit/${responseToken}`
     : null
 
+  // FIXED: Handle all null/undefined values properly (Issue #21)
+  const bookingName = booking.name || 'Valued Customer'
+  const bookingEventType = booking.eventType || 'Event'
+  const bookingOtherEventType = booking.otherEventType || undefined
+  const bookingReferenceNumber = booking.referenceNumber || booking.id || 'N/A'
+  const bookingStartDate = booking.startDate || null
+  const bookingEndDate = booking.endDate || null
+  const bookingStartTime = booking.startTime || undefined
+  const bookingEndTime = booking.endTime || undefined
+  const bookingDateRange = booking.dateRange || false
+  const bookingDepositEvidenceUrl = booking.depositEvidenceUrl || null
+  
   // Determine if this is a successful upload (check changeReason) or a rejection
   const isSuccessfulUpload = changeReason?.toLowerCase().includes('uploaded successfully') || 
                              changeReason?.toLowerCase().includes('upload successfully')
-  const isRejection = booking.depositEvidenceUrl && !isSuccessfulUpload
+  const isRejection = bookingDepositEvidenceUrl && !isSuccessfulUpload
   
   const statusMessages: Record<string, { title: string; message: string; color: string }> = {
     pending_deposit: {
@@ -978,14 +978,14 @@ function generateStatusChangeEmailHTML(
     message: 'Your reservation status has been updated.',
     color: '#3b82f6',
   }
-
-  const formattedEventType = formatEventType(booking.eventType, booking.otherEventType)
+  
+  const formattedEventType = formatEventType(bookingEventType, bookingOtherEventType)
   const formattedDateRange = formatDateRange({
-    dateRange: booking.dateRange,
-    startDate: booking.startDate,
-    endDate: booking.endDate || undefined,
-    startTime: booking.startTime,
-    endTime: booking.endTime,
+    dateRange: bookingDateRange,
+    startDate: bookingStartDate,
+    endDate: bookingEndDate || undefined,
+    startTime: bookingStartTime,
+    endTime: bookingEndTime,
   } as ReservationData)
 
   return `
@@ -1014,7 +1014,7 @@ function generateStatusChangeEmailHTML(
           <tr>
             <td style="padding: 30px;">
               <p style="margin: 0 0 20px 0; color: #333333; font-size: 16px; line-height: 1.6;">
-                Dear ${sanitizeHTML(booking.name)},
+                Dear ${sanitizeHTML(bookingName)},
               </p>
               
               <p style="margin: 0 0 20px 0; color: #333333; font-size: 16px; line-height: 1.6;">
@@ -1243,7 +1243,8 @@ function generateStatusChangeEmailHTML(
               ` : ''}
               
               ${status === 'pending_deposit' ? (() => {
-                const isRejection = booking.depositEvidenceUrl !== null && booking.depositEvidenceUrl !== ''
+                // FIXED: Handle null/undefined depositEvidenceUrl properly (Issue #21)
+                const isRejection = bookingDepositEvidenceUrl !== null && bookingDepositEvidenceUrl !== undefined && bookingDepositEvidenceUrl !== ''
                 return `
               <div style="margin: 30px 0; text-align: center;">
                 <p style="margin: 0 0 20px 0; color: #333333; font-size: 16px; line-height: 1.6; font-weight: 600;">
@@ -1260,7 +1261,7 @@ function generateStatusChangeEmailHTML(
               ${status === 'pending_deposit' ? `
                 ${depositUploadUrl ? `
                 <a href="${depositUploadUrl}" style="display: inline-block; background-color: ${statusInfo.color}; color: #ffffff; text-decoration: none; padding: 14px 28px; border-radius: 6px; font-size: 16px; font-weight: 600; margin-bottom: 15px;">
-                  ${booking.depositEvidenceUrl ? 'Re-upload Deposit Evidence' : 'Upload Deposit Evidence'}
+                  ${bookingDepositEvidenceUrl ? 'Re-upload Deposit Evidence' : 'Upload Deposit Evidence'}
                 </a>
                 <p style="margin: 20px 0 0 0; color: #6b7280; font-size: 12px; line-height: 1.6;">
                   Or copy and paste this link into your browser:<br>
@@ -1324,6 +1325,18 @@ function generateStatusChangeEmailText(
   proposedDate?: string | null,
   responseUrl?: string | null
 ): string {
+  // FIXED: Handle all null/undefined values properly (Issue #21)
+  const bookingName = booking.name || 'Valued Customer'
+  const bookingEventType = booking.eventType || 'Event'
+  const bookingOtherEventType = booking.otherEventType || undefined
+  const bookingReferenceNumber = booking.referenceNumber || booking.id || 'N/A'
+  const bookingStartDate = booking.startDate || null
+  const bookingEndDate = booking.endDate || null
+  const bookingStartTime = booking.startTime || undefined
+  const bookingEndTime = booking.endTime || undefined
+  const bookingDateRange = booking.dateRange || false
+  const bookingDepositEvidenceUrl = booking.depositEvidenceUrl || null
+  
   const siteUrl = process.env.NEXT_PUBLIC_SITE_URL 
     || (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : null)
     || 'https://huculturehub.com'
@@ -1332,7 +1345,7 @@ function generateStatusChangeEmailText(
   // Determine if this is a successful upload (check changeReason) or a rejection
   const isSuccessfulUpload = changeReason?.toLowerCase().includes('uploaded successfully') || 
                              changeReason?.toLowerCase().includes('upload successfully')
-  const isRejection = booking.depositEvidenceUrl && !isSuccessfulUpload
+  const isRejection = bookingDepositEvidenceUrl && !isSuccessfulUpload
 
   const statusMessages: Record<string, string> = {
     pending_deposit: isSuccessfulUpload
@@ -1356,18 +1369,19 @@ function generateStatusChangeEmailText(
   }
   const formattedEventType = formatEventType(booking.eventType, booking.otherEventType)
   const formattedDateRange = formatDateRange({
-    dateRange: booking.dateRange,
-    startDate: booking.startDate,
-    endDate: booking.endDate || undefined,
-    startTime: booking.startTime,
-    endTime: booking.endTime,
+    dateRange: bookingDateRange,
+    startDate: bookingStartDate,
+    endDate: bookingEndDate || undefined,
+    startTime: bookingStartTime,
+    endTime: bookingEndTime,
   } as ReservationData)
 
-  const referenceNumber = booking.referenceNumber || booking.id
-  let text = `Dear ${booking.name},\n\n`
+  let text = `Dear ${bookingName},\n\n`
   text += `${message}\n\n`
   text += `RESERVATION DETAILS:\n`
-  text += `Reference Number: ${referenceNumber}\n`
+  if (bookingReferenceNumber && bookingReferenceNumber !== 'N/A') {
+    text += `Reference Number: ${bookingReferenceNumber}\n`
+  }
   text += `Event Type: ${formattedEventType}\n`
   text += `Date & Time: ${formattedDateRange}\n\n`
 
@@ -1396,7 +1410,8 @@ function generateStatusChangeEmailText(
   }
   
   if (status === 'pending_deposit') {
-    const isRejection = booking.depositEvidenceUrl !== null && booking.depositEvidenceUrl !== ''
+    // FIXED: Handle null/undefined depositEvidenceUrl properly (Issue #21)
+    const isRejection = bookingDepositEvidenceUrl !== null && bookingDepositEvidenceUrl !== undefined && bookingDepositEvidenceUrl !== ''
     text += `\n⚠️ IMPORTANT: ${isRejection ? 'Deposit Re-upload Required' : 'Deposit Required'}\n\n`
     text += isRejection
       ? `The previous deposit evidence you uploaded did not meet our requirements. Please upload a new deposit evidence to complete the booking process. Please send a deposit evidence before start date.\n\n`
@@ -1435,6 +1450,34 @@ function generateStatusChangeEmailText(
 
 /**
  * Send booking status change notification to user
+ * 
+ * FIXED: Documented all parameter combinations and added validation (Issue #38)
+ * 
+ * @param booking - The booking object (must have at least id, email, name, eventType)
+ * @param status - The new booking status (pending, pending_deposit, paid_deposit, confirmed, cancelled, finished)
+ * @param options - Optional parameters for email customization
+ * @param options.changeReason - Additional notes/reason for the status change
+ * @param options.proposedDate - Proposed new start date (YYYY-MM-DD format) - used when status is 'pending' or for date change notifications
+ * @param options.proposedEndDate - Proposed new end date (YYYY-MM-DD format) - used for date range changes
+ * @param options.proposedStartTime - Proposed new start time (HH:MM format) - used with proposedDate
+ * @param options.proposedEndTime - Proposed new end time (HH:MM format) - used with proposedEndDate
+ * @param options.previousProposedDate - Previous proposed start date (for showing cleared dates)
+ * @param options.previousProposedEndDate - Previous proposed end date (for showing cleared dates)
+ * @param options.previousProposedStartTime - Previous proposed start time (for showing cleared times)
+ * @param options.previousProposedEndTime - Previous proposed end time (for showing cleared times)
+ * @param options.responseToken - Response token for user actions (required for pending_deposit, optional for others)
+ * @param options.skipDuplicateCheck - Skip duplicate email check (for retries) - DEPRECATED: use allowIntentionalDuplicate instead
+ * @param options.allowIntentionalDuplicate - Allow intentional duplicates for admin-initiated changes (e.g., date changes, fee changes)
+ * 
+ * @throws Error if booking.email is missing or invalid
+ * @throws Error if status is invalid
+ * 
+ * Common parameter combinations:
+ * - Status change only: { changeReason: "..." }
+ * - Status change with proposed date: { changeReason: "...", proposedDate: "2025-01-15", proposedStartTime: "10:00" }
+ * - Date change notification: { changeReason: "...", proposedDate: "2025-01-15", proposedEndDate: "2025-01-16", ... }
+ * - Deposit upload: { responseToken: "..." } (token is required for pending_deposit)
+ * - Restoration: { changeReason: "...", allowIntentionalDuplicate: true }
  */
 export async function sendBookingStatusNotification(
   booking: Booking,
@@ -1450,11 +1493,57 @@ export async function sendBookingStatusNotification(
     previousProposedStartTime?: string | null
     previousProposedEndTime?: string | null
     responseToken?: string
-    skipDuplicateCheck?: boolean // Allow override for retries
+    skipDuplicateCheck?: boolean // DEPRECATED: Use allowIntentionalDuplicate instead
+    allowIntentionalDuplicate?: boolean // FIXED: Allow intentional duplicates for admin-initiated changes (Issue #17)
   }
 ): Promise<void> {
-  // Fix #7: Check for duplicate email before sending
-  if (!options?.skipDuplicateCheck) {
+  // FIXED: Validate required parameters (Issue #38)
+  if (!booking || !booking.id) {
+    throw new Error('Booking ID is required')
+  }
+  
+  if (!booking.email || typeof booking.email !== 'string' || !booking.email.includes('@')) {
+    throw new Error('Valid booking email is required')
+  }
+  
+  const validStatuses = ['pending', 'pending_deposit', 'paid_deposit', 'confirmed', 'cancelled', 'finished']
+  if (!status || !validStatuses.includes(status)) {
+    throw new Error(`Invalid status: ${status}. Must be one of: ${validStatuses.join(', ')}`)
+  }
+  
+  // Validate date formats if provided
+  if (options?.proposedDate && typeof options.proposedDate === 'string') {
+    const dateRegex = /^\d{4}-\d{2}-\d{2}(T\d{2}:\d{2}:\d{2})?/
+    if (!dateRegex.test(options.proposedDate)) {
+      await logWarn('Invalid proposedDate format', { proposedDate: options.proposedDate, expectedFormat: 'YYYY-MM-DD or ISO format' })
+    }
+  }
+  
+  if (options?.proposedEndDate && typeof options.proposedEndDate === 'string') {
+    const dateRegex = /^\d{4}-\d{2}-\d{2}(T\d{2}:\d{2}:\d{2})?/
+    if (!dateRegex.test(options.proposedEndDate)) {
+      await logWarn('Invalid proposedEndDate format', { proposedEndDate: options.proposedEndDate, expectedFormat: 'YYYY-MM-DD or ISO format' })
+    }
+  }
+  
+  // Validate time formats if provided
+  if (options?.proposedStartTime && typeof options.proposedStartTime === 'string') {
+    const timeRegex = /^\d{2}:\d{2}$/
+    if (!timeRegex.test(options.proposedStartTime)) {
+      await logWarn('Invalid proposedStartTime format', { proposedStartTime: options.proposedStartTime, expectedFormat: 'HH:MM format' })
+    }
+  }
+  
+  if (options?.proposedEndTime && typeof options.proposedEndTime === 'string') {
+    const timeRegex = /^\d{2}:\d{2}$/
+    if (!timeRegex.test(options.proposedEndTime)) {
+      await logWarn('Invalid proposedEndTime format', { proposedEndTime: options.proposedEndTime, expectedFormat: 'HH:MM format' })
+    }
+  }
+  // FIXED: Improved duplicate check logic (Issue #17)
+  // Allow intentional duplicates for admin-initiated changes (e.g., date changes, fee changes)
+  // Skip duplicate check if explicitly requested (for retries or intentional duplicates)
+  if (!options?.skipDuplicateCheck && !options?.allowIntentionalDuplicate) {
     const { hasEmailBeenSent, logEmailSent } = await import("./email-tracking")
     const emailAlreadySent = await hasEmailBeenSent(
       booking.id,
@@ -1464,9 +1553,13 @@ export async function sendBookingStatusNotification(
     )
     
     if (emailAlreadySent) {
-      console.log(`Email already sent recently for booking ${booking.id}, status: ${status}, skipping duplicate`)
+      await logInfo('Email already sent recently, skipping duplicate', { bookingId: booking.id, status })
       return
     }
+  } else if (options?.allowIntentionalDuplicate) {
+    // FIXED: Log intentional duplicate for tracking (Issue #17)
+    // This allows admin-initiated changes to send emails even if duplicate detected
+    await logInfo('Intentional duplicate email allowed (admin-initiated change)', { bookingId: booking.id, status })
   }
   // Use NEXT_PUBLIC_SITE_URL if set, otherwise try VERCEL_URL (for preview deployments),
   // otherwise fall back to production domain
@@ -1477,12 +1570,17 @@ export async function sendBookingStatusNotification(
     ? `${siteUrl}/booking/response/${options.responseToken}`
     : null
 
+  // FIXED: Handle all null/undefined values properly (Issue #21)
+  const bookingName = booking.name || 'Valued Customer'
+  const bookingEventType = booking.eventType || 'Event'
+  const bookingReferenceNumber = booking.referenceNumber || booking.id || 'N/A'
+  const bookingEmail = booking.email || ''
+  
   // CRITICAL: Always start subject with booking reference number for easy identification
-  const referenceNumber = booking.referenceNumber || booking.id
   const mailOptions: nodemailer.SendMailOptions = {
     from: `"Hell University" <${process.env.SMTP_USER}>`,
-    to: booking.email,
-    subject: `[${referenceNumber}] Reservation Status Update - ${booking.eventType}`,
+    to: bookingEmail,
+    subject: `[${bookingReferenceNumber}] Reservation Status Update - ${bookingEventType}`,
     text: generateStatusChangeEmailText(
       booking,
       status,
@@ -1516,24 +1614,37 @@ export async function sendBookingStatusNotification(
       await logEmailSent(booking.id, "status_change", status, booking.email)
     }
     
-    console.log('Booking status notification email sent:', result.messageId)
+    await logInfo('Booking status notification email sent', { bookingId: booking.id, messageId: result.messageId, status })
   } catch (error) {
     // Queue email for retry
     const errorMessage = error instanceof Error ? error.message : 'Unknown error'
-    console.error('Failed to send status change notification, queuing for retry:', errorMessage)
+    await logError('Failed to send status change notification, queuing for retry', { bookingId: booking.id, status, errorMessage }, error instanceof Error ? error : new Error(errorMessage))
     
     try {
+      // CRITICAL: Store only bookingId and status in metadata to prevent staleness
+      // The email content (HTML/text) is already generated from current booking data
+      // Storing full 'options' object could contain stale data if booking is updated before email is processed
+      // Only store essential identifiers that won't change
+      // FIXED: Pass skipDuplicateCheck when allowIntentionalDuplicate is true (Issue #17)
+      // This ensures admin-initiated changes (e.g., multiple date changes) can all send emails even if queued
       await addEmailToQueue(
         'status_change',
         booking.email,
         mailOptions.subject as string,
         mailOptions.html as string,
         mailOptions.text as string,
-        { bookingId: booking.id, status, options }
+        { bookingId: booking.id, status },
+        {
+          skipDuplicateCheck: options?.allowIntentionalDuplicate || options?.skipDuplicateCheck || false
+        }
       )
-      console.log('Status change notification queued for retry')
+      await logInfo('Status change notification queued for retry', { 
+        bookingId: booking.id, 
+        status,
+        skipDuplicateCheck: options?.allowIntentionalDuplicate || options?.skipDuplicateCheck || false
+      })
     } catch (queueError) {
-      console.error('Failed to queue status change notification:', queueError)
+      await logError('Failed to queue status change notification', { bookingId: booking.id, status }, queueError instanceof Error ? queueError : new Error(String(queueError)))
       // Re-throw original error if queueing fails
       throw error
     }
@@ -1769,11 +1880,11 @@ Hell University Reservation System
     const emailTransporter = await getTransporter()
     const result = await emailTransporter.sendMail(mailOptions)
     
-    console.log('Admin user response notification email sent:', result.messageId)
+    await logInfo('Admin user response notification email sent', { bookingId: booking.id, messageId: result.messageId, referenceNumber })
   } catch (error) {
     // Queue email for retry
     const errorMessage = error instanceof Error ? error.message : 'Unknown error'
-    console.error('Failed to send admin user response notification, queuing for retry:', errorMessage)
+    await logError('Failed to send admin user response notification, queuing for retry', { bookingId: booking.id, referenceNumber, errorMessage }, error instanceof Error ? error : new Error(errorMessage))
     
     try {
       await addEmailToQueue(
@@ -1784,9 +1895,9 @@ Hell University Reservation System
         mailOptions.text as string,
         { bookingId: booking.id, response, options, replyTo: booking.email }
       )
-      console.log('Admin user response notification queued for retry')
+      await logInfo('Admin user response notification queued for retry', { bookingId: booking.id, referenceNumber })
     } catch (queueError) {
-      console.error('Failed to queue admin user response notification:', queueError)
+      await logError('Failed to queue admin user response notification', { bookingId: booking.id, referenceNumber }, queueError instanceof Error ? queueError : new Error(String(queueError)))
       // Re-throw original error if queueing fails
       throw error
     }
@@ -1995,11 +2106,11 @@ Hell University Reservation System
     const emailTransporter = await getTransporter()
     const result = await emailTransporter.sendMail(mailOptions)
     
-    console.log('Admin auto-update notification email sent:', result.messageId)
+    await logInfo('Admin auto-update notification email sent', { messageId: result.messageId, bookingCount: bookings.length })
   } catch (error) {
     // Queue email for retry
     const errorMessage = error instanceof Error ? error.message : 'Unknown error'
-    console.error('Failed to send admin auto-update notification, queuing for retry:', errorMessage)
+    await logError('Failed to send admin auto-update notification, queuing for retry', { bookingCount: bookings.length, errorMessage }, error instanceof Error ? error : new Error(errorMessage))
     
     try {
       await addEmailToQueue(
@@ -2010,9 +2121,9 @@ Hell University Reservation System
         mailOptions.text as string,
         { bookings: bookings.map(b => ({ id: b.booking.id, oldStatus: b.oldStatus, newStatus: b.newStatus })) }
       )
-      console.log('Admin auto-update notification queued for retry')
+      await logInfo('Admin auto-update notification queued for retry', { bookingCount: bookings.length })
     } catch (queueError) {
-      console.error('Failed to queue admin auto-update notification:', queueError)
+      await logError('Failed to queue admin auto-update notification', { bookingCount: bookings.length }, queueError instanceof Error ? queueError : new Error(String(queueError)))
       // Re-throw original error if queueing fails
       throw error
     }
@@ -2421,11 +2532,11 @@ Hell University Reservation System
     const emailTransporter = await getTransporter()
     const result = await emailTransporter.sendMail(mailOptions)
     
-    console.log('Admin status change notification email sent:', result.messageId)
+    await logInfo('Admin status change notification email sent', { bookingId: booking.id, messageId: result.messageId, oldStatus, newStatus })
   } catch (error) {
     // Queue email for retry
     const errorMessage = error instanceof Error ? error.message : 'Unknown error'
-    console.error('Failed to send admin status change notification, queuing for retry:', errorMessage)
+    await logError('Failed to send admin status change notification, queuing for retry', { bookingId: booking.id, oldStatus, newStatus, errorMessage }, error instanceof Error ? error : new Error(errorMessage))
     
     try {
       await addEmailToQueue(
@@ -2436,9 +2547,9 @@ Hell University Reservation System
         mailOptions.text as string,
         { bookingId: booking.id, oldStatus, newStatus, changeReason, changedBy, replyTo: booking.email }
       )
-      console.log('Admin status change notification queued for retry')
+      await logInfo('Admin status change notification queued for retry', { bookingId: booking.id, oldStatus, newStatus })
     } catch (queueError) {
-      console.error('Failed to queue admin status change notification:', queueError)
+      await logError('Failed to queue admin status change notification', { bookingId: booking.id, oldStatus, newStatus }, queueError instanceof Error ? queueError : new Error(String(queueError)))
       // Re-throw original error if queueing fails
       throw error
     }
@@ -2612,10 +2723,10 @@ export async function sendAdminFeeChangeNotification(
 
   try {
     const emailTransporter = await getTransporter()
-    await emailTransporter.sendMail(mailOptions)
-    console.log(`Admin fee ${isUpdate ? 'update' : 'recording'} notification sent for booking ${booking.id}`)
+    const result = await emailTransporter.sendMail(mailOptions)
+    await logInfo(`Admin fee ${isUpdate ? 'update' : 'recording'} notification sent`, { bookingId: booking.id, messageId: result.messageId, isUpdate })
   } catch (error) {
-    console.error("Failed to send admin fee change notification:", error)
+    await logError("Failed to send admin fee change notification", { bookingId: booking.id, isUpdate }, error instanceof Error ? error : new Error(String(error)))
     throw error
   }
 }
@@ -2756,11 +2867,11 @@ Hell University Reservation System
     const emailTransporter = await getTransporter()
     const result = await emailTransporter.sendMail(mailOptions)
     
-    console.log('Admin check-in notification email sent:', result.messageId)
+    await logInfo('Admin check-in notification email sent', { bookingId: booking.id, messageId: result.messageId, referenceNumber: booking.referenceNumber || booking.id })
   } catch (error) {
     // Queue email for retry
     const errorMessage = error instanceof Error ? error.message : 'Unknown error'
-    console.error('Failed to send admin check-in notification, queuing for retry:', errorMessage)
+    await logError('Failed to send admin check-in notification, queuing for retry', { bookingId: booking.id, errorMessage }, error instanceof Error ? error : new Error(errorMessage))
     
     try {
       await addEmailToQueue(
@@ -2771,9 +2882,9 @@ Hell University Reservation System
         mailOptions.text as string,
         { bookingId: booking.id, action: 'check-in', replyTo: booking.email }
       )
-      console.log('Admin check-in notification queued for retry')
+      await logInfo('Admin check-in notification queued for retry', { bookingId: booking.id })
     } catch (queueError) {
-      console.error('Failed to queue admin check-in notification:', queueError)
+      await logError('Failed to queue admin check-in notification', { bookingId: booking.id }, queueError instanceof Error ? queueError : new Error(String(queueError)))
       // Re-throw original error if queueing fails
       throw error
     }
@@ -2929,11 +3040,11 @@ Hell University Reservation System
     const emailTransporter = await getTransporter()
     const result = await emailTransporter.sendMail(mailOptions)
     
-    console.log('Admin booking deletion notification email sent:', result.messageId)
+    await logInfo('Admin booking deletion notification email sent', { bookingId: booking.id, messageId: result.messageId, deletedBy, referenceNumber: booking.referenceNumber || booking.id })
   } catch (error) {
     // Queue email for retry
     const errorMessage = error instanceof Error ? error.message : 'Unknown error'
-    console.error('Failed to send admin booking deletion notification, queuing for retry:', errorMessage)
+    await logError('Failed to send admin booking deletion notification, queuing for retry', { bookingId: booking.id, deletedBy, errorMessage }, error instanceof Error ? error : new Error(errorMessage))
     
     try {
       await addEmailToQueue(
@@ -2944,9 +3055,9 @@ Hell University Reservation System
         mailOptions.text as string,
         { bookingId: booking.id, action: 'deletion', deletedBy, replyTo: booking.email }
       )
-      console.log('Admin booking deletion notification queued for retry')
+      await logInfo('Admin booking deletion notification queued for retry', { bookingId: booking.id, deletedBy })
     } catch (queueError) {
-      console.error('Failed to queue admin booking deletion notification:', queueError)
+      await logError('Failed to queue admin booking deletion notification', { bookingId: booking.id, deletedBy }, queueError instanceof Error ? queueError : new Error(String(queueError)))
       // Re-throw original error if queueing fails
       throw error
     }
@@ -2971,7 +3082,7 @@ export async function sendAdminEmailFailureNotification(data: {
   const recipientEmail = process.env.RESERVATION_EMAIL || process.env.SMTP_USER
 
   if (!recipientEmail) {
-    console.error('RESERVATION_EMAIL or SMTP_USER not configured - cannot send email failure notification')
+    await logError('RESERVATION_EMAIL or SMTP_USER not configured - cannot send email failure notification', { emailId: data.emailId })
     return // Don't throw - this is a monitoring function
   }
 
@@ -3132,11 +3243,11 @@ Hell University Reservation System
     const emailTransporter = await getTransporter()
     const result = await emailTransporter.sendMail(mailOptions)
     
-    console.log('Admin email failure notification sent:', result.messageId)
+    await logInfo('Admin email failure notification sent', { emailId: data.emailId, messageId: result.messageId, emailType: data.emailType })
   } catch (error) {
     // Don't throw - this is a monitoring function and shouldn't break the system
     // Just log the error
-    console.error('Failed to send admin email failure notification:', error)
+    await logError('Failed to send admin email failure notification', { emailId: data.emailId, emailType: data.emailType }, error instanceof Error ? error : new Error(String(error)))
     // Don't queue this notification - it would create an infinite loop
   }
 }

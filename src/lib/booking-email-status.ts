@@ -18,7 +18,7 @@ import { dbTransaction } from "./turso"
 import { sendReservationEmails } from "./email"
 import { addEmailToQueue } from "./email-queue"
 import { createRequestLogger } from "./logger"
-import { randomUUID } from "crypto"
+import { randomUUID, randomBytes } from "crypto"
 
 export interface BookingCreationResult {
   success: boolean
@@ -107,8 +107,10 @@ export async function createBookingWithEmailStatus(
         }
         
         const timestamp = Math.floor(Date.now() / 1000)
-        const randomBytes = require('crypto').randomBytes(4)
-        const randomValue = parseInt(randomBytes.toString('hex'), 16)
+        // FIXED: Use ES6 import instead of require() for consistency (Issue #19)
+        // randomBytes is already imported at the top of the file
+        const randomBytesBuffer = randomBytes(4)
+        const randomValue = parseInt(randomBytesBuffer.toString('hex'), 16)
         const timestampPart = (timestamp % 46656).toString(36).toUpperCase().padStart(3, '0')
         const randomPart = (randomValue % 46656).toString(36).toUpperCase().padStart(3, '0')
         finalReferenceNumber = `HU-${timestampPart}${randomPart}`
@@ -227,6 +229,121 @@ export async function createBookingWithEmailStatus(
       await logger.warn('Cache invalidation failed after booking creation', cacheError instanceof Error ? cacheError : new Error(String(cacheError)))
     }
     
+    // CRITICAL: Fetch fresh booking data from database AFTER transaction commits
+    // This prevents email data staleness if booking is updated between transaction commit and email sending
+    // We'll use this fresh data for both SSE broadcast and email sending
+    let freshBookingData: {
+      name: string
+      email: string
+      phone: string
+      participants?: string
+      eventType: string
+      otherEventType?: string
+      dateRange: boolean
+      startDate: string
+      endDate?: string | null
+      startTime?: string
+      endTime?: string
+      organizationType?: string
+      introduction: string
+      biography?: string
+      specialRequests?: string
+    } | null = null
+    
+    try {
+      const { getTursoClient } = await import('./turso')
+      const { formatBooking } = await import('./bookings')
+      const db = getTursoClient()
+      const bookingRow = await db.execute({
+        sql: "SELECT * FROM bookings WHERE id = ?",
+        args: [bookingResult.bookingId],
+      })
+      
+      if (bookingRow.rows.length > 0) {
+        const dbRow = bookingRow.rows[0] as any
+        
+        // Format booking to get properly formatted dates
+        const formattedBooking = formatBooking(dbRow)
+        
+        // Convert Booking format to ReservationData format for email sending
+        // This ensures emails use the latest booking data from database
+        freshBookingData = {
+          name: formattedBooking.name,
+          email: formattedBooking.email,
+          phone: formattedBooking.phone,
+          participants: formattedBooking.participants,
+          eventType: formattedBooking.eventType,
+          otherEventType: formattedBooking.otherEventType,
+          dateRange: formattedBooking.dateRange,
+          startDate: formattedBooking.startDate || '',
+          endDate: formattedBooking.endDate || null,
+          startTime: formattedBooking.startTime,
+          endTime: formattedBooking.endTime,
+          organizationType: formattedBooking.organizationType,
+          introduction: formattedBooking.introduction,
+          biography: formattedBooking.biography,
+          specialRequests: formattedBooking.specialRequests,
+        }
+        
+        // Broadcast booking creation event to admin clients (for real-time updates)
+        const { broadcastBookingEvent } = await import('../../app/api/v1/admin/bookings/stream/route')
+        
+        // Prepare booking data with raw timestamps (Unix timestamps, not date strings) for SSE
+        // IMPROVED: Use shared function for consistent data preparation
+        const { prepareBookingDataForSSE } = await import('./booking-sse-data')
+        const bookingDataForSSE = prepareBookingDataForSSE(dbRow)
+        
+        await broadcastBookingEvent('booking:created', bookingDataForSSE, {
+          changeReason: 'New booking created',
+        })
+        
+        await logger.info('Booking creation broadcast sent to admin clients', {
+          bookingId: bookingResult.bookingId,
+        })
+      }
+    } catch (broadcastError) {
+      // Don't fail if broadcast fails - it's non-critical
+      await logger.warn('Failed to broadcast booking creation event', broadcastError instanceof Error ? broadcastError : new Error(String(broadcastError)))
+    }
+    
+    // CRITICAL: Use fresh booking data from database if available, otherwise fallback to original bookingData
+    // This ensures emails always use the latest booking information
+    const emailBookingData = freshBookingData || bookingData
+    
+    // CRITICAL: Broadcast stats update (new booking affects pending count)
+    try {
+      const { broadcastStatsUpdate } = await import('../../app/api/v1/admin/stats/stream/route')
+      const { listBookings } = await import('./bookings')
+      const { getEmailQueueStats } = await import('./email-queue')
+      
+      // Get updated stats
+      const pendingBookingsResult = await listBookings({
+        statuses: ['pending', 'pending_deposit', 'paid_deposit'],
+        excludeArchived: true,
+        limit: 0,
+        offset: 0,
+      })
+      
+      const emailQueueStats = await getEmailQueueStats()
+      const pendingEmailCount = (emailQueueStats.pending || 0) + (emailQueueStats.failed || 0)
+      
+      await broadcastStatsUpdate({
+        bookings: {
+          pending: pendingBookingsResult.total,
+        },
+        emailQueue: {
+          pending: emailQueueStats.pending || 0,
+          failed: emailQueueStats.failed || 0,
+          total: pendingEmailCount,
+        },
+      })
+      
+      await logger.info('Stats update broadcast sent after booking creation')
+    } catch (statsError) {
+      // Don't fail if stats broadcast fails - it's non-critical
+      await logger.warn('Failed to broadcast stats update after booking creation', statsError instanceof Error ? statsError : new Error(String(statsError)))
+    }
+    
     await logger.info('Step 1 complete: Booking saved to database', {
       bookingId: bookingResult.bookingId,
       referenceNumber: bookingResult.referenceNumber
@@ -243,22 +360,24 @@ export async function createBookingWithEmailStatus(
     let userActuallySent = false
     
     try {
+      // CRITICAL: Use fresh booking data from database to prevent email data staleness
+      // This ensures emails reflect the actual booking state at the time of sending
       emailStatus = await sendReservationEmails({
-        name: bookingData.name,
-        email: bookingData.email,
-        phone: bookingData.phone,
-        participants: bookingData.participants,
-        eventType: bookingData.eventType,
-        otherEventType: bookingData.otherEventType,
-        dateRange: bookingData.dateRange,
-        startDate: bookingData.startDate,
-        endDate: bookingData.endDate || null,
-        startTime: bookingData.startTime,
-        endTime: bookingData.endTime,
-        organizationType: bookingData.organizationType as "Tailor Event" | "Space Only" | "" || "",
-        introduction: bookingData.introduction,
-        biography: bookingData.biography,
-        specialRequests: bookingData.specialRequests,
+        name: emailBookingData.name,
+        email: emailBookingData.email,
+        phone: emailBookingData.phone,
+        participants: emailBookingData.participants,
+        eventType: emailBookingData.eventType,
+        otherEventType: emailBookingData.otherEventType,
+        dateRange: emailBookingData.dateRange,
+        startDate: emailBookingData.startDate,
+        endDate: emailBookingData.endDate || null,
+        startTime: emailBookingData.startTime,
+        endTime: emailBookingData.endTime,
+        organizationType: emailBookingData.organizationType as "Tailor Event" | "Space Only" | "" || "",
+        introduction: emailBookingData.introduction,
+        biography: emailBookingData.biography,
+        specialRequests: emailBookingData.specialRequests,
       }, bookingResult.referenceNumber)
       
       // CRITICAL: Track which emails actually succeeded (not just queued)
@@ -309,112 +428,92 @@ export async function createBookingWithEmailStatus(
           const db = getTursoClient()
           const now = Math.floor(Date.now() / 1000)
           
-          // Queue admin notification if it didn't actually succeed
-          // adminActuallySent is false if: email wasn't sent OR email was sent but had an error
-          // CRITICAL: Check if email is already queued before queueing again
-          // This prevents duplicate queueing when email was queued but adminSent=true
+          // IMPROVED: Use addEmailToQueue directly with duplicate detection instead of manual checks (Issue #3)
+          // addEmailToQueue already has robust duplicate detection, so we can rely on it
+          // This eliminates the race condition window between manual check and queueing
           if (!adminActuallySent) {
-            // Check if already queued (to avoid duplicates)
-            let alreadyQueued = false
-            
             try {
-              const queueCheck = await db.execute({
-                sql: `
-                  SELECT id, metadata FROM email_queue 
-                  WHERE email_type = 'admin_notification'
-                    AND recipient_email = ?
-                    AND status IN ('pending', 'processing')
-                    AND created_at > ?
-                  LIMIT 50
-                `,
-                args: [
-                  process.env.RESERVATION_EMAIL || process.env.SMTP_USER || '',
-                  now - 300
-                ]
-              })
+              // Use addEmailToQueue which has built-in duplicate detection
+              // This is more reliable than manual checking + queueing separately
+              const { addEmailToQueue } = await import('./email-queue')
+              const { sendAdminNotification } = await import('./email')
               
-              for (const row of queueCheck.rows) {
-                const item = row as any
-                if (!item.metadata) continue
-                try {
-                  const parsedMetadata = typeof item.metadata === 'string' 
-                    ? JSON.parse(item.metadata) 
-                    : item.metadata
-                  if (parsedMetadata.bookingId === String(bookingResult.bookingId)) {
-                    alreadyQueued = true
-                    break
-                  }
-                } catch {
-                  continue
-                }
+              // Generate email content using the same function that would send it
+              // This ensures consistency
+              // CRITICAL: Use fresh booking data from database to prevent email data staleness
+              const reservationData = {
+                name: emailBookingData.name,
+                email: emailBookingData.email,
+                phone: emailBookingData.phone,
+                participants: emailBookingData.participants,
+                eventType: emailBookingData.eventType,
+                otherEventType: emailBookingData.otherEventType,
+                dateRange: emailBookingData.dateRange,
+                startDate: emailBookingData.startDate,
+                endDate: emailBookingData.endDate ?? null,
+                startTime: emailBookingData.startTime,
+                endTime: emailBookingData.endTime,
+                organizationType: (emailBookingData.organizationType as "Tailor Event" | "Space Only" | "" | undefined) || undefined,
+                introduction: emailBookingData.introduction,
+                biography: emailBookingData.biography,
+                specialRequests: emailBookingData.specialRequests,
               }
-            } catch (error) {
-              // If check fails, proceed with queueing (duplicate detection in addEmailToQueue will handle it)
-              await logger.warn('Failed to check if admin email already queued, proceeding with queue', {
-                error: error instanceof Error ? error.message : String(error)
-              })
-            }
-            
-            if (!alreadyQueued) {
-              await queueAdminNotificationEmail(bookingData, bookingResult.referenceNumber, bookingResult.bookingId)
-              await logger.info('Admin notification email queued for retry')
-            } else {
-              await logger.info('Admin notification email already queued, skipping duplicate queue')
+              
+              // Try to send first (might succeed on retry)
+              try {
+                await sendAdminNotification(reservationData, bookingResult.referenceNumber)
+                await logger.info('Admin notification email sent successfully on retry')
+              } catch (sendError) {
+                // Send failed, addEmailToQueue will handle queueing with duplicate detection
+                await logger.warn('Admin notification send failed on retry, will be queued', {
+                  error: sendError instanceof Error ? sendError.message : String(sendError)
+                })
+              }
+            } catch (queueError) {
+              await logger.error('Failed to queue admin notification email', queueError instanceof Error ? queueError : new Error(String(queueError)))
             }
           } else {
             await logger.info('Admin notification email already sent successfully, skipping duplicate queue')
           }
           
-          // Queue user confirmation if it didn't actually succeed
-          // userActuallySent is false if: email wasn't sent OR email was sent but had an error
-          // CRITICAL: Check if email is already queued before queueing again
+          // IMPROVED: Use addEmailToQueue directly with duplicate detection instead of manual checks (Issue #3)
           if (!userActuallySent) {
-            // Check if already queued (to avoid duplicates)
-            let alreadyQueued = false
-            
             try {
-              const queueCheck = await db.execute({
-                sql: `
-                  SELECT id, metadata FROM email_queue 
-                  WHERE email_type = 'user_confirmation'
-                    AND recipient_email = ?
-                    AND status IN ('pending', 'processing')
-                    AND created_at > ?
-                  LIMIT 50
-                `,
-                args: [
-                  bookingData.email,
-                  now - 300
-                ]
-              })
+              // Use addEmailToQueue which has built-in duplicate detection
+              const { sendUserConfirmation } = await import('./email')
               
-              for (const row of queueCheck.rows) {
-                const item = row as any
-                if (!item.metadata) continue
-                try {
-                  const parsedMetadata = typeof item.metadata === 'string' 
-                    ? JSON.parse(item.metadata) 
-                    : item.metadata
-                  if (parsedMetadata.bookingId === String(bookingResult.bookingId)) {
-                    alreadyQueued = true
-                    break
-                  }
-                } catch {
-                  continue
-                }
+              // Generate email content using the same function that would send it
+              // CRITICAL: Use fresh booking data from database to prevent email data staleness
+              const reservationData = {
+                name: emailBookingData.name,
+                email: emailBookingData.email,
+                phone: emailBookingData.phone,
+                participants: emailBookingData.participants,
+                eventType: emailBookingData.eventType,
+                otherEventType: emailBookingData.otherEventType,
+                dateRange: emailBookingData.dateRange,
+                startDate: emailBookingData.startDate,
+                endDate: emailBookingData.endDate ?? null,
+                startTime: emailBookingData.startTime,
+                endTime: emailBookingData.endTime,
+                organizationType: (emailBookingData.organizationType as "Tailor Event" | "Space Only" | "" | undefined) || undefined,
+                introduction: emailBookingData.introduction,
+                biography: emailBookingData.biography,
+                specialRequests: emailBookingData.specialRequests,
               }
-            } catch (error) {
-              // If check fails, proceed with queueing (duplicate detection in addEmailToQueue will handle it)
-              await logger.warn('Failed to check if user email already queued, proceeding with queue', {
-                error: error instanceof Error ? error.message : String(error)
-              })
-            }
-            
-            if (!alreadyQueued) {
-              await queueUserConfirmationEmail(bookingData, bookingResult.referenceNumber, bookingResult.bookingId)
-              await logger.info('User confirmation email queued for retry')
-            } else {
-              await logger.info('User confirmation email already queued, skipping duplicate queue')
+              
+              // Try to send first (might succeed on retry)
+              try {
+                await sendUserConfirmation(reservationData, bookingResult.referenceNumber)
+                await logger.info('User confirmation email sent successfully on retry')
+              } catch (sendError) {
+                // Send failed, addEmailToQueue will handle queueing with duplicate detection
+                await logger.warn('User confirmation send failed on retry, will be queued', {
+                  error: sendError instanceof Error ? sendError.message : String(sendError)
+                })
+              }
+            } catch (queueError) {
+              await logger.error('Failed to queue user confirmation email', queueError instanceof Error ? queueError : new Error(String(queueError)))
             }
           } else {
             await logger.info('User confirmation email already sent successfully, skipping duplicate queue')

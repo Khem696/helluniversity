@@ -110,6 +110,7 @@ export function Header({ initialBookingEnabled }: HeaderProps = {}) {
   const isSubmittingRef = useRef(false) // Synchronous guard against duplicate submissions
   const abortControllerRef = useRef<AbortController | null>(null) // Store AbortController to allow cancellation from reCAPTCHA expire handler
   const wasAbortedByRecaptchaExpireRef = useRef(false) // Track if abort was due to reCAPTCHA expiration
+  const bookingOpenRef = useRef(false) // Store bookingOpen in ref to avoid stale closures
   const [unavailableDates, setUnavailableDates] = useState<Set<string>>(new Set())
   const [unavailableTimeRanges, setUnavailableTimeRanges] = useState<Array<{
     date: string
@@ -123,7 +124,20 @@ export function Header({ initialBookingEnabled }: HeaderProps = {}) {
   // Ensure component is mounted (client-side only)
   useEffect(() => {
     setMounted(true)
+    
+    // Cleanup: abort any pending requests on unmount
+    return () => {
+      if (abortControllerRef.current) {
+        abortControllerRef.current.abort()
+        abortControllerRef.current = null
+      }
+    }
   }, [])
+  
+  // Keep bookingOpenRef in sync with bookingOpen state
+  useEffect(() => {
+    bookingOpenRef.current = bookingOpen
+  }, [bookingOpen])
 
   // Use SSE hook for real-time booking enabled status updates
   // This replaces the previous polling mechanism with Server-Sent Events
@@ -138,7 +152,8 @@ export function Header({ initialBookingEnabled }: HeaderProps = {}) {
       // If status changed from enabled to disabled, close dialog immediately
       // Note: onStatusChange is only called when previousEnabled !== newEnabled,
       // so this condition covers the transition from enabled to disabled
-      if (previousEnabled && !newEnabled && bookingOpen) {
+      // Use ref to avoid stale closure issues
+      if (previousEnabled && !newEnabled && bookingOpenRef.current) {
         // Reset reCAPTCHA overlay state when closing dialog
         setShowRecaptcha(false)
         setRecaptchaToken(null)
@@ -150,9 +165,10 @@ export function Header({ initialBookingEnabled }: HeaderProps = {}) {
       // because onStatusChange is only invoked when status changes (previousEnabled !== newEnabled).
       // If previousEnabled is false and newEnabled is false, no change occurred, so the callback
       // wouldn't be called. This redundant condition has been removed.
-    }, [bookingOpen]),
+    }, []), // Empty deps - use ref for bookingOpen
     onDisabled: useCallback(() => {
-      if (bookingOpen) {
+      // Use ref to avoid stale closure issues
+      if (bookingOpenRef.current) {
         // Reset reCAPTCHA overlay state when closing dialog
         setShowRecaptcha(false)
         setRecaptchaToken(null)
@@ -160,7 +176,7 @@ export function Header({ initialBookingEnabled }: HeaderProps = {}) {
         recaptchaShownAtRef.current = null
         setBookingOpen(false)
       }
-    }, [bookingOpen]),
+    }, []), // Empty deps - use ref for bookingOpen
   })
 
 
@@ -180,18 +196,49 @@ export function Header({ initialBookingEnabled }: HeaderProps = {}) {
                 setUnavailableDates(dates)
                 setUnavailableTimeRanges(unavailableTimeRangesArray)
                 
-                // Debug logging
-                if (unavailableDatesArray.length > 0) {
-                  console.log(`[Header] Unavailable dates fetched: ${unavailableDatesArray.length} dates`, unavailableDatesArray.slice(0, 10))
-                } else {
-                  console.log(`[Header] No unavailable dates found`)
+                // Debug logging (development only)
+                if (process.env.NODE_ENV === 'development') {
+                  if (unavailableDatesArray.length > 0) {
+                    import('@/lib/logger').then(({ logDebug }) => {
+                      logDebug('Unavailable dates fetched', {
+                        count: unavailableDatesArray.length,
+                        sampleDates: unavailableDatesArray.slice(0, 10),
+                      }).catch(() => {
+                        // Fallback if logger fails
+                      })
+                    }).catch(() => {
+                      // Fallback if logger import fails
+                    })
+                  }
                 }
               } else {
-                console.error("[Header] Failed to fetch unavailable dates:", json)
+                // Use structured logger for errors
+                import('@/lib/logger').then(({ logError }) => {
+                  logError('Failed to fetch unavailable dates', {
+                    response: json,
+                  }).catch(() => {
+                    // Fallback to console if logger fails
+                    console.error("[Header] Failed to fetch unavailable dates:", json)
+                  })
+                }).catch(() => {
+                  // Fallback if logger import fails
+                  console.error("[Header] Failed to fetch unavailable dates:", json)
+                })
               }
           })
           .catch((err) => {
-            console.error("Failed to fetch unavailable dates:", err)
+            // Use structured logger for errors
+            import('@/lib/logger').then(({ logError }) => {
+              logError('Failed to fetch unavailable dates', {
+                error: err instanceof Error ? err.message : String(err),
+              }, err instanceof Error ? err : new Error(String(err))).catch(() => {
+                // Fallback to console if logger fails
+                console.error("Failed to fetch unavailable dates:", err)
+              })
+            }).catch(() => {
+              // Fallback if logger import fails
+              console.error("Failed to fetch unavailable dates:", err)
+            })
           })
       }
       

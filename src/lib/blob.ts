@@ -1,5 +1,6 @@
 import { put, del, list, head } from "@vercel/blob"
 import { getTursoClient } from "./turso"
+import { logError } from "./logger"
 
 /**
  * Vercel Blob Storage Utilities
@@ -34,7 +35,8 @@ export async function uploadImage(
       pathname: blob.pathname,
     }
   } catch (error) {
-    console.error("Blob upload error:", error)
+    // Fire-and-forget logging (don't block on log)
+    logError("Blob upload error", { filename }, error instanceof Error ? error : new Error(String(error))).catch(() => {})
     throw new Error(
       `Failed to upload image: ${error instanceof Error ? error.message : "Unknown error"}`
     )
@@ -48,7 +50,8 @@ export async function deleteImage(url: string): Promise<void> {
   try {
     await del(url)
   } catch (error) {
-    console.error("Blob delete error:", error)
+    // Fire-and-forget logging (don't block on log)
+    logError("Blob delete error", { url }, error instanceof Error ? error : new Error(String(error))).catch(() => {})
     throw new Error(
       `Failed to delete image: ${error instanceof Error ? error.message : "Unknown error"}`
     )
@@ -101,7 +104,8 @@ export async function listImages(options?: {
       cursor: options?.cursor,
     })
   } catch (error) {
-    console.error("Blob list error:", error)
+    // Fire-and-forget logging (don't block on log)
+    logError("Blob list error", {}, error instanceof Error ? error : new Error(String(error))).catch(() => {})
     throw new Error(
       `Failed to list images: ${error instanceof Error ? error.message : "Unknown error"}`
     )
@@ -138,7 +142,8 @@ export async function deleteImageWithMetadata(imageId: string): Promise<void> {
       args: [imageId],
     })
   } catch (error) {
-    console.error("Delete image with metadata error:", error)
+    // Fire-and-forget logging (don't block on log)
+    logError("Delete image with metadata error", { imageId }, error instanceof Error ? error : new Error(String(error))).catch(() => {})
     throw error
   }
 }

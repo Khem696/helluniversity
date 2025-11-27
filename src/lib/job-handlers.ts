@@ -94,6 +94,9 @@ export function registerAllJobHandlers(): void {
   registerJobHandler('cleanup-orphaned-blobs-batch', cleanupOrphanedBlobsBatch)
   registerJobHandler('send-booking-reminder', sendBookingReminder)
   
-  console.log('✓ All job handlers registered')
+  // Only log in development
+  if (process.env.NODE_ENV !== 'production') {
+    console.log('✓ All job handlers registered')
+  }
 }
 

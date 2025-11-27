@@ -13,6 +13,7 @@ import { format } from "date-fns"
 import { TimePicker } from "@/components/ui/time-picker"
 import { dateToBangkokDateString } from "@/lib/timezone-client"
 import { API_PATHS, buildApiUrl } from "@/lib/api-config"
+import { useUserBookingSSE } from "@/hooks/useUserBookingSSE"
 
 // Parse 24-hour time string from user_response (HH:MM format)
 // Returns 24-hour format string or null
@@ -68,6 +69,7 @@ interface BookingData {
   proposedEndDate?: string | null
   userResponse?: string
   depositEvidenceUrl?: string | null
+  depositVerifiedAt?: number | null
 }
 
 export default function BookingResponsePage() {
@@ -84,6 +86,34 @@ export default function BookingResponsePage() {
   const [message, setMessage] = useState("")
   const [submitSuccess, setSubmitSuccess] = useState(false)
   const [unavailableDates, setUnavailableDates] = useState<Set<string>>(new Set())
+  
+  // Real-time booking updates via SSE
+  useUserBookingSSE({
+    token: token || "",
+    enabled: !!token, // Enable with just token - SSE will work even if initial booking fetch fails
+    onStatusChange: (event) => {
+      // Update booking state when status changes
+      if (event.booking) {
+        setBooking(prev => prev ? {
+          ...prev,
+          status: event.booking.status,
+          depositEvidenceUrl: event.booking.deposit_evidence_url || null,
+          depositVerifiedAt: event.booking.deposit_verified_at || null,
+        } : null)
+      }
+    },
+    onBookingUpdate: (event) => {
+      // Update booking state for any booking update
+      if (event.booking) {
+        setBooking(prev => prev ? {
+          ...prev,
+          status: event.booking.status,
+          depositEvidenceUrl: event.booking.deposit_evidence_url || null,
+          depositVerifiedAt: event.booking.deposit_verified_at || null,
+        } : null)
+      }
+    },
+  })
 
   // Fetch unavailable dates on mount
   // This includes confirmed bookings

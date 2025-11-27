@@ -43,7 +43,7 @@ export async function getAuthUser(): Promise<AuthUser | null> {
     email: session.user.email || "",
     name: session.user.name || null,
     image: session.user.image || null,
-    domain: (session.user as any).domain || "",
+    domain: session.user.domain || "",
   }
 }
 

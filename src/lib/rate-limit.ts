@@ -54,21 +54,16 @@ export async function checkRateLimit(
 
     // If UPDATE affected rows, we successfully incremented (and were under limit)
     if (updateResult.rowsAffected && updateResult.rowsAffected > 0) {
-      // OPTIMIZATION: Use a single transaction to get count atomically after UPDATE
-      // This ensures we get the exact count immediately after increment
-      // Using dbTransaction ensures atomicity and better performance
-      const { dbTransaction } = await import('./turso')
-      const countResult = await dbTransaction(async (tx) => {
-        // Get the new count immediately after UPDATE (within same transaction)
-        const result = await tx.execute({
-          sql: `
-            SELECT count 
-            FROM rate_limits 
-            WHERE identifier = ? AND endpoint = ? AND window_start = ?
-          `,
-          args: [identifier, endpoint, windowStart],
-        })
-        return result
+      // FIXED: Remove unnecessary transaction overhead (Issue #16)
+      // The UPDATE is already atomic, so a simple SELECT is sufficient
+      // No need for transaction isolation for a read operation
+      const countResult = await db.execute({
+        sql: `
+          SELECT count 
+          FROM rate_limits 
+          WHERE identifier = ? AND endpoint = ? AND window_start = ?
+        `,
+        args: [identifier, endpoint, windowStart],
       })
       
       const newCount = countResult.rows.length > 0 ? (countResult.rows[0] as any).count : limit
@@ -213,7 +208,18 @@ export async function checkRateLimit(
       }
     }
   } catch (error) {
-    console.error("Rate limit check error:", error)
+    // Use structured logger for errors
+    import('./logger').then(({ logError }) => {
+      logError('Rate limit check error', {
+        identifier,
+        endpoint,
+        error: error instanceof Error ? error.message : String(error),
+      }, error instanceof Error ? error : new Error(String(error))).catch(() => {
+        // Fallback if logger fails
+      })
+    }).catch(() => {
+      // Fallback if logger import fails
+    })
     
     // Track rate limit bypass (error occurred)
     try {
@@ -270,7 +276,16 @@ export async function cleanupRateLimits(): Promise<void> {
       args: [cutoff],
     })
   } catch (error) {
-    console.error("Rate limit cleanup error:", error)
+    // Use structured logger for errors
+    import('./logger').then(({ logError }) => {
+      logError('Rate limit cleanup error', {
+        error: error instanceof Error ? error.message : String(error),
+      }, error instanceof Error ? error : new Error(String(error))).catch(() => {
+        // Fallback if logger fails
+      })
+    }).catch(() => {
+      // Fallback if logger import fails
+    })
     // Don't throw - cleanup failures shouldn't break the app
   }
 }

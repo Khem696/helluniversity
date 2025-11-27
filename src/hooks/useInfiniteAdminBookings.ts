@@ -10,7 +10,7 @@ export type { Booking }
 interface UseInfiniteAdminBookingsOptions {
   baseEndpoint: string // Endpoint without limit/offset
   pageSize?: number
-  refetchInterval?: number
+  refetchInterval?: number | false // false disables polling
   enabled?: boolean
   isDialogOpen?: () => boolean | boolean
 }
@@ -28,6 +28,7 @@ interface UseInfiniteAdminBookingsReturn {
   updateItem: (id: string, updates: Partial<Booking>) => void
   removeItem: (id: string) => void
   replaceItem: (id: string, newItem: Booking) => void
+  addItem: (newItem: Booking) => void
 }
 
 /**
@@ -38,6 +39,8 @@ export function useInfiniteAdminBookings(
   options: UseInfiniteAdminBookingsOptions
 ): UseInfiniteAdminBookingsReturn {
   const { baseEndpoint, pageSize = 25, refetchInterval = 30000, enabled = true, isDialogOpen } = options
+  // If refetchInterval is explicitly set to false, use it; otherwise use default or provided value
+  const actualRefetchInterval = refetchInterval === false ? false : (refetchInterval ?? 30000)
   const queryClient = useQueryClient()
 
   // Helper to check if dialog is open
@@ -117,13 +120,17 @@ export function useInfiniteAdminBookings(
       if (checkDialogOpen()) {
         return false
       }
+      // If refetchInterval is false, disable polling
+      if (actualRefetchInterval === false) {
+        return false
+      }
       // Only refetch if data is stale (older than staleTime)
       const dataUpdatedAt = query.state.dataUpdatedAt
       if (dataUpdatedAt && Date.now() - dataUpdatedAt < 30000) {
         // Data is fresh (less than 30 seconds old), don't refetch yet
         return false
       }
-      return refetchInterval
+      return actualRefetchInterval
     },
     refetchIntervalInBackground: false,
     refetchOnWindowFocus: false, // Disable to prevent excessive refetches
@@ -205,6 +212,31 @@ export function useInfiniteAdminBookings(
     })
   }, [queryClient, baseEndpoint])
 
+  const addItem = React.useCallback((newItem: Booking) => {
+    queryClient.setQueryData(['infiniteAdminBookings', baseEndpoint], (old: any) => {
+      if (!old || !old.pages || old.pages.length === 0) {
+        // If no data exists, create initial page
+        return {
+          pages: [{ bookings: [newItem], total: 1 }],
+          pageParams: [0],
+        }
+      }
+      
+      // Add to first page (most recent bookings)
+      const firstPage = old.pages[0]
+      const updatedFirstPage = {
+        ...firstPage,
+        bookings: [newItem, ...firstPage.bookings],
+        total: (firstPage.total || 0) + 1,
+      }
+      
+      return {
+        ...old,
+        pages: [updatedFirstPage, ...old.pages.slice(1)],
+      }
+    })
+  }, [queryClient, baseEndpoint])
+
   // Listen for custom invalidation events
   React.useEffect(() => {
     const handleInvalidate = () => {
@@ -244,6 +276,7 @@ export function useInfiniteAdminBookings(
     updateItem,
     removeItem,
     replaceItem,
+    addItem,
   }
 }
 

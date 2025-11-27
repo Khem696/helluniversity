@@ -128,12 +128,31 @@ const cache = new SimpleCache()
 
 // Store interval ID for cleanup
 let cleanupInterval: NodeJS.Timeout | null = null
+let shutdownHandlersRegistered = false
 
 // Clean expired entries every 5 minutes
 if (typeof setInterval !== 'undefined') {
   cleanupInterval = setInterval(() => {
     cache.clean()
   }, 5 * 60 * 1000)
+}
+
+// Register shutdown handlers (Node.js environment only)
+if (typeof process !== 'undefined' && !shutdownHandlersRegistered) {
+  shutdownHandlersRegistered = true
+  
+  const handleShutdown = () => {
+    if (cleanupInterval) {
+      clearInterval(cleanupInterval)
+      cleanupInterval = null
+    }
+    cache.clear()
+  }
+  
+  // Register for common shutdown signals
+  process.on('SIGINT', handleShutdown)
+  process.on('SIGTERM', handleShutdown)
+  process.on('beforeExit', handleShutdown)
 }
 
 /**
@@ -205,7 +224,18 @@ export async function invalidateCache(pattern: string, retries: number = 3): Pro
   
   // If all retries failed, log error but don't throw (cache invalidation is non-critical)
   if (lastError) {
-    console.error(`[Cache] Failed to invalidate cache pattern "${pattern}" after ${retries} attempts:`, lastError.message)
+    // Use structured logger for errors
+    import('./logger').then(({ logError }) => {
+      logError('Failed to invalidate cache pattern', {
+        pattern,
+        retries,
+        error: lastError.message,
+      }, lastError).catch(() => {
+        // Fallback if logger fails
+      })
+    }).catch(() => {
+      // Fallback if logger import fails
+    })
     // Track monitoring metric
     try {
       const { trackCacheInvalidationFailure } = await import('./monitoring')

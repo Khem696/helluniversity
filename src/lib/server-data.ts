@@ -7,6 +7,7 @@
 
 import { getTursoClient } from "@/lib/turso"
 import { dateToBangkokDateString } from "@/lib/timezone-client"
+import { logError } from "@/lib/logger"
 import type { EventSlide } from "@/data/events"
 
 /**
@@ -43,7 +44,8 @@ export async function getBookingEnabledStatus(): Promise<boolean> {
     return false
   } catch (error) {
     // If there's any error, default to disabled (safer than showing button when it shouldn't be)
-    console.error("Error fetching booking status:", error)
+    // Fire-and-forget logging
+    logError("Error fetching booking status", {}, error instanceof Error ? error : new Error(String(error))).catch(() => {})
     return false
   }
 }
@@ -143,7 +145,8 @@ export async function getEvents(): Promise<{ pastEvents: EventSlide[]; currentEv
 
     return { pastEvents: past, currentEvents: current }
   } catch (error) {
-    console.error("Error fetching events:", error)
+    // Fire-and-forget logging
+    logError("Error fetching events", {}, error instanceof Error ? error : new Error(String(error))).catch(() => {})
     // Return empty arrays on error
     return { pastEvents: [], currentEvents: [] }
   }

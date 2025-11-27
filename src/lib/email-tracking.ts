@@ -6,6 +6,7 @@
 
 import { getTursoClient } from "./turso"
 import { randomUUID } from "crypto"
+import { logInfo, logError } from "./logger"
 
 /**
  * Check if an email has already been sent
@@ -62,11 +63,14 @@ export async function logEmailSent(
   } catch (error) {
     // If duplicate (UNIQUE constraint violation), that's okay - email was already logged
     if (error instanceof Error && error.message.includes("UNIQUE constraint")) {
-      console.log(`Email already logged: ${emailType} for booking ${bookingId}`)
+      // Fire-and-forget logging
+      // FIXED: Convert null to undefined for logger metadata (TypeScript error fix)
+      logInfo('Email already logged (duplicate)', { emailType, bookingId: bookingId ?? undefined }).catch(() => {})
       return
     }
     // Otherwise, log the error but don't fail
-    console.error("Failed to log email sent:", error)
+    // FIXED: Convert null to undefined for logger metadata (TypeScript error fix)
+    logError("Failed to log email sent", { emailType, bookingId: bookingId ?? undefined }, error instanceof Error ? error : new Error(String(error))).catch(() => {})
   }
 }
 

@@ -320,7 +320,8 @@ export function cleanupOldMetrics(): void {
     metricsWindow.shift()
   }
   
-  if (initialLength !== metricsWindow.length) {
+  // Only log cleanup in development
+  if (process.env.NODE_ENV !== 'production' && initialLength !== metricsWindow.length) {
     console.log(`[monitoring] Cleaned up ${initialLength - metricsWindow.length} old metric entries`)
   }
 }

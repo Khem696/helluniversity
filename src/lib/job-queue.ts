@@ -7,6 +7,7 @@
 
 import { getTursoClient } from './turso'
 import { randomUUID } from 'crypto'
+import { logInfo, logError } from './logger'
 
 export interface Job {
   id: string
@@ -98,7 +99,8 @@ export async function cleanupStuckJobs(): Promise<number> {
   
   const resetCount = result.rowsAffected || 0
   if (resetCount > 0) {
-    console.log(`[job-queue] Reset ${resetCount} stuck job(s) from 'processing' to 'pending'`)
+    // Fire-and-forget logging
+    logInfo('[job-queue] Reset stuck jobs', { resetCount }).catch(() => {})
     // Track monitoring metric
     try {
       const { trackStuckItemReset } = await import('./monitoring')
@@ -120,7 +122,8 @@ export async function getPendingJobs(limit: number = 10): Promise<Job[]> {
   
   // Cleanup stuck jobs before fetching (non-blocking)
   cleanupStuckJobs().catch(err => {
-    console.error('[job-queue] Failed to cleanup stuck jobs:', err)
+    // Fire-and-forget logging
+    logError('[job-queue] Failed to cleanup stuck jobs', {}, err instanceof Error ? err : new Error(String(err))).catch(() => {})
     // Don't throw - cleanup failure shouldn't block job processing
   })
   
@@ -370,11 +373,13 @@ export async function retryJob(id: string): Promise<{ success: boolean; error?: 
       args: [now, now, id],
     })
     
-    console.log(`Job ${id} manually retried successfully`)
+    // Fire-and-forget logging
+    logInfo('Job manually retried successfully', { jobId: id }).catch(() => {})
     return { success: true }
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : String(error)
-    console.error(`Failed to retry job ${id}:`, errorMessage)
+    // Fire-and-forget logging
+    logError('Failed to retry job', { jobId: id }, error instanceof Error ? error : new Error(errorMessage)).catch(() => {})
     return { success: false, error: errorMessage }
   }
 }

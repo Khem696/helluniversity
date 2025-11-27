@@ -220,3 +220,78 @@ export async function withLogging<T>(
   }
 }
 
+/**
+ * Clean up old error logs from the database
+ * 
+ * @param daysToKeep - Number of days to keep logs (default: 30)
+ * @returns Number of deleted log entries
+ */
+export async function cleanupOldErrorLogs(daysToKeep: number = 30): Promise<number> {
+  try {
+    const db = getTursoClient()
+    const cutoffTimestamp = Math.floor(Date.now() / 1000) - (daysToKeep * 24 * 60 * 60)
+    
+    const result = await db.execute({
+      sql: `DELETE FROM error_logs WHERE created_at < ?`,
+      args: [cutoffTimestamp],
+    })
+    
+    return result.rowsAffected || 0
+  } catch (error) {
+    // Log cleanup errors but don't throw - this is a maintenance task
+    console.error('[logger] Failed to cleanup old error logs:', error)
+    return 0
+  }
+}
+
+/**
+ * Get error log statistics
+ */
+export async function getErrorLogStats(): Promise<{
+  total: number
+  byLevel: Record<string, number>
+  last24Hours: number
+  last7Days: number
+}> {
+  try {
+    const db = getTursoClient()
+    const now = Math.floor(Date.now() / 1000)
+    const oneDayAgo = now - (24 * 60 * 60)
+    const sevenDaysAgo = now - (7 * 24 * 60 * 60)
+    
+    // Get total count
+    const totalResult = await db.execute(`SELECT COUNT(*) as count FROM error_logs`)
+    const total = (totalResult.rows[0] as any)?.count || 0
+    
+    // Get count by level
+    const levelResult = await db.execute(`
+      SELECT level, COUNT(*) as count 
+      FROM error_logs 
+      GROUP BY level
+    `)
+    const byLevel: Record<string, number> = {}
+    for (const row of levelResult.rows) {
+      const r = row as any
+      byLevel[r.level] = r.count
+    }
+    
+    // Get last 24 hours
+    const last24Result = await db.execute({
+      sql: `SELECT COUNT(*) as count FROM error_logs WHERE created_at >= ?`,
+      args: [oneDayAgo],
+    })
+    const last24Hours = (last24Result.rows[0] as any)?.count || 0
+    
+    // Get last 7 days
+    const last7Result = await db.execute({
+      sql: `SELECT COUNT(*) as count FROM error_logs WHERE created_at >= ?`,
+      args: [sevenDaysAgo],
+    })
+    const last7Days = (last7Result.rows[0] as any)?.count || 0
+    
+    return { total, byLevel, last24Hours, last7Days }
+  } catch {
+    return { total: 0, byLevel: {}, last24Hours: 0, last7Days: 0 }
+  }
+}
+

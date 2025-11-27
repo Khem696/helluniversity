@@ -12,6 +12,7 @@ import {
 // checkBookingOverlap is imported dynamically to avoid bundling database code in client components
 import { getBangkokTime, isPastInBangkok } from "./timezone"
 import { TZDate } from '@date-fns/tz'
+import { logError } from "./logger"
 
 export interface Booking {
   id: string
@@ -49,72 +50,39 @@ export async function validateAction(
   // Use GMT+7 (Bangkok time) for all date comparisons
   const now = getBangkokTime()
 
-  // Check if dates are in the past (for accept/check-in actions)
-  if (action === "accept" || action === "check_in" || action === "verify_deposit") {
-    // For postponed bookings with proposed dates, check proposed dates
-    if (booking.status === "postponed" && booking.proposed_date) {
-      const proposedTimestamp = booking.proposed_date
-      
-      if (proposedTimestamp < now) {
-        errors.push(
-          "The proposed date is in the past. This booking will be auto-cancelled if accepted."
-        )
-      } else {
-        // Check if proposed date is within grace period
-        const gracePeriodEnd = proposedTimestamp + CHECK_IN_GRACE_PERIOD
-        if (now > proposedTimestamp && now <= gracePeriodEnd) {
-          warnings.push(
-            "The proposed start date has passed. User must check in within the grace period."
-          )
-        }
-      }
-    } else {
-      // Check original dates
-      const startTimestamp = calculateStartTimestamp(
-        booking.start_date,
-        booking.start_time || null
+  // Check if dates are in the past (for accept/verify_deposit actions)
+  if (action === "accept" || action === "verify_deposit") {
+    // Check original dates
+    const startTimestamp = calculateStartTimestamp(
+      booking.start_date,
+      booking.start_time || null
+    )
+    
+    if (startTimestamp < now) {
+      errors.push(
+        "Booking start date is in the past. This booking will be auto-cancelled if accepted."
       )
-      
-      if (startTimestamp < now) {
-        errors.push(
-          "Booking start date is in the past. This booking will be auto-cancelled if accepted."
+    } else {
+      // Check if start date is within grace period
+      const gracePeriodEnd = startTimestamp + CHECK_IN_GRACE_PERIOD
+      if (now > startTimestamp && now <= gracePeriodEnd) {
+        warnings.push(
+          "Booking start date has passed."
         )
-      } else {
-        // Check if start date is within grace period
-        const gracePeriodEnd = startTimestamp + CHECK_IN_GRACE_PERIOD
-        if (now > startTimestamp && now <= gracePeriodEnd) {
-          warnings.push(
-            "Booking start date has passed. User must check in within the grace period."
-          )
-        }
       }
     }
   }
 
-  // Check for overlaps (for accept/check-in/verify_deposit actions)
-  if (
-    action === "accept" ||
-    action === "check_in" ||
-    action === "verify_deposit"
-  ) {
+  // Check for overlaps (for accept/verify_deposit actions)
+  if (action === "accept" || action === "verify_deposit") {
     try {
       // Dynamically import checkBookingOverlap to avoid bundling database code
       // This function requires database access and should only run server-side
       const { checkBookingOverlap } = await import("./booking-validations")
       
-      // Determine which dates to check
-      let checkStartDate: number
-      let checkEndDate: number | null
-      
-      if (booking.status === "postponed" && booking.proposed_date) {
-        // Check overlaps with proposed dates
-        checkStartDate = booking.proposed_date
-        checkEndDate = booking.proposed_end_date || null
-      } else {
-        // Check overlaps with original dates
-        checkStartDate = booking.start_date
-        checkEndDate = booking.end_date || null
-      }
+      // Check overlaps with original dates
+      const checkStartDate = booking.start_date
+      const checkEndDate = booking.end_date || null
       
       const overlapCheck = await checkBookingOverlap(
         booking.id,
@@ -135,11 +103,12 @@ export async function validateAction(
           .join(", ")
         
         warnings.push(
-          `This booking overlaps with existing checked-in booking(s): ${overlappingNames}. Please verify this is intentional.`
+          `This booking overlaps with existing confirmed booking(s): ${overlappingNames}. Please verify this is intentional.`
         )
       }
     } catch (error) {
-      console.error("Error checking overlaps:", error)
+      // Fire-and-forget logging
+      logError("Error checking overlaps", { bookingId: booking.id }, error instanceof Error ? error : new Error(String(error))).catch(() => {})
       warnings.push("Could not verify booking overlaps. Please check manually.")
     }
   }
@@ -176,6 +145,8 @@ export async function validateAction(
 
 /**
  * Check if booking will auto-update
+ * 
+ * Valid statuses: pending, pending_deposit, paid_deposit, confirmed, cancelled, finished
  */
 export function willAutoUpdate(booking: Booking): {
   willUpdate: boolean
@@ -189,27 +160,17 @@ export function willAutoUpdate(booking: Booking): {
     booking.start_time || null
   )
 
-  // Check if booking will auto-cancel (pending/postponed past start date)
+  // Check if booking will auto-cancel (pending/pending_deposit/paid_deposit past start date)
   if (
-    (booking.status === "pending" || booking.status === "postponed") &&
+    (booking.status === "pending" || 
+     booking.status === "pending_deposit" || 
+     booking.status === "paid_deposit") &&
     startTimestamp < now
   ) {
     return {
       willUpdate: true,
       targetStatus: "cancelled",
-      reason: "Start date has passed without response",
-    }
-  }
-
-  // Check if accepted booking will auto-cancel (past grace period)
-  if (booking.status === "accepted") {
-    const gracePeriodEnd = startTimestamp + CHECK_IN_GRACE_PERIOD
-    if (gracePeriodEnd < now && !booking.deposit_evidence_url) {
-      return {
-        willUpdate: true,
-        targetStatus: "cancelled",
-        reason: "Grace period expired without check-in",
-      }
+      reason: "Start date has passed without confirmation",
     }
   }
 
@@ -251,12 +212,11 @@ export function willAutoUpdate(booking: Booking): {
     }
   }
 
+  // Only confirmed bookings can auto-finish
   if (
     endTimestamp &&
     endTimestamp < now &&
-    (booking.status === "accepted" ||
-      booking.status === "checked-in" ||
-      booking.status === "paid_deposit")
+    booking.status === "confirmed"
   ) {
     return {
       willUpdate: true,

@@ -65,12 +65,13 @@ import { SearchInputWithHistory } from "@/components/admin/SearchInputWithHistor
 import { FilterPresetsDialog } from "@/components/admin/FilterPresetsDialog"
 import { AdvancedBookingFilters } from "@/components/admin/AdvancedBookingFilters"
 import { useBookingActions } from "@/hooks/useBookingActions"
-import { useActionLocks } from "@/hooks/useActionLocks"
+import { useActionLocksSSE } from "@/hooks/useActionLocksSSE"
 import { getAvailableActions, mapActionToStatus, type ActionDefinition } from "@/lib/booking-state-machine"
 import { calculateStartTimestamp } from "@/lib/booking-validations"
 import { getBangkokTime } from "@/lib/timezone"
 import { useInfiniteAdminBookings, type Booking as BookingType } from "@/hooks/useInfiniteAdminBookings"
 import { useInfiniteScroll } from "@/hooks/useInfiniteScroll"
+import { useAdminBookingsSSE, type BookingUpdateEvent } from "@/hooks/useAdminBookingsSSE"
 import { API_PATHS, buildApiUrl } from "@/lib/api-config"
 import { SimpleCalendar } from "@/components/ui/simple-calendar"
 import { TimePicker } from "@/components/ui/time-picker"
@@ -103,6 +104,8 @@ export default function BookingsPage() {
   const { data: session, status } = useSession()
   const [saving, setSaving] = useState(false)
   const [selectedBooking, setSelectedBooking] = useState<Booking | null>(null)
+  // Ref to track current booking ID for fee history updates (avoids stale closures)
+  const selectedBookingIdRef = useRef<string | null>(null)
   const [statusHistory, setStatusHistory] = useState<StatusHistory[]>([])
   const [feeHistory, setFeeHistory] = useState<Array<{
     id: string
@@ -196,47 +199,122 @@ export default function BookingsPage() {
   const [otherChannelDialogOpen, setOtherChannelDialogOpen] = useState(false)
   const [exportDialogOpen, setExportDialogOpen] = useState(false)
   
+  // Track SSE connection status for fallback polling
+  // FIXED: Initialize sseConnected to true (optimistic) to prevent premature polling (Bug #51)
+  // This assumes SSE will connect successfully. If it fails, the useEffect syncing
+  // sseHookResult will update this to false, enabling fallback polling.
+  // The initial data fetch is not affected by refetchInterval, so this is safe.
+  const [sseError, setSseError] = useState<Error | null>(null)
+  const [sseConnected, setSseConnected] = useState<boolean>(true)
+  
   // Use refs to track current values without causing dependency array changes
+  // These refs are used in SSE callbacks to avoid stale closure issues
   const selectedBookingRef = useRef<Booking | null>(null)
   const selectedActionRef = useRef<string | null>(null)
   const viewDialogOpenRef = useRef<boolean>(false)
-  const lastCheckedAtRef = useRef<number>(Date.now())
+  const statusDialogOpenRef = useRef<boolean>(false)
+  const confirmationDialogOpenRef = useRef<boolean>(false)
+  const feeDialogOpenRef = useRef<boolean>(false)
+  const deleteDialogOpenRef = useRef<boolean>(false)
+  const otherChannelDialogOpenRef = useRef<boolean>(false)
+  const bookingsRef = useRef<Booking[]>([])
+  const lastCheckedAtRef = useRef<number>(0) // Initialize to 0 so useEffect can properly initialize it
   const seenResponseIdsRef = useRef<Set<string>>(new Set())
-  const lastStatusCheckRef = useRef<Map<string, { status: string; updated_at: number }>>(new Map())
+  const unavailableDatesAbortControllerRef = useRef<AbortController | null>(null)
+  const feeHistoryTimeoutRef = useRef<NodeJS.Timeout | null>(null)
+  // FIXED: Track mounted state to prevent state updates after unmount (Bug #37)
+  const isMountedRef = useRef<boolean>(true)
+  
+  // FIXED: Track pending optimistic updates to prevent SSE from overwriting them (Issue #19)
+  // Maps booking ID to the timestamp when the optimistic update was made
+  const pendingOptimisticUpdatesRef = useRef<Map<string, number>>(new Map())
+  // HIGH-8: Track timeout IDs for optimistic updates to allow cleanup on unmount
+  const optimisticUpdateTimeoutsRef = useRef<Map<string, NodeJS.Timeout>>(new Map())
+  // FIXED: Track last applied SSE timestamp per booking to prevent out-of-order events (Issue #6)
+  const lastAppliedSSETimestampRef = useRef<Map<string, number>>(new Map())
   
   // Update refs when values change
   useEffect(() => {
     selectedBookingRef.current = selectedBooking
     selectedActionRef.current = selectedAction
+    // Sync booking ID ref for fee history updates
+    selectedBookingIdRef.current = selectedBooking?.id || null
   }, [selectedBooking, selectedAction])
   
   useEffect(() => {
     viewDialogOpenRef.current = viewDialogOpen
-  }, [viewDialogOpen])
+    statusDialogOpenRef.current = statusDialogOpen
+    confirmationDialogOpenRef.current = confirmationDialogOpen
+    feeDialogOpenRef.current = feeDialogOpen
+    deleteDialogOpenRef.current = deleteDialogOpen
+    otherChannelDialogOpenRef.current = otherChannelDialogOpen
+  }, [viewDialogOpen, statusDialogOpen, confirmationDialogOpen, feeDialogOpen, deleteDialogOpen, otherChannelDialogOpen])
+  
+  // Cleanup fee history timeout and mounted state on component unmount
+  // Note: Other cleanup (seenResponseIdsRef, optimisticUpdateTimeoutsRef) is in a separate
+  // useEffect below (~line 590) because it also sets up an interval during component lifetime
+  useEffect(() => {
+    // Reset mounted ref on mount (in case of HMR or StrictMode double-mount)
+    isMountedRef.current = true
+    return () => {
+      // FIXED: Mark as unmounted to prevent state updates from in-flight fetches (Bug #37)
+      isMountedRef.current = false
+      if (feeHistoryTimeoutRef.current) {
+        clearTimeout(feeHistoryTimeoutRef.current)
+        feeHistoryTimeoutRef.current = null
+      }
+    }
+  }, [])
   
   // CRITICAL: Refetch booking details when dialog opens to ensure fresh data
   // This prevents stale status from being displayed when opening dialog after status change
   // Use a ref to track the last fetched booking ID to prevent unnecessary refetches
   const lastFetchedBookingIdRef = useRef<string | null>(null)
+  // Ref to track when we're intentionally fetching a booking (via onViewBooking)
+  // This allows fetchBookingDetails to update even when selectedBooking is null
+  const intentionalFetchRef = useRef<string | null>(null)
+  // FIXED: Track fetch instances to handle concurrent fetches correctly (Bug #24, #34)
+  // Using a counter ensures each fetch has a unique instance ID
+  // Only the most recent fetch instance will control the loading state
+  const fetchInstanceCounterRef = useRef<number>(0)
+  const currentFetchInstanceRef = useRef<number | null>(null)
   useEffect(() => {
-    if (viewDialogOpen && selectedBooking?.id) {
+    // Capture booking ID at start to avoid stale closure
+    const currentBookingId = selectedBooking?.id
+    
+    // FIXED: Track timeout and add cleanup to prevent execution after unmount (Bug #67)
+    let timeoutId: NodeJS.Timeout | null = null
+    
+    if (viewDialogOpen && currentBookingId) {
       // Only refetch if this is a different booking or if we haven't fetched this one yet
       // This prevents infinite loops while ensuring fresh data when dialog opens
-      if (lastFetchedBookingIdRef.current !== selectedBooking.id) {
-        lastFetchedBookingIdRef.current = selectedBooking.id
+      if (lastFetchedBookingIdRef.current !== currentBookingId) {
+        lastFetchedBookingIdRef.current = currentBookingId
         // Always refetch when dialog opens to ensure we have the latest data
         // This is especially important after status changes
         // Add small delay to ensure backend cache invalidation completes
         const fetchFreshData = async () => {
           // Small delay to ensure cache invalidation from previous status update completes
-          await new Promise(resolve => setTimeout(resolve, 50))
-          await fetchBookingDetails(selectedBooking.id)
+          await new Promise(resolve => {
+            timeoutId = setTimeout(resolve, 50)
+          })
+          // Verify component is still mounted and booking ID still matches before fetching
+          if (isMountedRef.current && selectedBookingIdRef.current === currentBookingId) {
+            await fetchBookingDetails(currentBookingId)
+          }
         }
         fetchFreshData()
       }
     } else if (!viewDialogOpen) {
       // Reset ref when dialog closes
       lastFetchedBookingIdRef.current = null
+    }
+    
+    // Cleanup: clear timeout if component unmounts or effect re-runs
+    return () => {
+      if (timeoutId) {
+        clearTimeout(timeoutId)
+      }
     }
   }, [viewDialogOpen, selectedBooking?.id]) // Depend on both to refetch when booking changes
   
@@ -387,25 +465,40 @@ export default function BookingsPage() {
     return buildApiUrl(API_PATHS.adminBookings, Object.fromEntries(params))
   }, [statusFilter, statusFilters, debouncedEmailFilter, debouncedReferenceNumberFilter, debouncedNameFilter, debouncedPhoneFilter, eventTypeFilter, showOverlappingOnly, sortBy, sortOrder, startDateFrom, startDateTo, useDateRange])
   
+  // FIXED: Use useMemo to make refetchInterval reactive to SSE state changes (Bug #52)
+  // This ensures polling activates/deactivates when SSE connection status changes
+  const refetchInterval = useMemo(() => {
+    // Enable fallback polling if SSE is not connected OR has an error (60 seconds interval - reduced frequency)
+    // When SSE is connected and working, polling is disabled for efficiency
+    return (!sseConnected || sseError) ? 60000 : false
+  }, [sseConnected, sseError])
+
   // Use infinite scroll hook for bookings
   const {
     bookings,
     total,
     loading,
     isFetching,
+    error,
     hasMore,
     loadMore,
     refetch: fetchBookings,
     updateItem,
     removeItem,
-    replaceItem
+    replaceItem,
+    addItem
   } = useInfiniteAdminBookings({
     baseEndpoint,
     pageSize,
-    refetchInterval: 60000, // Increase to 60 seconds to reduce request frequency
+    refetchInterval,
     enabled: !!session,
-    isDialogOpen: () => viewDialogOpen || statusDialogOpen,
+    isDialogOpen: () => viewDialogOpen || statusDialogOpen || confirmationDialogOpen || deleteDialogOpen || feeDialogOpen || otherChannelDialogOpen,
   })
+  
+  // Update bookingsRef when bookings changes (must be after bookings is defined)
+  useEffect(() => {
+    bookingsRef.current = bookings
+  }, [bookings])
   
   // Infinite scroll setup
   const { elementRef: scrollSentinelRef } = useInfiniteScroll({
@@ -452,12 +545,16 @@ export default function BookingsPage() {
     validateActionBeforeExecution,
     executeAction,
   } = useBookingActions({
-    onSuccess: (updatedBooking) => {
+    onSuccess: async (updatedBooking) => {
+      // CRITICAL: Use refs to avoid stale closure issues
+      // Capture current booking from ref at start of callback (for status checks only)
+      const currentBooking = selectedBookingRef.current
+      
       // CRITICAL: Close ALL dialogs when booking is cancelled or restored
       // This prevents showing stale data in modals after status changes
-      const newStatus = updatedBooking?.status || selectedBooking?.status
+      const newStatus = updatedBooking?.status || currentBooking?.status
       const isCancelled = newStatus === "cancelled"
-      const isRestoration = selectedBooking?.status === "cancelled" && 
+      const isRestoration = currentBooking?.status === "cancelled" && 
         (newStatus === "pending_deposit" || newStatus === "paid_deposit" || newStatus === "confirmed")
       
       setStatusDialogOpen(false)
@@ -483,13 +580,21 @@ export default function BookingsPage() {
       if (isCancelled || isRestoration) {
         setViewDialogOpen(false)
         setSelectedBooking(null)
-      } else if (viewDialogOpen && selectedBooking?.id) {
-        // For other status changes, refresh booking details in view dialog
-        // CRITICAL: Add delay to ensure cache is invalidated and database is updated
-        // This prevents stale status from being displayed
-        setTimeout(() => {
-          fetchBookingDetails(selectedBooking.id)
-        }, 100) // Small delay to ensure backend cache invalidation completes
+      } else if (viewDialogOpenRef.current && selectedBookingIdRef.current) {
+        // FIXED: Use real-time ref value instead of captured value to prevent stale booking ID (Bug #64)
+        // Verify that the updated booking matches the currently selected booking before refreshing
+        // This ensures we refresh the correct booking even if user switched bookings during the async operation
+        if (updatedBooking?.id === selectedBookingIdRef.current) {
+          // For other status changes, refresh booking details in view dialog
+          // FIXED: Use refreshBookingDetailsDialog instead of setTimeout to properly await the refresh (Bug #55)
+          // This ensures the callback's promise doesn't resolve until the refresh completes,
+          // preventing race conditions where state updates happen before the delayed fetch completes
+          try {
+            await refreshBookingDetailsDialog(selectedBookingIdRef.current)
+          } catch {
+            // Silently handle refresh errors - dialog will show stale data but won't crash
+          }
+        }
       }
     },
   })
@@ -508,269 +613,586 @@ export default function BookingsPage() {
     }
   }, [bookings.length])
 
-  // Poll for new user responses and status changes every 30 seconds
-  // This runs alongside React Query's refetch to detect changes and show notifications
-  // It compares current bookings with latest data to detect new responses/status changes
-  // CRITICAL: Pause polling when dialogs are open to reduce unnecessary refreshes and improve UX
+  // Clear seen response IDs on component unmount to prevent memory leaks
+  // Also clear periodically to handle deleted/recreated bookings with same IDs
   useEffect(() => {
-    if (!session || bookings.length === 0) return
+    // Clear the Set every hour to prevent unbounded growth and handle edge cases
+    // where bookings are deleted and recreated with the same ID
+    const intervalId = setInterval(() => {
+      seenResponseIdsRef.current.clear()
+    }, 3600000) // 1 hour
 
-    const pollInterval = setInterval(async () => {
-      // Skip polling if any dialog is open to prevent unnecessary refreshes
-      // This reduces the "page refresh" feeling when working with dialogs
-      if (viewDialogOpen || statusDialogOpen || confirmationDialogOpen || deleteDialogOpen || otherChannelDialogOpen) {
+    return () => {
+      clearInterval(intervalId)
+      // Also clear on unmount
+      seenResponseIdsRef.current.clear()
+      // HIGH-8: Clear all optimistic update timeouts on unmount
+      if (optimisticUpdateTimeoutsRef.current) {
+        for (const timeoutId of optimisticUpdateTimeoutsRef.current.values()) {
+          clearTimeout(timeoutId)
+        }
+        optimisticUpdateTimeoutsRef.current.clear()
+      }
+      // HIGH-8: Clear optimistic updates map on unmount
+      pendingOptimisticUpdatesRef.current.clear()
+      // FIXED: Clear last applied SSE timestamps on unmount (Issue #6)
+      lastAppliedSSETimestampRef.current.clear()
+    }
+  }, [])
+
+  // Helper function to check if SSE update should be applied
+  // FIXED: Prevent SSE from overwriting optimistic updates (Issue #19)
+  // FIXED: Prevent out-of-order SSE events from overwriting newer updates (Issue #6)
+  const shouldApplySSEUpdate = useCallback((bookingId: string, sseUpdatedAt: number): boolean => {
+    // FIXED: Check for out-of-order SSE events (Issue #6)
+    // Track last applied SSE timestamp to prevent older events from overwriting newer ones
+    const lastAppliedTimestamp = lastAppliedSSETimestampRef.current.get(bookingId)
+    if (lastAppliedTimestamp) {
+      const sseTimestampMs = sseUpdatedAt * 1000
+      const lastAppliedMs = lastAppliedTimestamp * 1000
+      
+      // Reject SSE events that are older than the last applied event
+      // This prevents out-of-order events from overwriting newer state
+      // Allow a small tolerance (100ms) for timestamp precision differences
+      if (sseTimestampMs < lastAppliedMs - 100) {
+        // SSE event is significantly older than last applied - likely out of order
+        return false
+      }
+    }
+    
+    const pendingTimestamp = pendingOptimisticUpdatesRef.current.get(bookingId)
+    
+    // If there's no pending optimistic update, apply SSE update and track timestamp
+    if (!pendingTimestamp) {
+      // FIXED: Track last applied SSE timestamp to prevent out-of-order events (Issue #6)
+      lastAppliedSSETimestampRef.current.set(bookingId, sseUpdatedAt)
+      return true
+    }
+    
+    // FIXED: Handle timestamp precision mismatch between server (seconds) and client (milliseconds) (Bug #61)
+    // pendingTimestamp is in milliseconds (from Date.now())
+    // sseUpdatedAt is in seconds (Unix timestamp from server)
+    // Convert SSE timestamp to milliseconds for comparison
+    const sseTimestampMs = sseUpdatedAt * 1000
+    
+    // CRITICAL: When server processes an update within the same second as the client's optimistic update,
+    // the converted SSE timestamp (rounded down to start of second) will be EARLIER than the client's
+    // precise millisecond timestamp. For example:
+    // - Client optimistic update: 1234567890500 (500ms into second)
+    // - Server SSE timestamp: 1234567890 (start of second) -> 1234567890000ms
+    // - Difference: -500ms (SSE appears earlier, but it's actually the same update)
+    // 
+    // Solution: Handle precision loss for older updates (within 500ms), but block significantly older updates.
+    // For newer updates, allow if at least 500ms newer OR within the same second (to handle precision).
+    const timeDiffMs = sseTimestampMs - pendingTimestamp
+    
+    // If SSE is newer (positive timeDiffMs):
+    // - Allow if it's at least 500ms newer (legitimate real-time update from another source)
+    // - OR if it's within the same second (>= 1000ms would be next second, so < 1000ms means same second)
+    //   BUT only if it's >= 500ms to prevent immediate reverts of optimistic updates (same-second echo)
+    // - This handles cases where server processes the update later in the same second (500-999ms)
+    //   while blocking immediate echoes (0-499ms) that would overwrite optimistic updates
+    if (timeDiffMs >= 0) {
+      // Allow if >= 500ms (prevents 0-499ms echo, allows 500ms+ legitimate updates)
+      const shouldApply = timeDiffMs >= 500
+      if (shouldApply) {
+        // FIXED: Track last applied SSE timestamp when applying update (Issue #6)
+        lastAppliedSSETimestampRef.current.set(bookingId, sseUpdatedAt)
+      }
+      return shouldApply
+    }
+    
+    // If SSE is older (negative timeDiffMs):
+    // - Block if it's within 500ms older (likely the same update being echoed back due to precision loss)
+    // - Only allow if it's significantly older (< -500ms), which would be unusual and might indicate
+    //   a legitimate older update from another source (though this is rare)
+    // This prevents SSE echoes from overwriting optimistic updates while still allowing edge cases
+    const shouldApply = timeDiffMs < -500
+    if (shouldApply) {
+      // FIXED: Track last applied SSE timestamp when applying update (Issue #6)
+      lastAppliedSSETimestampRef.current.set(bookingId, sseUpdatedAt)
+    }
+    return shouldApply
+  }, [])
+
+  // Helper function to map SSE booking data to updateItem format
+  // FIXED: Include all fields from SSE payload to prevent stale data (Issue #18)
+  const mapBookingToUpdateItem = useCallback((booking: BookingUpdateEvent['booking']): Partial<Booking> => {
+    return {
+      status: booking.status as any,
+      name: booking.name,
+      email: booking.email,
+      phone: booking.phone ?? '', // FIXED: Use empty string (matches onBookingCreated and Booking type: string)
+      participants: booking.participants !== null && booking.participants !== undefined ? String(booking.participants) : null, // Convert number to string
+      event_type: booking.event_type,
+      other_event_type: booking.other_event_type ?? null,
+      // FIXED: Use intelligent detection for date_range to match onBookingCreated logic (Bug #57)
+      // If date_range is missing, detect multi-day bookings by comparing start_date and end_date
+      // This prevents multi-day bookings from losing their date_range information during SSE updates
+      date_range: (booking.date_range ?? (booking.end_date && booking.end_date !== booking.start_date ? 1 : 0)) as any, // Booking type expects number
+      start_date: booking.start_date,
+      end_date: booking.end_date ?? null,
+      start_time: booking.start_time ?? '',
+      end_time: booking.end_time ?? '',
+      organization_type: booking.organization_type ?? null,
+      organized_person: booking.organized_person ?? null,
+      introduction: booking.introduction ?? null,
+      biography: booking.biography ?? null,
+      special_requests: booking.special_requests ?? null,
+      admin_notes: booking.admin_notes ?? null,
+      response_token: booking.response_token ?? null,
+      token_expires_at: booking.token_expires_at ?? null,
+      updated_at: booking.updated_at ?? Math.floor(Date.now() / 1000), // FIXED: Add fallback for required field (Bug #82)
+      created_at: booking.created_at ?? booking.updated_at ?? Math.floor(Date.now() / 1000), // Fallback to updated_at if created_at missing, then current time
+      user_response: booking.user_response ?? null,
+      response_date: booking.response_date ?? null,
+      deposit_evidence_url: booking.deposit_evidence_url ?? null,
+      deposit_verified_at: booking.deposit_verified_at ?? null,
+      deposit_verified_by: booking.deposit_verified_by ?? null,
+      deposit_verified_from_other_channel: booking.deposit_verified_from_other_channel ?? false,
+      proposed_date: booking.proposed_date ?? null,
+      proposed_end_date: booking.proposed_end_date ?? null,
+      // Fee-related fields
+      fee_amount: booking.fee_amount ?? null,
+      fee_amount_original: booking.fee_amount_original ?? null,
+      fee_currency: booking.fee_currency ?? null,
+      fee_conversion_rate: booking.fee_conversion_rate ?? null,
+      fee_rate_date: booking.fee_rate_date ?? null,
+      fee_recorded_at: booking.fee_recorded_at ?? null,
+      fee_recorded_by: booking.fee_recorded_by ?? null,
+      fee_notes: booking.fee_notes ?? null,
+      // FIXED: Use null instead of undefined to match Booking type (Bug #38)
+      reference_number: booking.reference_number ?? null,
+    }
+  }, [])
+
+  // Real-time booking updates via SSE (replaces polling)
+  // Combined hook handles both list updates and dialog updates to avoid React Hooks violation
+  const sseHookResult = useAdminBookingsSSE({
+    // Enable when session exists - keep SSE connection active regardless of dialog state
+    // Callbacks will check dialog state before deciding whether to refresh dialog details
+    // This ensures the list always receives real-time updates even when dialogs are open
+    enabled: !!session,
+    // Don't filter by bookingId - we need all updates for the list, even when dialog is open
+    bookingId: undefined,
+    onStatusChange: (event: BookingUpdateEvent) => {
+      // Handle status change events
+      const booking = event.booking
+      const previousStatus = event.metadata?.previousStatus
+      
+      if (!booking) return
+      
+      // FIXED: Check if SSE update should be applied (prevent overwriting optimistic updates) (Issue #19)
+      if (!shouldApplySSEUpdate(booking.id, booking.updated_at)) {
+        // Skip this SSE update - optimistic update is pending
         return
       }
-      // Get current selected booking ID to avoid stale closure using refs
-      const currentSelectedBookingId = selectedBookingRef.current?.id
-      const isDialogOpen = viewDialogOpenRef.current
-      try {
-        // Check for bookings with new user responses and status changes
-        const params = new URLSearchParams()
-        params.append("limit", "1000")
-        const url = buildApiUrl(API_PATHS.adminBookings, Object.fromEntries(params))
+      
+      // Always update the list first to ensure data is fresh
+      updateItem(booking.id, mapBookingToUpdateItem(booking))
+      
+      // If dialog is open and this is the selected booking, refresh dialog details
+      // But only if no nested dialogs are open (to avoid interrupting user workflow)
+      // Use refs to avoid stale closure issues
+      if (viewDialogOpenRef.current && selectedBookingRef.current?.id === booking.id && !statusDialogOpenRef.current && !confirmationDialogOpenRef.current && !feeDialogOpenRef.current && !deleteDialogOpenRef.current && !otherChannelDialogOpenRef.current) {
+        fetchBookingDetails(booking.id)
+      }
+      
+      // FIXED: Always show SSE notifications (Bug #39)
+      // Unlike polling, SSE events are one-time - if we skip them, users miss important updates
+      // Dialogs don't block notifications since the toast appears at screen edge and has a "View" action
+      if (previousStatus && previousStatus !== booking.status) {
+        // Include previous status in toast ID to allow multiple status change notifications to coexist
+        // This prevents newer notifications from replacing older ones when status changes multiple times quickly
+        toast.info(`Booking status updated: ${booking.name}`, {
+          id: `booking-status-${booking.id}-${previousStatus}-${booking.status}`,
+          description: `Status changed from "${previousStatus}" to "${booking.status}"`,
+          action: {
+            label: "View",
+            onClick: async () => {
+              // Find booking from list (has all fields) - only use if it exists
+              // If not in list yet, set to null to avoid incomplete data
+              // fetchBookingDetails will load complete data immediately
+              // Use refs to avoid stale closure issues
+              const fullBooking = bookingsRef.current.find(b => b.id === booking.id)
+              
+              // FIXED: Always set intentionalFetchRef to ensure consistent state (Bug #5)
+              // This ensures the flag is always up-to-date with the most recent "View" action,
+              // preventing stale values from previous fetches causing inconsistent behavior
+              intentionalFetchRef.current = booking.id
+              
+              if (fullBooking) {
+                setSelectedBooking(fullBooking)
+                // Update ref immediately to ensure fetchBookingDetails can check it correctly
+                // (state updates are async, but ref updates are synchronous)
+                selectedBookingRef.current = fullBooking
+                selectedBookingIdRef.current = fullBooking.id
+              } else {
+                // If booking not in list yet, set to null to prevent rendering with incomplete data
+                // The dialog will show loading state until fetchBookingDetails completes
+                setSelectedBooking(null)
+                selectedBookingRef.current = null
+                selectedBookingIdRef.current = null
+              }
+              setLoadingBookingDetails(true)
+              setViewDialogOpen(true)
+              await fetchBookingDetails(booking.id)
+              // Clear intentional fetch flag after fetch completes
+              if (intentionalFetchRef.current === booking.id) {
+                intentionalFetchRef.current = null
+              }
+            },
+          },
+          duration: 5000,
+        })
+      }
+    },
+    onUserResponse: (event: BookingUpdateEvent) => {
+      // Handle user response events
+      const booking = event.booking
+      
+      if (booking && booking.user_response && booking.response_date) {
+        // Check if we've already seen this response
+        const responseId = `${booking.id}-${booking.response_date}`
+        if (seenResponseIdsRef.current.has(responseId)) {
+          return // Already notified
+        }
         
-        // Use AbortController for timeout (more compatible than AbortSignal.timeout)
-        const controller = new AbortController()
-        const timeoutId = setTimeout(() => controller.abort(), 10000) // 10 second timeout
+        // FIXED: Check if SSE update should be applied (prevent overwriting optimistic updates) (Issue #19)
+        if (!shouldApplySSEUpdate(booking.id, booking.updated_at)) {
+          // Skip this SSE update - optimistic update is pending
+          return
+        }
         
-        const response = await fetch(url, {
-          signal: controller.signal,
-        }).catch((fetchError) => {
-          // Handle network errors gracefully
-          if (fetchError.name === 'AbortError') {
-            console.warn('[BookingsPage] Polling request timed out')
-          } else {
-            console.warn('[BookingsPage] Polling fetch failed:', fetchError)
-          }
-          return null
-        }).finally(() => {
-          clearTimeout(timeoutId)
+        // Update booking in list (use updateItem to preserve existing fields)
+        updateItem(booking.id, mapBookingToUpdateItem(booking))
+        
+        // FIXED: Always show SSE notifications (Bug #39)
+        // Unlike polling, SSE events are one-time - if we skip them, users miss important updates
+        // Mark as seen immediately to prevent duplicate notifications
+        seenResponseIdsRef.current.add(responseId)
+        
+        const responseType = booking.user_response?.toLowerCase() || ""
+        let message = ""
+        let type: "success" | "info" | "warning" = "info"
+
+        if (responseType.includes("accept")) {
+          message = `${booking.name} accepted the proposed date`
+          type = "success"
+        } else if (responseType.includes("propose")) {
+          message = `${booking.name} proposed an alternative date`
+          type = "warning"
+        } else if (responseType.includes("cancel")) {
+          message = `${booking.name} cancelled their reservation`
+          type = "warning"
+        } else {
+          message = `${booking.name} responded to their reservation`
+        }
+
+        toast[type](message, {
+          description: `Event: ${booking.event_type}`,
+          action: {
+            label: "View",
+            onClick: async () => {
+              // Find booking from list (has all fields) - only use if it exists
+              // If not in list yet, set to null to avoid incomplete data
+              // fetchBookingDetails will load complete data immediately
+              // Use refs to avoid stale closure issues
+              const fullBooking = bookingsRef.current.find(b => b.id === booking.id)
+              
+              // FIXED: Always set intentionalFetchRef to ensure consistent state (Bug #5)
+              // This ensures the flag is always up-to-date with the most recent "View" action,
+              // preventing stale values from previous fetches causing inconsistent behavior
+              intentionalFetchRef.current = booking.id
+              
+              if (fullBooking) {
+                setSelectedBooking(fullBooking)
+                // Update ref immediately to ensure fetchBookingDetails can check it correctly
+                // (state updates are async, but ref updates are synchronous)
+                selectedBookingRef.current = fullBooking
+                selectedBookingIdRef.current = fullBooking.id
+              } else {
+                // If booking not in list yet, set to null to prevent rendering with incomplete data
+                // The dialog will show loading state until fetchBookingDetails completes
+                setSelectedBooking(null)
+                selectedBookingRef.current = null
+                selectedBookingIdRef.current = null
+              }
+              setLoadingBookingDetails(true)
+              setViewDialogOpen(true)
+              await fetchBookingDetails(booking.id)
+              // Clear intentional fetch flag after fetch completes
+              if (intentionalFetchRef.current === booking.id) {
+                intentionalFetchRef.current = null
+              }
+            },
+          },
+          duration: 5000,
         })
         
-        if (!response) {
-          // Network error - skip this poll cycle
-          return
-        }
-        
-        if (!response.ok) {
-          console.warn('[BookingsPage] Polling response not ok:', response.status, response.statusText)
-          return
-        }
-        
-        const json = await response.json()
-        
-        if (json.success && json.data) {
-          const latestBookings = json.data.bookings || []
-          if (Array.isArray(latestBookings)) {
-            const currentBookings = latestBookings as Booking[]
-            
-            // Find bookings with new user responses (response_date after lastCheckedAt)
-          const newResponses = currentBookings.filter(booking => {
-            if (!booking.user_response || !booking.response_date) return false
-            
-            // Check if this response is new (response_date is after lastCheckedAt)
-            const responseTime = booking.response_date * 1000 // Convert to milliseconds
-            const isNew = responseTime > lastCheckedAtRef.current
-            
-            // Check if we've already seen this response
-            const responseId = `${booking.id}-${booking.response_date}`
-            const alreadySeen = seenResponseIdsRef.current.has(responseId)
-            
-            return isNew && !alreadySeen
-          })
-
-          // Find bookings with status changes (compare with last known status)
-          const statusChanges: Booking[] = []
-          const newStatusMap = new Map<string, { status: string; updated_at: number }>()
-          
-          currentBookings.forEach(booking => {
-            const lastKnown = lastStatusCheckRef.current.get(booking.id)
-            newStatusMap.set(booking.id, {
-              status: booking.status,
-              updated_at: booking.updated_at || 0
-            })
-            
-            // Detect status change (status different or updated_at changed significantly)
-            if (lastKnown) {
-              const statusChanged = lastKnown.status !== booking.status
-              const wasRecentlyUpdated = booking.updated_at && 
-                booking.updated_at > lastKnown.updated_at &&
-                (booking.updated_at - lastKnown.updated_at) > 5 // At least 5 seconds difference
-              
-              if (statusChanged && wasRecentlyUpdated) {
-                // Status changed - notify admin
-                statusChanges.push(booking)
-              } else if (!statusChanged && wasRecentlyUpdated && booking.updated_at) {
-                // Status same but booking was updated (might be auto-update or other admin)
-                // Only notify if it's a significant change (updated_at changed by more than polling interval)
-                const timeDiff = booking.updated_at - lastKnown.updated_at
-                if (timeDiff > 25) { // More than 25 seconds (close to polling interval)
-                  statusChanges.push(booking)
-                }
-              }
-            } else {
-              // First time seeing this booking - don't notify
-            }
-          })
-          
-          lastStatusCheckRef.current = newStatusMap
-
-          // Show notifications for new user responses
-          if (newResponses.length > 0) {
-            // Mark responses as seen
-            newResponses.forEach(booking => {
-              if (booking.response_date) {
-                const responseId = `${booking.id}-${booking.response_date}`
-                seenResponseIdsRef.current.add(responseId)
-              }
-            })
-
-            // Show notifications for each new response
-            newResponses.forEach(booking => {
-              const responseType = booking.user_response?.toLowerCase() || ""
-              let message = ""
-              let type: "success" | "info" | "warning" = "info"
-
-              if (responseType.includes("accept")) {
-                message = `${booking.name} accepted the proposed date`
-                type = "success"
-              } else if (responseType.includes("propose")) {
-                message = `${booking.name} proposed an alternative date`
-                type = "warning"
-              } else if (responseType.includes("cancel")) {
-                message = `${booking.name} cancelled their reservation`
-                type = "warning"
-              } else {
-                message = `${booking.name} responded to their reservation`
-              }
-
-              toast[type](message, {
-                description: `Event: ${booking.event_type}`,
-                action: {
-                  label: "View",
-                  onClick: async () => {
-                    // CRITICAL: Don't set selectedBooking from list - it might be stale
-                    // Wait for fresh data from API
-                    setLoadingBookingDetails(true)
-                    setViewDialogOpen(true)
-                    await fetchBookingDetails(booking.id)
-                  },
-                },
-                duration: 5000,
-              })
-            })
-
-            // Update new responses count
-            setNewResponsesCount(prev => prev + newResponses.length)
-          }
-          
-          // Show notifications for status changes
-          if (statusChanges.length > 0) {
-            statusChanges.forEach(booking => {
-              const lastKnown = lastStatusCheckRef.current.get(booking.id)
-              if (lastKnown && lastKnown.status !== booking.status) {
-                // Special notification for deposit uploads
-                const isDepositUpload = lastKnown.status === "pending_deposit" && booking.status === "pending_deposit" && booking.deposit_evidence_url
-                
-                if (isDepositUpload) {
-                  // Use booking ID as toast ID to prevent duplicate notifications
-                  toast.success(`Deposit Evidence Uploaded: ${booking.name}`, {
-                    id: `deposit-uploaded-${booking.id}`,
-                    description: "A deposit evidence has been uploaded and requires verification.",
-                    action: {
-                      label: "View",
-                      onClick: async () => {
-                        // CRITICAL: Don't set selectedBooking from list - it might be stale
-                        // Wait for fresh data from API
-                        setLoadingBookingDetails(true)
-                        setViewDialogOpen(true)
-                        await fetchBookingDetails(booking.id)
-                      },
-                    },
-                    duration: 8000,
-                  })
-                } else {
-                // Use booking ID as toast ID to prevent duplicate notifications
-                toast.info(`Booking status updated: ${booking.name}`, {
-                  id: `booking-status-${booking.id}`,
-                  description: `Status changed from "${lastKnown.status}" to "${booking.status}"`,
-                  action: {
-                    label: "View",
-                    onClick: async () => {
-                      // CRITICAL: Don't set selectedBooking from list - it might be stale
-                      // Wait for fresh data from API
-                      setLoadingBookingDetails(true)
-                      setViewDialogOpen(true)
-                      await fetchBookingDetails(booking.id)
-                    },
-                  },
-                  duration: 5000,
-                })
-                }
-                
-                // If this booking is currently selected and view dialog is open, refresh it
-                // Skip if status dialog is open to avoid interrupting user actions
-                if (currentSelectedBookingId === booking.id && viewDialogOpen && !statusDialogOpen) {
-                  fetchBookingDetails(booking.id)
-                }
-              } else {
-                // Booking was updated but status didn't change (might be auto-update or other admin)
-                // Use booking ID as toast ID to prevent duplicate notifications
-                toast.info(`Booking updated: ${booking.name}`, {
-                  id: `booking-updated-${booking.id}`,
-                  description: "This booking was recently updated. Refreshing...",
-                  duration: 3000,
-                })
-                
-                // If this booking is currently selected and view dialog is open, refresh it
-                // Skip if status dialog is open to avoid interrupting user actions
-                if (currentSelectedBookingId === booking.id && viewDialogOpen && !statusDialogOpen) {
-                  fetchBookingDetails(booking.id)
-                }
-              }
-            })
-          }
-          
-          // Update bookings selectively if there are any changes
-          if (newResponses.length > 0 || statusChanges.length > 0) {
-            // Update changed bookings in the list instead of full refresh
-            statusChanges.forEach(booking => {
-              replaceItem(booking.id, booking)
-            })
-            newResponses.forEach(booking => {
-              replaceItem(booking.id, booking)
-            })
-            
-            // If view dialog is open, refresh selected booking details to get latest data
-            // Skip if status dialog is open to avoid interrupting user actions
-            if (viewDialogOpen && currentSelectedBookingId && !statusDialogOpen) {
-              fetchBookingDetails(currentSelectedBookingId)
-            }
-            // Note: Unavailable dates refresh is handled by dedicated useEffect when date change dialog is open
-          }
-
-            // Update last checked time
-            lastCheckedAtRef.current = Date.now()
-          }
-        }
-      } catch (error) {
-        console.error("Error polling for updates:", error)
+        // Update new responses count
+        setNewResponsesCount(prev => prev + 1)
       }
-    }, 30000) // Poll every 30 seconds
+    },
+    onDepositUpload: (event: BookingUpdateEvent) => {
+      // Handle deposit upload events
+      const booking = event.booking
+      
+      if (!booking || !booking.deposit_evidence_url) return
+      
+      // FIXED: Check if SSE update should be applied (prevent overwriting optimistic updates) (Issue #19)
+      if (!shouldApplySSEUpdate(booking.id, booking.updated_at)) {
+        // Skip this SSE update - optimistic update is pending
+        return
+      }
+      
+      // Always update the list first to ensure data is fresh
+      updateItem(booking.id, mapBookingToUpdateItem(booking))
+      
+      // If dialog is open and this is the selected booking, refresh dialog details
+      // But only if no nested dialogs are open (to avoid interrupting user workflow)
+      // Use refs to avoid stale closure issues
+      if (viewDialogOpenRef.current && selectedBookingRef.current?.id === booking.id && !statusDialogOpenRef.current && !confirmationDialogOpenRef.current && !feeDialogOpenRef.current && !deleteDialogOpenRef.current && !otherChannelDialogOpenRef.current) {
+        fetchBookingDetails(booking.id)
+      }
+      
+      // FIXED: Always show SSE notifications (Bug #39)
+      // Unlike polling, SSE events are one-time - if we skip them, users miss important updates
+      toast.success(`Deposit Evidence Uploaded: ${booking.name}`, {
+        id: `deposit-uploaded-${booking.id}`,
+        description: "A deposit evidence has been uploaded and requires verification.",
+        action: {
+          label: "View",
+          onClick: async () => {
+            // Find booking from list (has all fields) - only use if it exists
+            // If not in list yet, set to null to avoid incomplete data
+            // fetchBookingDetails will load complete data immediately
+            // Use refs to avoid stale closure issues
+            const fullBooking = bookingsRef.current.find(b => b.id === booking.id)
+            
+            // FIXED: Always set intentionalFetchRef to ensure consistent state (Bug #5)
+            // This ensures the flag is always up-to-date with the most recent "View" action,
+            // preventing stale values from previous fetches causing inconsistent behavior
+            intentionalFetchRef.current = booking.id
+            
+            if (fullBooking) {
+              setSelectedBooking(fullBooking)
+              // Update ref immediately to ensure fetchBookingDetails can check it correctly
+              // (state updates are async, but ref updates are synchronous)
+              selectedBookingRef.current = fullBooking
+              selectedBookingIdRef.current = fullBooking.id
+            } else {
+              // If booking not in list yet, set to null to prevent rendering with incomplete data
+              // The dialog will show loading state until fetchBookingDetails completes
+              setSelectedBooking(null)
+              selectedBookingRef.current = null
+              selectedBookingIdRef.current = null
+            }
+            setLoadingBookingDetails(true)
+            setViewDialogOpen(true)
+            await fetchBookingDetails(booking.id)
+            // Clear intentional fetch flag after fetch completes
+            if (intentionalFetchRef.current === booking.id) {
+              intentionalFetchRef.current = null
+            }
+          },
+        },
+        duration: 8000,
+      })
+    },
+    onBookingCreated: (event: BookingUpdateEvent) => {
+      // Handle booking creation events
+      const booking = event.booking
+      
+      if (!booking) return
+      
+      // Convert SSE event booking data to Booking format for the list
+      // Note: SSE sends Unix timestamps, which is what the list expects
+      const newBooking: BookingType = {
+        id: booking.id,
+        reference_number: booking.reference_number ?? null,
+        name: booking.name,
+        email: booking.email,
+        phone: booking.phone ?? '',
+        participants: booking.participants !== null && booking.participants !== undefined ? String(booking.participants) : null, // Convert number to string
+        event_type: booking.event_type,
+        other_event_type: booking.other_event_type ?? null,
+        date_range: (booking.date_range ?? (booking.end_date && booking.end_date !== booking.start_date ? 1 : 0)) as any, // Booking type expects number
+        start_date: booking.start_date,
+        end_date: booking.end_date ?? null,
+        start_time: booking.start_time || '',
+        end_time: booking.end_time || '',
+        organization_type: booking.organization_type ?? null,
+        organized_person: booking.organized_person ?? null,
+        introduction: booking.introduction ?? null,
+        biography: booking.biography ?? null,
+        special_requests: booking.special_requests ?? null,
+        status: booking.status as any,
+        admin_notes: booking.admin_notes ?? null,
+        response_token: booking.response_token ?? null,
+        token_expires_at: booking.token_expires_at ?? null,
+        proposed_date: booking.proposed_date ?? null,
+        proposed_end_date: booking.proposed_end_date ?? null,
+        user_response: booking.user_response ?? null,
+        response_date: booking.response_date ?? null,
+        deposit_evidence_url: booking.deposit_evidence_url ?? null,
+        deposit_verified_at: booking.deposit_verified_at ?? null,
+        deposit_verified_by: booking.deposit_verified_by ?? null,
+        deposit_verified_from_other_channel: booking.deposit_verified_from_other_channel ?? false,
+        fee_amount: booking.fee_amount ?? null,
+        fee_amount_original: booking.fee_amount_original ?? null,
+        fee_currency: booking.fee_currency ?? null,
+        fee_conversion_rate: booking.fee_conversion_rate ?? null,
+        fee_rate_date: booking.fee_rate_date ?? null,
+        fee_recorded_at: booking.fee_recorded_at ?? null,
+        fee_recorded_by: booking.fee_recorded_by ?? null,
+        fee_notes: booking.fee_notes ?? null,
+        created_at: booking.created_at ?? booking.updated_at,
+        updated_at: booking.updated_at,
+      }
+      
+      // Add new booking to the list (at the beginning)
+      addItem(newBooking)
+      
+      // Show notification only when no dialogs are open
+      const noDialogsOpen = !viewDialogOpenRef.current && !statusDialogOpenRef.current && !confirmationDialogOpenRef.current && !feeDialogOpenRef.current && !deleteDialogOpenRef.current && !otherChannelDialogOpenRef.current
+      if (noDialogsOpen) {
+        toast.success(`New Booking: ${booking.name}`, {
+          id: `booking-created-${booking.id}`,
+          description: `Event: ${booking.event_type}`,
+          action: {
+            label: "View",
+            onClick: async () => {
+              // Fetch full booking details
+              setSelectedBooking(null)
+              selectedBookingRef.current = null
+              selectedBookingIdRef.current = null
+              intentionalFetchRef.current = booking.id
+              setLoadingBookingDetails(true)
+              setViewDialogOpen(true)
+              await fetchBookingDetails(booking.id)
+              if (intentionalFetchRef.current === booking.id) {
+                intentionalFetchRef.current = null
+              }
+            },
+          },
+          duration: 8000,
+        })
+      }
+    },
+    onBookingDeleted: (event: BookingUpdateEvent) => {
+      // Handle booking deletion events
+      const booking = event.booking
+      
+      if (!booking) return
+      
+      // Remove booking from the list
+      removeItem(booking.id)
+      
+      // Close dialog if deleted booking is currently selected
+      if (selectedBookingRef.current?.id === booking.id) {
+        setViewDialogOpen(false)
+        setSelectedBooking(null)
+        selectedBookingRef.current = null
+        selectedBookingIdRef.current = null
+      }
+      
+      // Show notification only when no dialogs are open
+      const noDialogsOpen = !viewDialogOpenRef.current && !statusDialogOpenRef.current && !confirmationDialogOpenRef.current && !feeDialogOpenRef.current && !deleteDialogOpenRef.current && !otherChannelDialogOpenRef.current
+      if (noDialogsOpen) {
+        toast.info(`Booking Deleted: ${booking.name}`, {
+          id: `booking-deleted-${booking.id}`,
+          description: `Event: ${booking.event_type}`,
+          duration: 5000,
+        })
+      }
+    },
+    onBookingUpdate: (event: BookingUpdateEvent) => {
+      // Handle general booking updates (fallback for events without specific handlers)
+      // Skip events that are already handled by specific callbacks to avoid duplicate operations
+      if (
+        event.type === 'booking:status_changed' ||
+        event.type === 'booking:user_response' ||
+        event.type === 'booking:deposit_uploaded' ||
+        event.type === 'booking:created' ||
+        event.type === 'booking:deleted'
+      ) {
+        // These events are handled by their specific callbacks
+        return
+      }
+      
+      const booking = event.booking
+      
+      if (!booking) return
+      
+      // FIXED: Check if SSE update should be applied (prevent overwriting optimistic updates) (Issue #19)
+      if (!shouldApplySSEUpdate(booking.id, booking.updated_at)) {
+        // Skip this SSE update - optimistic update is pending
+        return
+      }
+      
+      // Always update the list first to ensure data is fresh
+      updateItem(booking.id, mapBookingToUpdateItem(booking))
+      
+      // If dialog is open and this is the selected booking, refresh dialog details
+      // But only if no nested dialogs are open (to avoid interrupting user workflow)
+      // Use refs to avoid stale closure issues
+      if (viewDialogOpenRef.current && selectedBookingRef.current?.id === booking.id && !statusDialogOpenRef.current && !confirmationDialogOpenRef.current && !feeDialogOpenRef.current && !deleteDialogOpenRef.current && !otherChannelDialogOpenRef.current) {
+        fetchBookingDetails(booking.id)
+      }
+    },
+  })
+  
+  // Update SSE status state for fallback polling
+  useEffect(() => {
+    setSseError(sseHookResult.error)
+    setSseConnected(sseHookResult.connected)
+  }, [sseHookResult.error, sseHookResult.connected])
+
+  // FIXED: Update lastCheckedAtRef periodically to mimic old polling behavior (Bug #1)
+  // This ensures "new" response highlighting ages out after 5 minutes, similar to the old
+  // polling-based approach where lastCheckedAt was updated on each poll cycle.
+  // Without this, responses would stay highlighted indefinitely until "Mark as read" is clicked.
+  useEffect(() => {
+    // Update every 30 seconds to gradually age out "new" response highlights
+    const intervalId = setInterval(() => {
+      // Only update if there are no unread responses (to preserve highlights for unread ones)
+      // When user clicks "Mark as read", newResponsesCount resets to 0 and lastCheckedAtRef updates
+      // This interval only provides the automatic aging behavior for when user is actively watching
+      if (newResponsesCount === 0) {
+        lastCheckedAtRef.current = Date.now()
+      }
+    }, 30000) // 30 seconds
     
-    return () => clearInterval(pollInterval)
-  }, [session, bookings, replaceItem])
+    return () => clearInterval(intervalId)
+  }, [newResponsesCount])
+
+  // NOTE: Old polling logic has been replaced by SSE above
+  // Polling has been completely replaced with useAdminBookingsSSE hook for real-time updates
 
   // Fetch unavailable dates for date change calendar (excludes current booking's dates)
   const fetchUnavailableDatesForDateChange = useCallback(async (bookingId: string | null) => {
+    // Abort previous request if still in flight
+    if (unavailableDatesAbortControllerRef.current) {
+      unavailableDatesAbortControllerRef.current.abort()
+    }
+    
+    // Create new AbortController for this request
+    const abortController = new AbortController()
+    unavailableDatesAbortControllerRef.current = abortController
+    
     try {
       const url = bookingId 
         ? buildApiUrl(API_PATHS.bookingAvailability, { bookingId })
         : API_PATHS.bookingAvailability
       
-      const response = await fetch(url)
+      const response = await fetch(url, { signal: abortController.signal })
       const json = await response.json()
+      
+      // Check if request was aborted before setting state
+      if (abortController.signal.aborted) {
+        return
+      }
       
       if (json.success) {
         const unavailableDatesArray = json.data?.unavailableDates || json.unavailableDates || []
@@ -784,34 +1206,71 @@ export default function BookingsPage() {
         setUnavailableTimeRangesForDateChange([])
       }
       } catch (error) {
+        // Ignore abort errors
+        if (error instanceof Error && error.name === 'AbortError') {
+          return
+        }
         console.error("Failed to fetch unavailable dates for date change:", error)
-        setUnavailableDatesForDateChange(new Set())
-        setUnavailableTimeRangesForDateChange([])
+        // Only update state if request wasn't aborted
+        if (!abortController.signal.aborted) {
+          setUnavailableDatesForDateChange(new Set())
+          setUnavailableTimeRangesForDateChange([])
+        }
+      } finally {
+        // Clear ref if this was the current request
+        if (unavailableDatesAbortControllerRef.current === abortController) {
+          unavailableDatesAbortControllerRef.current = null
+        }
       }
   }, [])
 
   // Fetch unavailable dates when date change dialog opens and initialize date range toggle
   useEffect(() => {
-    if (selectedAction === "change_date" && selectedBooking?.id && selectedBooking.status === "confirmed") {
+    // Capture values at start of effect to avoid stale closures
+    const currentBookingId = selectedBooking?.id
+    const currentStatus = selectedBooking?.status
+    const currentEndDate = selectedBooking?.end_date
+    const currentAction = selectedAction
+    
+    if (currentAction === "change_date" && currentBookingId && currentStatus === "confirmed") {
       // Fetch unavailable dates excluding current booking's dates
-      fetchUnavailableDatesForDateChange(selectedBooking.id)
+      fetchUnavailableDatesForDateChange(currentBookingId)
       // Initialize date range toggle based on current booking
-      setDateRangeToggle(selectedBooking.end_date ? "multiple" : "single")
+      setDateRangeToggle(currentEndDate ? "multiple" : "single")
       } else {
+        // Abort any in-flight requests when dialog closes
+        if (unavailableDatesAbortControllerRef.current) {
+          unavailableDatesAbortControllerRef.current.abort()
+          unavailableDatesAbortControllerRef.current = null
+        }
         // Clear unavailable dates when dialog closes
         setUnavailableDatesForDateChange(new Set())
         setUnavailableTimeRangesForDateChange([])
         // Reset date range toggle
         setDateRangeToggle("single")
       }
+      
+      // Cleanup: abort any in-flight requests when effect re-runs or component unmounts
+      return () => {
+        if (unavailableDatesAbortControllerRef.current) {
+          unavailableDatesAbortControllerRef.current.abort()
+          unavailableDatesAbortControllerRef.current = null
+        }
+      }
   }, [selectedAction, selectedBooking?.id, selectedBooking?.status, selectedBooking?.end_date, fetchUnavailableDatesForDateChange])
 
   // Polling integration: Refresh unavailable dates when date change dialog is open
   useEffect(() => {
     if (selectedAction === "change_date" && selectedBooking?.id && selectedBooking.status === "confirmed") {
+      // Capture booking ID to avoid stale closure
+      const targetBookingId = selectedBooking.id
+      
       // Set up interval to refresh unavailable dates every 30 seconds while dialog is open
       const refreshInterval = setInterval(() => {
-        fetchUnavailableDatesForDateChange(selectedBooking.id)
+        // Verify booking ID still matches before fetching (prevents fetching for wrong booking)
+        if (selectedBookingIdRef.current === targetBookingId) {
+          fetchUnavailableDatesForDateChange(targetBookingId)
+        }
       }, 30000) // Same interval as main polling
 
       return () => clearInterval(refreshInterval)
@@ -819,7 +1278,17 @@ export default function BookingsPage() {
   }, [selectedAction, selectedBooking?.id, selectedBooking?.status, fetchUnavailableDatesForDateChange])
 
   // Fetch booking details and history
-  const fetchBookingDetails = async (bookingId: string) => {
+  const fetchBookingDetails = useCallback(async (bookingId: string) => {
+    // Clear any pending fee history timeout from previous fetch
+    if (feeHistoryTimeoutRef.current) {
+      clearTimeout(feeHistoryTimeoutRef.current)
+      feeHistoryTimeoutRef.current = null
+    }
+    // FIXED: Track fetch instance to handle concurrent fetches correctly (Bug #24, #34)
+    // Increment counter to get unique instance ID for this fetch
+    fetchInstanceCounterRef.current += 1
+    const thisFetchInstance = fetchInstanceCounterRef.current
+    currentFetchInstanceRef.current = thisFetchInstance
     setLoadingBookingDetails(true)
     try {
       // Add cache-busting parameter to ensure fresh data
@@ -833,13 +1302,16 @@ export default function BookingsPage() {
         )
         
         // Debug logging (remove in production if needed)
+        // FIXED: Use selectedBookingRef.current instead of selectedBooking to avoid stale closure (Bug #21)
+        // The useCallback has an empty dependency array, so selectedBooking would always be null here
         if (process.env.NODE_ENV === 'development') {
+          const currentBookingForDebug = selectedBookingRef.current
           console.log('[fetchBookingDetails] Received booking data:', {
             bookingId,
             hasBooking: !!booking,
             status: booking?.status,
-            oldStatus: selectedBooking?.status,
-            statusChanged: selectedBooking?.status !== booking?.status,
+            oldStatus: currentBookingForDebug?.status,
+            statusChanged: currentBookingForDebug?.status !== booking?.status,
             fee_amount: booking?.fee_amount,
             feeAmount: booking?.feeAmount,
             fee_currency: booking?.fee_currency,
@@ -849,46 +1321,191 @@ export default function BookingsPage() {
         }
         
         if (booking) {
-          setSelectedBooking(booking)
-          setStatusHistory(statusHistory)
-          // Store overlapping bookings and confirmed overlap status
-          setOverlappingBookings(json.data.overlappingBookings || [])
-          setHasConfirmedOverlap(json.data.hasConfirmedOverlap || false)
-          // Reset postpone mode when opening dialog
-          setPostponeMode("user-propose")
-          setProposedDateRange("single")
-          setSelectedStatusInForm(booking.status)
+          // Only update selectedBooking if this response is for the currently selected booking
+          // This prevents race conditions where an earlier API response overwrites state after user switches bookings
+          // Check current state using ref (synced with state via useEffect) to avoid side effects in updater
+          const currentBooking = selectedBookingRef.current
+          // Update if:
+          // 1. A booking is selected AND its ID matches, OR
+          // 2. This is an intentional fetch (via onViewBooking) - allows update when booking was cleared before fetch
+          const shouldUpdate = (currentBooking && currentBooking.id === bookingId) || 
+                               (intentionalFetchRef.current === bookingId)
+          
+          // Update booking if condition is met (pure state update, no side effects)
+          if (shouldUpdate) {
+            setSelectedBooking(booking)
+          }
+          
+          // Update related state only if the booking update was actually applied
+          // This must be outside the updater function to maintain React's purity requirements
+          // and ensure proper batching of related state updates
+          if (shouldUpdate) {
+            setStatusHistory(statusHistory)
+            setOverlappingBookings(json.data.overlappingBookings || [])
+            setHasConfirmedOverlap(json.data.hasConfirmedOverlap || false)
+            // Reset postpone mode when opening dialog
+            setPostponeMode("user-propose")
+            setProposedDateRange("single")
+            setSelectedStatusInForm(booking.status)
+            // NOTE: We intentionally do NOT update refs here - the useEffect at line ~229 handles
+            // ref synchronization. Direct ref mutations bypass that synchronization mechanism
+            // and can cause race conditions when users rapidly switch between bookings.
+            
+            // FIXED: Clear intentional fetch flag after successful update (Bug #33)
+            // This prevents stale references when user rapidly switches between bookings
+            if (intentionalFetchRef.current === bookingId) {
+              intentionalFetchRef.current = null
+            }
+          }
+          
+          // Fetch fee history only when the booking update was actually applied
+          // This prevents fetching fee history for a booking that was rejected due to race conditions
+          // Use setTimeout to ensure this happens after the state update completes, and verify the booking ID matches
+          if (shouldUpdate) {
+            // Capture bookingId in a const to avoid closure issues
+            const targetBookingId = bookingId
+            // Clear any existing timeout
+            if (feeHistoryTimeoutRef.current) {
+              clearTimeout(feeHistoryTimeoutRef.current)
+            }
+            feeHistoryTimeoutRef.current = setTimeout(async () => {
+              // Double-check that the selected booking still matches before fetching fee history
+              // This prevents race conditions where user switches bookings before the setTimeout executes
+              // Fetch fee history asynchronously - check state outside updater to maintain React purity
+              fetch(buildApiUrl(API_PATHS.adminBookingFeeHistory(targetBookingId), { t: Date.now() }))
+                .then((feeHistoryResponse) => feeHistoryResponse.json())
+                .then((feeHistoryJson) => {
+                  // FIXED: Check mounted state before setting state (Bug #37)
+                  if (!isMountedRef.current) return
+                  if (feeHistoryJson.success && feeHistoryJson.data) {
+                    // Verify booking still matches before setting fee history
+                    // Check ref outside state updater to maintain React purity
+                    if (selectedBookingIdRef.current === targetBookingId) {
+                      // Booking still matches - set fee history outside state updater
+                      setFeeHistory(feeHistoryJson.data.history || [])
+                    }
+                  } else {
+                    // API returned non-success response - clear fee history to prevent stale data
+                    // Only clear if booking still matches
+                    if (selectedBookingIdRef.current === targetBookingId) {
+                      setFeeHistory([])
+                    }
+                  }
+                })
+                .catch((feeError) => {
+                  // FIXED: Check mounted state before setting state (Bug #37)
+                  if (!isMountedRef.current) return
+                  console.error("Failed to load fee history:", feeError)
+                  // Only clear fee history if booking still matches
+                  // Check ref outside state updater to maintain React purity
+                  if (selectedBookingIdRef.current === targetBookingId) {
+                    // Booking still matches - clear fee history outside state updater
+                    setFeeHistory([])
+                  }
+                })
+            }, 0)
+            // Clear ref after timeout is set (will be cleared on next fetch or unmount)
+          }
         } else {
           toast.error("Booking data not found in response")
+          // Only clear selectedBooking and close dialog if the error is for the currently selected booking
+          // If the current booking doesn't match bookingId, the user has moved on to a different booking,
+          // so we should ignore this error to prevent race conditions from clearing the wrong booking
+          // Read current state using functional update, then check and close outside updater
+          let shouldClose = false
+          setSelectedBooking((current) => {
+            // Check if this error is for the currently selected booking
+            if (current && current.id === bookingId) {
+              shouldClose = true
+            }
+            // Return unchanged to just read the state
+            return current
+          })
+          // Close dialog outside state updater if booking matches
+          if (shouldClose) {
+            setSelectedBooking(null)
+            setFeeHistory([]) // FIXED: Clear stale fee history when closing dialog on error (Bug #2)
+            setViewDialogOpen(false)
+          }
+          // Clear intentional fetch flag on error
+          if (intentionalFetchRef.current === bookingId) {
+            intentionalFetchRef.current = null
+          }
         }
       } else {
         const errorMessage = json.error?.message || "Failed to load booking details"
         toast.error(errorMessage)
-      }
-
-      // Fetch fee history
-      try {
-        const feeHistoryResponse = await fetch(buildApiUrl(API_PATHS.adminBookingFeeHistory(bookingId), { t: Date.now() }))
-        const feeHistoryJson = await feeHistoryResponse.json()
-        if (feeHistoryJson.success && feeHistoryJson.data) {
-          setFeeHistory(feeHistoryJson.data.history || [])
+        // Only clear selectedBooking and close dialog if the error is for the currently selected booking
+        // If the current booking doesn't match bookingId, the user has moved on to a different booking,
+        // so we should ignore this error to prevent race conditions from clearing the wrong booking
+        // Read current state using functional update, then check and close outside updater
+        let shouldClose = false
+        setSelectedBooking((current) => {
+          // Check if this error is for the currently selected booking
+          if (current && current.id === bookingId) {
+            shouldClose = true
+          }
+          // Return unchanged to just read the state
+          return current
+        })
+        // Close dialog outside state updater if booking matches
+        if (shouldClose) {
+          setSelectedBooking(null)
+          setFeeHistory([]) // FIXED: Clear stale fee history when closing dialog on error (Bug #2)
+          setViewDialogOpen(false)
         }
-      } catch (feeError) {
-        console.error("Failed to load fee history:", feeError)
-        setFeeHistory([])
+        // Clear intentional fetch flag on error
+        if (intentionalFetchRef.current === bookingId) {
+          intentionalFetchRef.current = null
+        }
       }
     } catch (error) {
       toast.error("Failed to load booking details")
       console.error(error)
+      // Only clear selectedBooking and close dialog if the error is for the currently selected booking
+      // If the current booking doesn't match bookingId, the user has moved on to a different booking,
+      // so we should ignore this error to prevent race conditions from clearing the wrong booking
+      // Read current state using functional update, then check and close outside updater
+      let shouldClose = false
+      setSelectedBooking((current) => {
+        // Check if this error is for the currently selected booking
+        if (current && current.id === bookingId) {
+          shouldClose = true
+        }
+        // Return unchanged to just read the state
+        return current
+      })
+      // Close dialog outside state updater if booking matches
+      if (shouldClose) {
+        setSelectedBooking(null)
+        setFeeHistory([]) // FIXED: Clear stale fee history when closing dialog on error (Bug #2)
+        setViewDialogOpen(false)
+      }
+      // Clear intentional fetch flag on error
+      if (intentionalFetchRef.current === bookingId) {
+        intentionalFetchRef.current = null
+      }
     } finally {
-      setLoadingBookingDetails(false)
+      // FIXED: Only clear loading state if this fetch is still the most recent one (Bug #24, #34)
+      // Using fetch instance counter handles concurrent fetches for the same booking correctly
+      // Only the most recent fetch instance controls loading state
+      if (currentFetchInstanceRef.current === thisFetchInstance) {
+        setLoadingBookingDetails(false)
+        currentFetchInstanceRef.current = null
+      }
     }
-  }
+  }, [])
   
   // Helper function to refresh booking details dialog after admin actions
   // This ensures the dialog always shows the latest status and data
   const refreshBookingDetailsDialog = useCallback(async (bookingId: string) => {
-    if (!viewDialogOpen || !bookingId) return
+    // Use ref to avoid stale closure issues
+    if (!viewDialogOpenRef.current || !bookingId) return
+    
+    // Verify booking ID still matches before fetching (prevents fetching for wrong booking)
+    if (selectedBookingIdRef.current !== bookingId) {
+      return
+    }
     
     // Reset the ref to force refetch
     lastFetchedBookingIdRef.current = null
@@ -896,9 +1513,14 @@ export default function BookingsPage() {
     // Add small delay to ensure backend cache invalidation completes
     await new Promise(resolve => setTimeout(resolve, 150))
     
+    // Double-check booking ID still matches after delay (prevents race conditions)
+    if (selectedBookingIdRef.current !== bookingId || !viewDialogOpenRef.current) {
+      return
+    }
+    
     // Fetch fresh data
     await fetchBookingDetails(bookingId)
-  }, [viewDialogOpen, fetchBookingDetails])
+  }, [fetchBookingDetails])
 
   // Handle delete booking - open confirmation dialog
   const handleDeleteBooking = (bookingId: string) => {
@@ -940,7 +1562,16 @@ export default function BookingsPage() {
         return
       }
 
-      const json = await response.json()
+      // FIXED: Check for empty response text before parsing (Bug #27)
+      const text = await response.text()
+      if (!text) {
+        toast.error("Empty response from server", {
+          id: `delete-error-${bookingToDelete.id}`,
+        })
+        return
+      }
+
+      const json = JSON.parse(text)
       
       if (json.success) {
         // Optimistically remove from list
@@ -977,17 +1608,18 @@ export default function BookingsPage() {
     return mapActionToStatus(action as any, currentStatus as any) || currentStatus
   }
 
-  // Check action locks for selected booking and action
+  // Check action locks for selected booking and action (real-time via SSE)
+  // FIXED: Keep SSE active even when dialog is closed to prevent staleness (Issue #6)
+  // Only require selectedBooking and selectedAction, not statusDialogOpen
   const { 
     lockStatus: actionLockStatus, 
     isLockedByOther: isActionLockedByOther,
     isLockedByMe: isActionLockedByMe,
-  } = useActionLocks({
+  } = useActionLocksSSE({
     resourceType: 'booking',
     resourceId: selectedBooking?.id,
     action: selectedAction || undefined,
-    pollInterval: 3000, // Poll every 3 seconds for lock status
-    enabled: !!selectedBooking && !!selectedAction && statusDialogOpen,
+    enabled: !!selectedBooking && !!selectedAction, // FIXED: Removed statusDialogOpen requirement (Issue #6)
   })
 
   // Handle action update with validation
@@ -1061,6 +1693,10 @@ export default function BookingsPage() {
   const executeActionDirectly = async (actionDef: ActionDefinition) => {
     if (!selectedBooking) return
 
+    // CRITICAL: Capture booking ID before any async operations to prevent race conditions
+    // This ensures error handlers use the correct booking ID even if user switches bookings
+    const targetBookingId = selectedBooking.id
+
     // CRITICAL: Double-check lock status before executing
     if (isActionLockedByOther) {
       const lockedBy = actionLockStatus.lockedBy || "another admin"
@@ -1089,8 +1725,9 @@ export default function BookingsPage() {
       }
       
       // PRE-SUBMIT REFRESH: Refresh unavailable dates right before submission to minimize race condition window
+      // Use captured booking ID to prevent race conditions
       try {
-        await fetchUnavailableDatesForDateChange(selectedBooking.id)
+        await fetchUnavailableDatesForDateChange(targetBookingId)
         console.log("[Admin] Refreshed unavailable dates before submission")
       } catch (error) {
         console.error("[Admin] Failed to refresh unavailable dates before submission:", error)
@@ -1260,8 +1897,68 @@ export default function BookingsPage() {
     const shouldVerifyDeposit = (selectedAction === "accept_deposit" && status === "confirmed")
     const depositVerifiedBy = shouldVerifyDeposit ? adminEmail : undefined
 
+    // FIXED: Final synchronous lock check right before API call to minimize race window (Issue #2)
+    // FIXED: Use targetBookingId instead of selectedBooking.id to prevent race conditions (Bug #1)
+    if (targetBookingId && selectedAction) {
+      try {
+        const { API_PATHS } = await import('@/lib/api-config')
+        const lockCheckUrl = `${API_PATHS.adminActionLocks}?resourceType=booking&resourceId=${encodeURIComponent(targetBookingId)}&action=${encodeURIComponent(selectedAction)}`
+        const lockCheckResponse = await fetch(lockCheckUrl, {
+          credentials: 'include',
+        })
+        
+        if (lockCheckResponse.ok) {
+          const lockCheckJson = await lockCheckResponse.json()
+          if (lockCheckJson.success && lockCheckJson.data?.lockStatus?.locked) {
+            const lockedBy = lockCheckJson.data.lockStatus.lockedBy
+            const currentUserEmail = session?.user?.email
+            // Only block if locked by another admin
+            if (lockedBy && lockedBy !== currentUserEmail) {
+              toast.error(`This action is currently being performed by ${lockedBy}. Please wait a moment and try again.`, {
+                duration: 5000,
+              })
+              setSaving(false)
+              return
+            }
+          }
+        }
+      } catch (lockCheckError) {
+        // If lock check fails, log but continue (backend will still protect)
+        console.warn('[Admin] Failed to check lock status before API call:', lockCheckError)
+      }
+    }
+
     try {
-      const response = await fetch(API_PATHS.adminBooking(selectedBooking.id), {
+      // FIXED: Use targetBookingId instead of selectedBooking.id to prevent race conditions (Bug #1)
+      // FIXED: Register optimistic update BEFORE API call to prevent SSE events from arriving first (Issue #5)
+      // This closes the timing window where SSE events could arrive before optimistic registration
+      const optimisticUpdateTimestamp = Date.now()
+      pendingOptimisticUpdatesRef.current.set(targetBookingId, optimisticUpdateTimestamp)
+      
+      // FIXED: Set timeout to clear optimistic update after grace period (Issue #5)
+      // Use targetBookingId in closure to ensure correct booking is referenced after delay
+      const timeoutId = setTimeout(() => {
+        const currentTimestamp = pendingOptimisticUpdatesRef.current.get(targetBookingId)
+        // Only clear if this is still the same optimistic update (not overwritten by another)
+        if (currentTimestamp === optimisticUpdateTimestamp) {
+          pendingOptimisticUpdatesRef.current.delete(targetBookingId)
+        }
+      }, 2000) // 2 second grace period for server response
+      
+      // FIXED: Store timeout ID for cleanup (Issue #5)
+      // Clear any existing timeout for this booking before storing new one
+      // This prevents memory leaks and unnecessary callback executions when
+      // optimistic updates are triggered multiple times for the same booking
+      if (!optimisticUpdateTimeoutsRef.current) {
+        optimisticUpdateTimeoutsRef.current = new Map()
+      }
+      const existingTimeout = optimisticUpdateTimeoutsRef.current.get(targetBookingId)
+      if (existingTimeout) {
+        clearTimeout(existingTimeout)
+      }
+      optimisticUpdateTimeoutsRef.current.set(targetBookingId, timeoutId)
+      
+      const response = await fetch(API_PATHS.adminBooking(targetBookingId), {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -1284,8 +1981,21 @@ export default function BookingsPage() {
       if (json.success) {
         const updatedBooking = json.data?.booking || json.booking
         // Optimistically update the booking
-        if (updatedBooking && selectedBooking) {
-          replaceItem(selectedBooking.id, updatedBooking)
+        // FIXED: Verify booking ID still matches before updating (prevents race conditions) (Bug #56)
+        // Use selectedBookingIdRef.current === targetBookingId instead of just checking selectedBooking exists
+        // This ensures we don't apply updates to the wrong booking if user switched bookings during async operation
+        if (updatedBooking && selectedBookingIdRef.current === targetBookingId) {
+          // FIXED: Clear optimistic update timeout on successful server response (Issue #5)
+          // Clear timeout if it hasn't fired yet
+          const currentTimeoutId = optimisticUpdateTimeoutsRef.current.get(targetBookingId)
+          if (currentTimeoutId) {
+            clearTimeout(currentTimeoutId)
+            optimisticUpdateTimeoutsRef.current.delete(targetBookingId)
+          }
+          // Note: Keep optimistic update timestamp until SSE confirms or timeout expires
+          // This ensures SSE events arriving after API response are still blocked
+          
+          replaceItem(targetBookingId, updatedBooking)
         }
         const actionLabels: Record<string, string> = {
           accept: "accepted",
@@ -1326,15 +2036,20 @@ export default function BookingsPage() {
         setDateRangeToggle("single")
         
         // Refresh unavailable dates if date was changed (to reflect new blocked dates)
-        if (selectedAction === "change_date" && selectedBooking?.id) {
-          fetchUnavailableDatesForDateChange(selectedBooking.id)
+        // Verify booking ID still matches before fetching (prevents fetching for wrong booking)
+        if (selectedAction === "change_date" && selectedBookingIdRef.current === targetBookingId) {
+          fetchUnavailableDatesForDateChange(targetBookingId)
         }
+        
+        // CRITICAL: Use ref to avoid stale closure issues
+        // Capture current booking from ref at start of callback
+        const currentBooking = selectedBookingRef.current
         
         // CRITICAL: Close ALL dialogs when booking is cancelled or restored
         // This prevents showing stale data in modals after status changes
-        const newStatus = updatedBooking?.status || selectedBooking?.status
+        const newStatus = updatedBooking?.status || currentBooking?.status
         const isCancelled = newStatus === "cancelled"
-        const isRestoration = selectedBooking?.status === "cancelled" && 
+        const isRestoration = currentBooking?.status === "cancelled" && 
           (newStatus === "pending_deposit" || newStatus === "paid_deposit" || newStatus === "confirmed")
         
         setStatusDialogOpen(false)
@@ -1351,14 +2066,13 @@ export default function BookingsPage() {
         if (isCancelled || isRestoration) {
           setViewDialogOpen(false)
           setSelectedBooking(null)
-        } else if (viewDialogOpen && selectedBooking?.id) {
+        } else if (viewDialogOpenRef.current && selectedBookingIdRef.current) {
           // CRITICAL: Always refresh booking details after any admin update action
           // This ensures the dialog shows the latest status and data
-          await refreshBookingDetailsDialog(selectedBooking.id)
+          // Use captured booking ID to prevent race conditions
+          await refreshBookingDetailsDialog(selectedBookingIdRef.current)
         }
       } else {
-          // Rollback on error
-          fetchBookings()
           // Parse error for better user experience
           const { parseBackendError, getErrorMessageWithGuidance } = await import("@/lib/error-parser")
           const errorText = json.error?.message || "Failed to update booking"
@@ -1367,53 +2081,114 @@ export default function BookingsPage() {
           
           // Check if error is due to optimistic locking conflict
           if (parsedError.type === 'conflict') {
+            // FIXED: Refresh the booking list to get latest state (Bug #45)
+            // Note: fetchBookings() is called here instead of at the start of the else block
+            // to avoid duplicate calls when a conflict is detected
+            await fetchBookings()
+            
+            // Then, if dialog is open for this booking, refresh dialog details
+            // Use captured booking ID to prevent race conditions
+            if (selectedBookingIdRef.current === targetBookingId) {
+              await fetchBookingDetails(targetBookingId)
+              // Also update the list item directly if we have the booking in the list
+              // This ensures the list shows the latest data even if fetchBookings hasn't completed yet
+              const updatedBooking = bookingsRef.current.find(b => b.id === targetBookingId)
+              if (updatedBooking) {
+                // The fetchBookingDetails will update selectedBooking, but we should also
+                // ensure the list is updated. fetchBookings() above should handle this,
+                // but we can also manually update if needed
+              }
+            }
+            
             toast.error(parsedError.userMessage, {
               action: {
                 label: "Refresh",
                 onClick: async () => {
-                  if (selectedBooking) {
-                    await fetchBookingDetails(selectedBooking.id)
+                  // Use captured booking ID to prevent race conditions
+                  // Check if booking still matches before refreshing
+                  if (selectedBookingIdRef.current === targetBookingId) {
+                    await fetchBookingDetails(targetBookingId)
                   }
-                  fetchBookings()
+                  await fetchBookings()
                 },
               },
             })
-            // Auto-refresh booking data
-            if (selectedBooking) {
-              await fetchBookingDetails(selectedBooking.id)
-            }
           } else if (parsedError.type === 'transition') {
+            // FIXED: Clear optimistic update on error (Issue #5)
+            // Clear timeout if it hasn't fired yet
+            const timeoutId = optimisticUpdateTimeoutsRef.current.get(targetBookingId)
+            if (timeoutId) {
+              clearTimeout(timeoutId)
+              optimisticUpdateTimeoutsRef.current.delete(targetBookingId)
+            }
+            // Clear optimistic update timestamp
+            pendingOptimisticUpdatesRef.current.delete(targetBookingId)
+            
+            // FIXED: Rollback on non-conflict errors (Bug #45)
+            fetchBookings()
             // Show transition error with valid options
             toast.error(errorMessage)
           } else {
+            // FIXED: Clear optimistic update on error (Issue #5)
+            // Clear timeout if it hasn't fired yet
+            const timeoutId = optimisticUpdateTimeoutsRef.current.get(targetBookingId)
+            if (timeoutId) {
+              clearTimeout(timeoutId)
+              optimisticUpdateTimeoutsRef.current.delete(targetBookingId)
+            }
+            // Clear optimistic update timestamp
+            pendingOptimisticUpdatesRef.current.delete(targetBookingId)
+            
+            // FIXED: Rollback on non-conflict errors (Bug #45)
+            fetchBookings()
             toast.error(errorMessage)
           }
         }
       } catch (error) {
-        // Rollback on error
-        fetchBookings()
+        // FIXED: Clear optimistic update on error (Issue #5)
+        // Clear timeout if it hasn't fired yet
+        const timeoutId = optimisticUpdateTimeoutsRef.current.get(targetBookingId)
+        if (timeoutId) {
+          clearTimeout(timeoutId)
+          optimisticUpdateTimeoutsRef.current.delete(targetBookingId)
+        }
+        // Clear optimistic update timestamp
+        pendingOptimisticUpdatesRef.current.delete(targetBookingId)
+        
         const { parseBackendError, getErrorMessageWithGuidance } = await import("@/lib/error-parser")
         const parsedError = parseBackendError(error instanceof Error ? error : new Error(String(error)))
         const errorMessage = getErrorMessageWithGuidance(parsedError)
         
         // Check if error is due to optimistic locking conflict
         if (parsedError.type === 'conflict') {
+          // FIXED: Refresh the booking list to get latest state (Bug #45)
+          // Note: fetchBookings() is called here instead of at the start of the catch block
+          // to avoid duplicate calls when a conflict is detected
+          await fetchBookings()
+          
+          // Then, if dialog is open for this booking, refresh dialog details
+          // Use captured booking ID to prevent race conditions
+          if (selectedBookingIdRef.current === targetBookingId) {
+            await fetchBookingDetails(targetBookingId)
+          }
+          
           toast.error(parsedError.userMessage, {
             action: {
               label: "Refresh",
               onClick: async () => {
-                if (selectedBooking) {
-                  await fetchBookingDetails(selectedBooking.id)
+                // Use captured booking ID to prevent race conditions
+                // Check if booking still matches before refreshing
+                if (selectedBookingIdRef.current === targetBookingId) {
+                  await fetchBookingDetails(targetBookingId)
                 }
-                fetchBookings()
+                await fetchBookings()
               },
             },
           })
-          // Auto-refresh booking data
-          if (selectedBooking) {
-            await fetchBookingDetails(selectedBooking.id)
-          }
         } else {
+          // FIXED: Rollback on non-conflict errors (Bug #45)
+          // Moved here to avoid duplicate calls when conflict is detected
+          fetchBookings()
           toast.error(errorMessage)
         }
         console.error(error)
@@ -1438,6 +2213,11 @@ export default function BookingsPage() {
       toast.error("No booking selected")
       return
     }
+    
+    // Capture booking ID and fee state before any async operations to prevent race conditions
+    const targetBookingId = selectedBooking.id
+    // FIXED: Capture hadFee before async call to avoid stale data in toast message (Bug #36)
+    const hadFee = (selectedBooking as any).fee_amount != null || (selectedBooking as any).feeAmount != null
 
     // Validate status allows fee recording
     if (selectedBooking.status !== "confirmed" && selectedBooking.status !== "finished" && selectedBooking.status !== "cancelled") {
@@ -1488,8 +2268,36 @@ export default function BookingsPage() {
     }
 
     setSaving(true)
+    
+    // FIXED: Register optimistic update BEFORE API call to prevent SSE overwrites (Issue #3)
+    const optimisticUpdateTimestamp = Date.now()
+    pendingOptimisticUpdatesRef.current.set(targetBookingId, optimisticUpdateTimestamp)
+    
+    // FIXED: Set timeout to clear optimistic update after grace period (Issue #3)
+    // Use targetBookingId in closure to ensure correct booking is referenced after delay
+    const timeoutId = setTimeout(() => {
+      const currentTimestamp = pendingOptimisticUpdatesRef.current.get(targetBookingId)
+      // Only clear if this is still the same optimistic update (not overwritten by another)
+      if (currentTimestamp === optimisticUpdateTimestamp) {
+        pendingOptimisticUpdatesRef.current.delete(targetBookingId)
+      }
+    }, 2000) // 2 second grace period for server response
+    
+    // FIXED: Store timeout ID for cleanup (Issue #3)
+    // Clear any existing timeout for this booking before storing new one
+    // This prevents memory leaks and unnecessary callback executions when
+    // optimistic updates are triggered multiple times for the same booking
+    const existingTimeout = optimisticUpdateTimeoutsRef.current.get(targetBookingId)
+    if (existingTimeout) {
+      clearTimeout(existingTimeout)
+    }
+    optimisticUpdateTimeoutsRef.current.set(targetBookingId, timeoutId)
+    
     try {
-      const response = await fetch(buildApiUrl(API_PATHS.adminBooking(selectedBooking.id) + "/fee"), {
+      // FIXED: Use captured targetBookingId instead of selectedBooking.id (Bug #35)
+      // This prevents race conditions if user switches bookings during the async operation
+      // FIXED: Use API_PATHS.adminBookingFee() instead of string concatenation to avoid double slashes (Bug #62)
+      const response = await fetch(buildApiUrl(API_PATHS.adminBookingFee(targetBookingId), { t: Date.now() }), {
         method: "PATCH",
         headers: {
           "Content-Type": "application/json",
@@ -1506,8 +2314,8 @@ export default function BookingsPage() {
       const json = await response.json()
 
       if (json.success) {
-        const hasFee = (selectedBooking as any).fee_amount ?? (selectedBooking as any).feeAmount
-        toast.success(hasFee ? "Fee updated successfully" : "Fee recorded successfully")
+        // FIXED: Use captured hadFee instead of potentially stale selectedBooking (Bug #36)
+        toast.success(hadFee ? "Fee updated successfully" : "Fee recorded successfully")
         setFeeDialogOpen(false)
         
         // Get updated booking from response
@@ -1518,7 +2326,7 @@ export default function BookingsPage() {
           console.log('[handleFeeUpdate] Fee update response:', {
             hasResponse: !!json.data,
             hasBooking: !!updatedBooking,
-            bookingId: selectedBooking.id,
+            bookingId: targetBookingId, // FIXED: Use captured ID for consistency (Bug #40)
             fee_amount: updatedBooking?.fee_amount,
             feeAmount: updatedBooking?.feeAmount,
             fee_currency: updatedBooking?.fee_currency,
@@ -1529,12 +2337,26 @@ export default function BookingsPage() {
         }
         
         if (updatedBooking) {
-          // Optimistically update the booking in the list
-          replaceItem(selectedBooking.id, updatedBooking)
-          // Also update selected booking for the detail view
-          setSelectedBooking(updatedBooking)
+          // FIXED: Clear optimistic update on successful server response (Issue #3)
+          // Clear timeout if it hasn't fired yet
+          const timeoutId = optimisticUpdateTimeoutsRef.current.get(targetBookingId)
+          if (timeoutId) {
+            clearTimeout(timeoutId)
+            optimisticUpdateTimeoutsRef.current.delete(targetBookingId)
+          }
+          // Clear optimistic update timestamp
+          pendingOptimisticUpdatesRef.current.delete(targetBookingId)
           
-          // Debug logging after update
+          // Verify booking ID still matches before updating (prevents race conditions)
+          if (selectedBookingIdRef.current === targetBookingId) {
+            // FIXED: Properly indent both state updates inside the race condition guard (Bug #39)
+            // Optimistically update the booking in the list
+            replaceItem(targetBookingId, updatedBooking)
+            // Also update selected booking for the detail view
+            setSelectedBooking(updatedBooking)
+          }
+          
+          // Debug logging after update (safe regardless of race condition check)
           if (process.env.NODE_ENV === 'development') {
             console.log('[handleFeeUpdate] Updated selectedBooking:', {
               fee_amount: updatedBooking.fee_amount,
@@ -1546,8 +2368,10 @@ export default function BookingsPage() {
         
         // CRITICAL: Always refresh booking details after fee update
         // This ensures the dialog shows the latest fee data and status
-        if (viewDialogOpen) {
-          await refreshBookingDetailsDialog(selectedBooking.id)
+        // Use captured booking ID to prevent race conditions
+        // Use ref to avoid stale closure issues
+        if (viewDialogOpenRef.current) {
+          await refreshBookingDetailsDialog(targetBookingId)
         }
         
         // Invalidate and refetch bookings list to ensure fresh data
@@ -1558,10 +2382,30 @@ export default function BookingsPage() {
         }
         await fetchBookings()
       } else {
+        // FIXED: Clear optimistic update on error (Issue #3)
+        // Clear timeout if it hasn't fired yet
+        const timeoutId = optimisticUpdateTimeoutsRef.current.get(targetBookingId)
+        if (timeoutId) {
+          clearTimeout(timeoutId)
+          optimisticUpdateTimeoutsRef.current.delete(targetBookingId)
+        }
+        // Clear optimistic update timestamp
+        pendingOptimisticUpdatesRef.current.delete(targetBookingId)
+        
         const errorMessage = json.error?.message || "Failed to update fee"
         toast.error(errorMessage)
       }
     } catch (error) {
+      // FIXED: Clear optimistic update on error (Issue #3)
+      // Clear timeout if it hasn't fired yet
+      const timeoutId = optimisticUpdateTimeoutsRef.current.get(targetBookingId)
+      if (timeoutId) {
+        clearTimeout(timeoutId)
+        optimisticUpdateTimeoutsRef.current.delete(targetBookingId)
+      }
+      // Clear optimistic update timestamp
+      pendingOptimisticUpdatesRef.current.delete(targetBookingId)
+      
       console.error("Error updating fee:", error)
       toast.error("Failed to update fee. Please try again.")
     } finally {
@@ -1772,11 +2616,23 @@ export default function BookingsPage() {
           // Clear any existing selectedBooking to prevent showing stale data
           // Wait for fresh data from API before opening dialog
           setSelectedBooking(null) // Clear stale data first
+          // Update refs immediately to ensure fetchBookingDetails can check them correctly
+          // (state updates are async, but ref updates are synchronous)
+          selectedBookingRef.current = null
+          selectedBookingIdRef.current = null
+          // Set flag to indicate this is an intentional fetch (allows update even when ref is null)
+          intentionalFetchRef.current = bookingId
           setLoadingBookingDetails(true)
           setViewDialogOpen(true)
-          // Reset the ref so useEffect will refetch
-          lastFetchedBookingIdRef.current = null
+          // Set the ref to this booking ID so useEffect won't redundantly refetch
+          // (we're already fetching it below)
+          lastFetchedBookingIdRef.current = bookingId
           await fetchBookingDetails(bookingId)
+          // Clear the flag after fetch completes, but only if it still matches this booking
+          // This prevents race conditions where rapid clicks clear the flag for an in-flight fetch
+          if (intentionalFetchRef.current === bookingId) {
+            intentionalFetchRef.current = null
+          }
         }}
         onDeleteBooking={handleDeleteBooking}
         saving={saving}
@@ -2128,9 +2984,13 @@ export default function BookingsPage() {
                           return
                         }
                         
+                        // FIXED: Capture booking ID before async operations (Bug #2)
+                        const targetBookingId = selectedBooking.id
+                        
                         setSaving(true)
                         try {
-                          const response = await fetch(buildApiUrl(API_PATHS.adminBooking(selectedBooking.id) + "/fee"), {
+                          // FIXED: Use API_PATHS.adminBookingFee() instead of string concatenation to avoid double slashes (Bug #62)
+                          const response = await fetch(buildApiUrl(API_PATHS.adminBookingFee(targetBookingId), { t: Date.now() }), {
                             method: "PATCH",
                             headers: {
                               "Content-Type": "application/json",
@@ -2145,13 +3005,27 @@ export default function BookingsPage() {
                           const json = await response.json()
                           
                           if (json.success) {
-                            toast.success("Fee cleared successfully")
-                            // Update selected booking with cleared fee
-                            if (json.data?.booking) {
-                              setSelectedBooking({
-                                ...selectedBooking,
-                                ...json.data.booking,
-                              })
+                            // FIXED: Check if fee was actually cleared or already empty (Bug #43)
+                            const message = json.data?.message
+                            if (message && message.includes("No fee to clear")) {
+                              toast.info("No fee to clear - booking already has no fee recorded")
+                            } else {
+                              toast.success("Fee cleared successfully")
+                            }
+                            // FIXED: Verify booking ID still matches before updating (Bug #2, #46)
+                            // FIXED: Use fresh API response directly, not stale selectedBooking spread (Bug #46)
+                            if (json.data?.booking && selectedBookingIdRef.current === targetBookingId) {
+                              setSelectedBooking(json.data.booking)
+                            }
+                            // FIXED: Refresh booking details to update fee history (Bug #38)
+                            // Similar to how handleFeeUpdate refreshes after fee updates
+                            // FIXED: Use await for proper async flow (Bug #49)
+                            if (viewDialogOpenRef.current) {
+                              try {
+                                await refreshBookingDetailsDialog(targetBookingId)
+                              } catch {
+                                // Silently handle refresh errors
+                              }
                             }
                             // Refresh bookings list
                             fetchBookings()
@@ -2809,8 +3683,10 @@ export default function BookingsPage() {
                             onMonthChange={(date) => {
                               setCalendarMonth(date)
                               // Refresh unavailable dates when month changes
-                              if (selectedBooking?.id) {
-                                fetchUnavailableDatesForDateChange(selectedBooking.id)
+                              // Use ref to avoid stale closure
+                              const currentBookingId = selectedBookingIdRef.current
+                              if (currentBookingId) {
+                                fetchUnavailableDatesForDateChange(currentBookingId)
                               }
                             }}
                             onSelect={(date) => {
@@ -2878,8 +3754,10 @@ export default function BookingsPage() {
                               onMonthChange={(date) => {
                                 setCalendarMonth(date)
                                 // Refresh unavailable dates when month changes
-                                if (selectedBooking?.id) {
-                                  fetchUnavailableDatesForDateChange(selectedBooking.id)
+                                // Use ref to avoid stale closure
+                                const currentBookingId = selectedBookingIdRef.current
+                                if (currentBookingId) {
+                                  fetchUnavailableDatesForDateChange(currentBookingId)
                                 }
                               }}
                               onSelect={(date) => {

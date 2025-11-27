@@ -7,6 +7,7 @@
 import { getTursoClient } from "./turso"
 import { getTransporter } from "./email"
 import { getBangkokDateString, createBangkokTimestamp } from "./timezone"
+import { logInfo, logError } from "./logger"
 
 /**
  * Send daily digest email to admin with booking statistics
@@ -210,9 +211,9 @@ Hell University Reservation System
       text: textContent,
     })
     
-    console.log('Daily booking digest email sent:', result.messageId)
+    await logInfo('Daily booking digest email sent', { messageId: result.messageId })
   } catch (error) {
-    console.error('Failed to send daily booking digest:', error)
+    await logError('Failed to send daily booking digest', { recipientEmail }, error instanceof Error ? error : new Error(String(error)))
     throw error
   }
 }
@@ -424,9 +425,9 @@ Hell University Reservation System
       text: textContent,
     })
     
-    console.log('Weekly booking digest email sent:', result.messageId)
+    await logInfo('Weekly booking digest email sent', { messageId: result.messageId })
   } catch (error) {
-    console.error('Failed to send weekly booking digest:', error)
+    await logError('Failed to send weekly booking digest', { recipientEmail }, error instanceof Error ? error : new Error(String(error)))
     throw error
   }
 }
