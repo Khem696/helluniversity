@@ -185,6 +185,20 @@ export default function DepositUploadPage() {
       setUploadSuccess(true)
       toast.success("Deposit evidence uploaded successfully!")
 
+      // CRITICAL: Refresh booking data to show the new evidence URL
+      // This ensures the user sees the updated evidence after re-upload
+      try {
+        const bookingResponse = await fetch(API_PATHS.bookingResponse(token))
+        const bookingJson = await bookingResponse.json()
+        if (bookingJson.success && bookingJson.data?.booking) {
+          setBooking(bookingJson.data.booking)
+          console.log('Booking data refreshed after deposit upload', { bookingId: bookingJson.data.booking.id })
+        }
+      } catch (refreshError) {
+        console.error("Failed to refresh booking data after upload:", refreshError)
+        // Don't fail the upload - this is just for UI update
+      }
+
       // Redirect to home page after 5 seconds (users will receive email when admin verifies)
       // Users can also click the button to redirect immediately
       setTimeout(() => {

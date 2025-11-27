@@ -2049,8 +2049,8 @@ export default function BookingsPage() {
                 </div>
               )}
 
-              {/* Deposit Evidence Section - Show for paid_deposit and pending_deposit with evidence */}
-              {(selectedBooking.status === "paid_deposit" || selectedBooking.status === "pending_deposit") && selectedBooking.deposit_evidence_url && (
+              {/* Deposit Evidence Section - Show for paid_deposit, pending_deposit, confirmed, and finished with evidence */}
+              {(selectedBooking.status === "paid_deposit" || selectedBooking.status === "pending_deposit" || selectedBooking.status === "confirmed" || selectedBooking.status === "finished") && selectedBooking.deposit_evidence_url && (
                 <div>
                   <h3 className="text-lg font-semibold mb-3">Deposit Evidence</h3>
                   <div className="bg-purple-50 border border-purple-200 rounded p-4">

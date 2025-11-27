@@ -423,10 +423,10 @@ function generateAdminEmailHTML(data: ReservationData, referenceNumber?: string)
 
     <div class="timestamp">
       Received: ${new Date().toLocaleString('en-US', {
-        timeZone: 'UTC',
+        timeZone: 'Asia/Bangkok',
         dateStyle: 'long',
         timeStyle: 'long',
-      })}
+      })} (Bangkok Time)
     </div>
   </div>
   <div class="footer">
@@ -466,7 +466,7 @@ ${data.introduction}
 ${data.biography ? `Background & Interests:\n${data.biography}\n\n` : ''}${data.specialRequests ? `Special Requirements:\n${data.specialRequests}\n\n` : ''}
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 Received: ${new Date().toLocaleString('en-US', {
-    timeZone: 'UTC',
+    timeZone: 'Asia/Bangkok',
     dateStyle: 'long',
     timeStyle: 'long',
   })}
@@ -1156,12 +1156,45 @@ function generateStatusChangeEmailHTML(
               </div>
               ` : ''}
               
-              ${changeReason ? `
+              ${changeReason ? (() => {
+                // Check if this is a date change notification
+                const dateChangeMatch = changeReason.match(/Previous Date & Time:\s*([\s\S]+?)\s*New Date & Time:\s*([\s\S]+?)(?:\n|$)/)
+                if (dateChangeMatch) {
+                  const [, oldDateText, newDateText] = dateChangeMatch
+                  const reasonText = changeReason.replace(/Previous Date & Time:[\s\S]*?New Date & Time:[\s\S]*?(?:\n|$)/, '').trim()
+                  return `
+              <div style="background-color: #eff6ff; border-left: 4px solid #3b82f6; padding: 20px; margin: 20px 0; border-radius: 4px;">
+                <h3 style="margin: 0 0 15px 0; color: #1e40af; font-size: 20px; font-weight: 700;">
+                  📅 Booking Date Changed
+                </h3>
+                <div style="background-color: #ffffff; border: 1px solid #dbeafe; border-radius: 6px; padding: 15px; margin: 15px 0;">
+                  <div style="margin-bottom: 15px;">
+                    <p style="margin: 0 0 8px 0; color: #6b7280; font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px;">Previous Date & Time</p>
+                    <p style="margin: 0; color: #dc2626; font-size: 16px; font-weight: 600; text-decoration: line-through;">${sanitizeHTML(oldDateText.trim())}</p>
+                  </div>
+                  <div style="border-top: 2px dashed #dbeafe; padding-top: 15px; margin-top: 15px;">
+                    <p style="margin: 0 0 8px 0; color: #6b7280; font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px;">New Date & Time</p>
+                    <p style="margin: 0; color: #059669; font-size: 18px; font-weight: 700;">${sanitizeHTML(newDateText.trim())}</p>
+                  </div>
+                </div>
+                ${reasonText ? `
+                <div style="margin-top: 15px; padding-top: 15px; border-top: 1px solid #dbeafe;">
+                  <p style="margin: 0 0 8px 0; color: #6b7280; font-size: 14px; font-weight: 500;">Reason for Change:</p>
+                  <p style="margin: 0; color: #333333; font-size: 14px; line-height: 1.6; white-space: pre-wrap;">${sanitizeHTML(reasonText)}</p>
+                </div>
+                ` : ''}
+              </div>
+              `
+                } else {
+                  // Regular change reason
+                  return `
               <div style="margin: 20px 0;">
                 <p style="margin: 0 0 10px 0; color: #6b7280; font-size: 14px; font-weight: 500;">Additional Notes:</p>
                 <p style="margin: 0; color: #333333; font-size: 14px; line-height: 1.6; white-space: pre-wrap;">${sanitizeHTML(changeReason)}</p>
               </div>
-              ` : ''}
+              `
+                }
+              })() : ''}
               
               ${status === 'accepted' ? `
               <div style="margin: 30px 0; text-align: center;">
@@ -1313,7 +1346,14 @@ function generateStatusChangeEmailText(
     pending: 'Your reservation status has been updated.',
   }
 
-  const message = statusMessages[status] || 'Your reservation status has been updated.'
+  // Check if this is a date change notification
+  const dateChangeMatch = changeReason?.match(/Previous Date & Time:\s*([\s\S]+?)\s*New Date & Time:\s*([\s\S]+?)(?:\n|$)/)
+  let message = statusMessages[status] || 'Your reservation status has been updated.'
+  
+  if (dateChangeMatch) {
+    const [, oldDateText, newDateText] = dateChangeMatch
+    message = `Your booking date has been changed.\n\nPrevious Date & Time: ${oldDateText.trim()}\nNew Date & Time: ${newDateText.trim()}`
+  }
   const formattedEventType = formatEventType(booking.eventType, booking.otherEventType)
   const formattedDateRange = formatDateRange({
     dateRange: booking.dateRange,
@@ -2010,6 +2050,8 @@ export async function sendAdminStatusChangeNotification(
   // Determine if this is a deposit upload (user action) or rejection (admin action)
   const isDepositUpload = changeReason?.toLowerCase().includes('uploaded') || 
                           changeReason?.toLowerCase().includes('user uploaded')
+  const isReUpload = changeReason?.toLowerCase().includes('re-uploaded') || 
+                     changeReason?.toLowerCase().includes('reuploaded')
   const isDepositRejection = changeReason?.toLowerCase().includes('rejected') ||
                              changeReason?.toLowerCase().includes('reject') ||
                              (oldStatus === 'pending_deposit' && newStatus === 'pending_deposit' && !isDepositUpload && changedBy && changedBy !== 'system')
@@ -2041,9 +2083,13 @@ export async function sendAdminStatusChangeNotification(
     paid_deposit: {
       title: oldStatus === 'cancelled'
         ? 'Booking Restored to Paid Deposit'
+        : isReUpload
+        ? 'Deposit Evidence Re-uploaded'
         : 'Deposit Evidence Uploaded',
       message: oldStatus === 'cancelled'
         ? 'A cancelled booking has been restored to paid_deposit status. Deposit evidence is available for review. Please verify the deposit to confirm the booking.'
+        : isReUpload
+        ? 'User has re-uploaded deposit evidence. Please review the new evidence and verify the deposit to confirm the booking.'
         : 'User has uploaded deposit evidence. Please review and verify the deposit to confirm the booking.',
       color: '#10b981',
     },
@@ -2082,25 +2128,24 @@ export async function sendAdminStatusChangeNotification(
 
   let proposedDateText = ''
   if (booking.proposedDate) {
-    if (booking.proposedEndDate && booking.proposedEndDate !== booking.proposedDate) {
-      proposedDateText = `${new Date(booking.proposedDate).toLocaleDateString('en-US', { 
+    // CRITICAL: Parse date string (YYYY-MM-DD) in Bangkok timezone
+    const parseBangkokDate = (dateStr: string) => {
+      const dateOnly = dateStr.includes('T') ? dateStr.split('T')[0] : dateStr
+      const [year, month, day] = dateOnly.split('-').map(Number)
+      const date = new Date(Date.UTC(year, month - 1, day, 0, 0, 0))
+      return date.toLocaleDateString('en-US', { 
         weekday: 'long', 
         year: 'numeric', 
         month: 'long', 
-        day: 'numeric' 
-      })} - ${new Date(booking.proposedEndDate).toLocaleDateString('en-US', { 
-        weekday: 'long', 
-        year: 'numeric', 
-        month: 'long', 
-        day: 'numeric' 
-      })}`
-    } else {
-      proposedDateText = new Date(booking.proposedDate).toLocaleDateString('en-US', { 
-        weekday: 'long', 
-        year: 'numeric', 
-        month: 'long', 
-        day: 'numeric' 
+        day: 'numeric',
+        timeZone: 'Asia/Bangkok'
       })
+    }
+    
+    if (booking.proposedEndDate && booking.proposedEndDate !== booking.proposedDate) {
+      proposedDateText = `${parseBangkokDate(booking.proposedDate)} - ${parseBangkokDate(booking.proposedEndDate)}`
+    } else {
+      proposedDateText = parseBangkokDate(booking.proposedDate)
     }
   }
 
@@ -2185,14 +2230,68 @@ export async function sendAdminStatusChangeNotification(
                 </table>
               </div>
               
-              ${changeReason ? `
+              ${changeReason ? (() => {
+                // Check if this is a date change notification
+                const dateChangeMatch = changeReason.match(/Previous Date & Time:\s*([\s\S]+?)\s*New Date & Time:\s*([\s\S]+?)(?:\n|$)/)
+                if (dateChangeMatch) {
+                  const [, oldDateText, newDateText] = dateChangeMatch
+                  const reasonText = changeReason.replace(/Previous Date & Time:[\s\S]*?New Date & Time:[\s\S]*?(?:\n|$)/, '').replace(/Reason:\s*/i, '').trim()
+                  return `
+              <div style="background-color: #eff6ff; border-left: 4px solid #3b82f6; padding: 20px; margin: 20px 0; border-radius: 4px;">
+                <h3 style="margin: 0 0 15px 0; color: #1e40af; font-size: 20px; font-weight: 700;">
+                  📅 Booking Date Changed
+                </h3>
+                <div style="background-color: #ffffff; border: 1px solid #dbeafe; border-radius: 6px; padding: 15px; margin: 15px 0;">
+                  <div style="margin-bottom: 15px;">
+                    <p style="margin: 0 0 8px 0; color: #6b7280; font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px;">Previous Date & Time</p>
+                    <p style="margin: 0; color: #dc2626; font-size: 16px; font-weight: 600; text-decoration: line-through;">${sanitizeHTML(oldDateText.trim())}</p>
+                  </div>
+                  <div style="border-top: 2px dashed #dbeafe; padding-top: 15px; margin-top: 15px;">
+                    <p style="margin: 0 0 8px 0; color: #6b7280; font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px;">New Date & Time</p>
+                    <p style="margin: 0; color: #059669; font-size: 18px; font-weight: 700;">${sanitizeHTML(newDateText.trim())}</p>
+                  </div>
+                </div>
+                ${reasonText ? `
+                <div style="margin-top: 15px; padding-top: 15px; border-top: 1px solid #dbeafe;">
+                  <p style="margin: 0 0 8px 0; color: #6b7280; font-size: 14px; font-weight: 500;">Reason for Change:</p>
+                  <p style="margin: 0; color: #333333; font-size: 14px; line-height: 1.6; white-space: pre-wrap;">${sanitizeHTML(reasonText)}</p>
+                </div>
+                ` : ''}
+              </div>
+              `
+                } else {
+                  // Regular change reason
+                  return `
               <div style="background-color: #fef3c7; border-left: 4px solid #f59e0b; padding: 20px; margin: 20px 0; border-radius: 4px;">
                 <h3 style="margin: 0 0 10px 0; color: #92400e; font-size: 18px;">Change Reason</h3>
                 <p style="margin: 0; color: #78350f; font-size: 14px; line-height: 1.6; white-space: pre-wrap;">${sanitizeHTML(changeReason)}</p>
               </div>
-              ` : ''}
+              `
+                }
+              })() : ''}
               
-              ${newStatus === 'pending_deposit' && oldStatus === 'pending_deposit' && booking.depositEvidenceUrl ? `
+              ${newStatus === 'paid_deposit' && oldStatus === 'pending_deposit' && booking.depositEvidenceUrl ? `
+              <div style="margin: 30px 0; text-align: center; background-color: #f3f4f6; padding: 25px; border-radius: 8px;">
+                <p style="margin: 0 0 20px 0; color: #111827; font-size: 16px; line-height: 1.6; font-weight: 600;">
+                  ${isReUpload ? '⚠️ Action Required: Verify Re-uploaded Deposit Evidence' : '⚠️ Action Required: Verify Deposit Evidence'}
+                </p>
+                <p style="margin: 0 0 20px 0; color: #374151; font-size: 14px; line-height: 1.6;">
+                  ${isReUpload ? 'The user has re-uploaded deposit evidence. Please review the new evidence and verify the deposit in the admin panel.' : 'The user has uploaded deposit evidence. Please review and verify the deposit in the admin panel.'}
+                </p>
+                <a href="${adminBookingsUrl}" style="display: inline-block; background-color: ${statusInfo.color}; color: #ffffff; text-decoration: none; padding: 14px 28px; border-radius: 6px; font-size: 16px; font-weight: 600; margin-bottom: 10px;">
+                  Go to Admin Panel
+                </a>
+                <p style="margin: 15px 0 0 0; color: #6b7280; font-size: 12px; line-height: 1.6;">
+                  Booking ID: ${booking.referenceNumber || booking.id}<br>
+                  Or search by email: ${sanitizeHTML(booking.email)}
+                </p>
+                <p style="margin: 15px 0 0 0; color: #6b7280; font-size: 12px; line-height: 1.6;">
+                  Or copy and paste this link:<br>
+                  <a href="${adminBookingsUrl}" style="color: #3b82f6; word-break: break-all;">${adminBookingsUrl}</a>
+                </p>
+              </div>
+              ` : ''}
+              ${newStatus === 'pending_deposit' && oldStatus === 'pending_deposit' && booking.depositEvidenceUrl && !isDepositUpload ? `
               <div style="margin: 30px 0; text-align: center; background-color: #f3f4f6; padding: 25px; border-radius: 8px;">
                 <p style="margin: 0 0 20px 0; color: #111827; font-size: 16px; line-height: 1.6; font-weight: 600;">
                   ⚠️ Action Required: Verify Deposit Evidence
@@ -2259,10 +2358,17 @@ ${changeReason ? `\nCHANGE REASON:\n${changeReason}\n` : ''}`
     // Determine if this is a deposit upload or rejection
     const isDepositUpload = changeReason?.toLowerCase().includes('uploaded') || 
                            changeReason?.toLowerCase().includes('user uploaded')
+    const isReUpload = changeReason?.toLowerCase().includes('re-uploaded') || 
+                       changeReason?.toLowerCase().includes('reuploaded')
     
     if (isDepositUpload) {
-      textContent += `\n✅ DEPOSIT EVIDENCE UPLOADED - REVIEW REQUIRED\n\n`
-      textContent += `User has uploaded deposit evidence. Please review and verify the deposit to confirm the booking.\n\n`
+      if (isReUpload) {
+        textContent += `\n✅ DEPOSIT EVIDENCE RE-UPLOADED - REVIEW REQUIRED\n\n`
+        textContent += `User has re-uploaded deposit evidence. Please review the new evidence and verify the deposit to confirm the booking.\n\n`
+      } else {
+        textContent += `\n✅ DEPOSIT EVIDENCE UPLOADED - REVIEW REQUIRED\n\n`
+        textContent += `User has uploaded deposit evidence. Please review and verify the deposit to confirm the booking.\n\n`
+      }
       textContent += `Admin Panel: ${adminBookingsUrl}\n`
       textContent += `Booking ID: ${booking.referenceNumber || booking.id}\n`
       textContent += `Or search by email: ${booking.email}\n\n`
@@ -2273,6 +2379,21 @@ ${changeReason ? `\nCHANGE REASON:\n${changeReason}\n` : ''}`
     textContent += `Booking ID: ${booking.referenceNumber || booking.id}\n`
     textContent += `Or search by email: ${booking.email}\n\n`
     }
+  } else if (newStatus === 'paid_deposit' && oldStatus === 'pending_deposit') {
+    // Determine if this is a re-upload
+    const isReUpload = changeReason?.toLowerCase().includes('re-uploaded') || 
+                       changeReason?.toLowerCase().includes('reuploaded')
+    
+    if (isReUpload) {
+      textContent += `\n✅ DEPOSIT EVIDENCE RE-UPLOADED - REVIEW REQUIRED\n\n`
+      textContent += `User has re-uploaded deposit evidence. Please review the new evidence and verify the deposit to confirm the booking.\n\n`
+    } else {
+      textContent += `\n✅ DEPOSIT EVIDENCE UPLOADED - REVIEW REQUIRED\n\n`
+      textContent += `User has uploaded deposit evidence. Please review and verify the deposit to confirm the booking.\n\n`
+    }
+    textContent += `Admin Panel: ${adminBookingsUrl}\n`
+    textContent += `Booking ID: ${booking.referenceNumber || booking.id}\n`
+    textContent += `Or search by email: ${booking.email}\n\n`
   } else if (newStatus === 'confirmed' && oldStatus === 'pending_deposit') {
     textContent += `\n✅ DEPOSIT VERIFIED - BOOKING CONFIRMED\n\n`
     textContent += `The deposit has been verified and the booking is now confirmed.\n\n`
