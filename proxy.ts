@@ -43,9 +43,25 @@ export async function proxy(request: NextRequest) {
       // Session is valid, allow access
       return NextResponse.next()
     } catch (error) {
-      // If auth check fails, let the route handle authentication
-      // Don't block here - the route will check and redirect if needed
-      console.warn("Proxy: auth() failed, allowing route to handle:", error)
+      // CRITICAL: Log auth failures with structured logger for security monitoring
+      // If auth check fails, let the route handle authentication (fail-open for resilience)
+      // Routes will perform their own auth checks, so this is a defense-in-depth approach
+      try {
+        const { logWarn } = await import('@/lib/logger')
+        await logWarn('Proxy: auth() failed, allowing route to handle authentication', {
+          pathname,
+          error: error instanceof Error ? error.message : String(error),
+          errorName: error instanceof Error ? error.name : 'Unknown',
+        })
+      } catch (logError) {
+        // Fallback to console if logger fails (shouldn't happen, but fail-safe)
+        if (process.env.NODE_ENV === 'development') {
+          console.warn("Proxy: auth() failed, allowing route to handle:", error)
+        }
+      }
+      
+      // Allow route to handle authentication (routes have their own auth checks)
+      // This fail-open approach ensures availability even if proxy auth has issues
       return NextResponse.next()
     }
   }

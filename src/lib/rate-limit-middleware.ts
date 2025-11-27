@@ -8,6 +8,7 @@
 import { NextResponse } from 'next/server'
 import { checkRateLimit, getRateLimitIdentifier } from './rate-limit'
 import { rateLimitResponse, ErrorCodes } from './api-response'
+import { logError } from './logger'
 
 export interface RateLimitOptions {
   limit?: number
@@ -47,8 +48,8 @@ export async function withRateLimit(
     return { allowed: true }
   } catch (error) {
     // If rate limiting fails, allow the request (fail open)
-    // Log the error but don't block the request
-    console.error('Rate limit check failed:', error)
+    // Fire-and-forget logging
+    logError('Rate limit check failed', { endpoint: options?.endpoint }, error instanceof Error ? error : new Error(String(error))).catch(() => {})
     return { allowed: true }
   }
 }

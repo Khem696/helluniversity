@@ -96,8 +96,64 @@ export const POST = withVersioning(async (
         deposit_verified_at: booking.depositVerifiedAt || null,
       }
 
-      // Run validation
+      // CRITICAL: First validate using state machine guards (HIGH-2)
+      // This ensures backend validation matches frontend validation
+      let stateMachineValidation: { valid: boolean; errors: string[]; warnings: string[] } | null = null
+      try {
+        const { isActionAllowed, mapActionToStatus } = await import('@/lib/booking-state-machine')
+        
+        // Verify targetStatus matches action
+        const expectedStatus = mapActionToStatus(action, booking.status)
+        if (expectedStatus !== targetStatus) {
+          await logger.warn('Action and target status mismatch', {
+            bookingId: id,
+            action,
+            currentStatus: booking.status,
+            expectedStatus,
+            providedTargetStatus: targetStatus
+          })
+        }
+        
+        // Check if action is allowed by state machine
+        const actionAllowed = await isActionAllowed(
+          action,
+          booking.status,
+          booking,
+          { checkOverlap: true, verifyBlob: true, isAdmin: true }
+        )
+        
+        if (!actionAllowed.allowed) {
+          stateMachineValidation = {
+            valid: false,
+            errors: [actionAllowed.reason || `Action "${action}" is not allowed for status "${booking.status}"`],
+            warnings: []
+          }
+        }
+      } catch (stateMachineError) {
+        // If state machine validation fails, log but continue with basic validation
+        await logger.warn('State machine validation error in validate endpoint', {
+          bookingId: id,
+          action,
+          error: stateMachineError instanceof Error ? stateMachineError.message : String(stateMachineError)
+        })
+        // Continue with basic validation below
+      }
+      
+      // If state machine validation failed, return early
+      if (stateMachineValidation && !stateMachineValidation.valid) {
+        await logger.info('Validation failed: state machine guard rejected', {
+          bookingId: id,
+          action,
+          errors: stateMachineValidation.errors
+        })
+        return successResponse(stateMachineValidation, { requestId })
+      }
+      
+      // Run additional validation (dates, overlaps, deposit evidence, etc.)
       const validationResult = await validateAction(action, validationBooking, targetStatus)
+      
+      // If state machine passed, use additional validation results
+      // State machine validation ensures transition is valid, additional validation checks dates/overlaps/etc.
 
       await logger.info('Validation completed', {
         bookingId: id,

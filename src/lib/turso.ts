@@ -1,4 +1,5 @@
 import { createClient, type Transaction } from "@libsql/client"
+import { logInfo, logWarn, logError, logDebug } from "./logger"
 
 /**
  * Turso Database Client
@@ -193,7 +194,8 @@ export async function dbQuery<T = any>(
       }
     }
   } catch (error) {
-    console.error("Database query error:", error)
+    // Fire-and-forget logging for utility function
+    logError("Database query error", undefined, error instanceof Error ? error : new Error(String(error))).catch(() => {})
     throw error
   }
 }
@@ -231,7 +233,7 @@ export async function dbTransaction<T>(
       const result = await Promise.race([
         (async (): Promise<T> => {
           try {
-            const tx = await db.transaction()
+            const tx: Transaction = await db.transaction()
             transactionRef.tx = tx // Store reference for cleanup if timeout occurs
             try {
               const result = await callback(tx)
@@ -246,7 +248,8 @@ export async function dbTransaction<T>(
                 try {
                   await transactionRef.tx.rollback()
                 } catch (rollbackError) {
-                  console.error("Failed to rollback transaction:", rollbackError)
+                  // Fire-and-forget logging for error handler
+                  logError("Failed to rollback transaction", undefined, rollbackError instanceof Error ? rollbackError : new Error(String(rollbackError))).catch(() => {})
                 }
                 transactionRef.tx = null
               }
@@ -287,7 +290,8 @@ export async function dbTransaction<T>(
               try {
                 await transactionRef.tx.rollback()
               } catch (rollbackError) {
-                console.error("Failed to rollback transaction in outer catch:", rollbackError)
+                // Fire-and-forget logging for error handler
+                logError("Failed to rollback transaction in outer catch", undefined, rollbackError instanceof Error ? rollbackError : new Error(String(rollbackError))).catch(() => {})
               }
               transactionRef.tx = null
             }
@@ -300,7 +304,8 @@ export async function dbTransaction<T>(
               throw error // Re-throw to trigger retry
             }
             
-            console.error("Database transaction error:", error)
+            // Fire-and-forget logging for error handler
+            logError("Database transaction error", undefined, error instanceof Error ? error : new Error(String(error))).catch(() => {})
             
             // Track transaction failure (outer catch for transaction creation failures)
             try {
@@ -327,12 +332,14 @@ export async function dbTransaction<T>(
       if (transactionRef.tx) {
         try {
           await transactionRef.tx.rollback()
-          console.warn('Transaction rolled back due to timeout or error', {
+          // Fire-and-forget logging for error handler
+          logWarn('Transaction rolled back due to timeout or error', {
             timeout: error instanceof Error && error.message.includes('timeout'),
             error: error instanceof Error ? error.message : String(error)
-          })
+          }).catch(() => {})
         } catch (rollbackError) {
-          console.error("Failed to rollback transaction after timeout/error:", rollbackError)
+          // Fire-and-forget logging for error handler
+          logError("Failed to rollback transaction after timeout/error", undefined, rollbackError instanceof Error ? rollbackError : new Error(String(rollbackError))).catch(() => {})
         }
         transactionRef.tx = null
       }
@@ -355,6 +362,8 @@ export async function dbTransaction<T>(
       // Check if this is a timeout error
       if (error instanceof Error && error.message.includes('timeout')) {
         lastError = error
+        // FIXED: Transaction rollback is already handled in the outer catch block above (Issue #4)
+        // The timeout error is caught and transaction is rolled back at line 330-345
         // Don't retry on timeout - it's a different issue than deadlock
         throw error
       }
@@ -375,7 +384,7 @@ export async function dbTransaction<T>(
  * @param options - Optional configuration
  * @param options.cleanupOrphanedImages - If true, will check and remove orphaned image records (default: false)
  */
-export async function initializeDatabase(options?: { cleanupOrphanedImages?: boolean }): Promise<void> {
+export async function initializeDatabase(options?: { cleanupOrphanedImages?: boolean; validateEnv?: boolean }): Promise<void> {
   const db = getTursoClient()
 
   try {
@@ -422,7 +431,7 @@ export async function initializeDatabase(options?: { cleanupOrphanedImages?: boo
         CREATE INDEX idx_images_category_order 
         ON images(category, display_order)
       `)
-      console.log("✓ Created images table")
+      await logInfo("Created images table")
     }
 
     // Create events table
@@ -486,7 +495,7 @@ export async function initializeDatabase(options?: { cleanupOrphanedImages?: boo
         CREATE INDEX idx_events_image_id ON events(image_id)
       `)
       
-      console.log("✓ Created events table")
+      await logInfo("Created events table")
     }
 
     // Create rate_limits table for rate limiting
@@ -506,7 +515,7 @@ export async function initializeDatabase(options?: { cleanupOrphanedImages?: boo
         CREATE INDEX idx_rate_limits_lookup 
         ON rate_limits(identifier, endpoint, window_start)
       `)
-      console.log("✓ Created rate_limits table")
+      await logInfo("Created rate_limits table")
     }
 
     // Create bookings table for reservation management
@@ -630,7 +639,7 @@ export async function initializeDatabase(options?: { cleanupOrphanedImages?: boo
       
       // Note: reference_number already has UNIQUE constraint which creates an index automatically
       // No need for separate index on reference_number
-      console.log("✓ Created bookings table")
+      await logInfo("Created bookings table")
     }
 
     // Create booking_status_history table for audit trail
@@ -654,7 +663,7 @@ export async function initializeDatabase(options?: { cleanupOrphanedImages?: boo
       await db.execute(`
         CREATE INDEX idx_status_history_created_at ON booking_status_history(created_at)
       `)
-      console.log("✓ Created booking_status_history table")
+      await logInfo("Created booking_status_history table")
     }
 
     // Create booking_fee_history table for fee change audit trail
@@ -694,12 +703,12 @@ export async function initializeDatabase(options?: { cleanupOrphanedImages?: boo
         await db.execute(`
           CREATE INDEX idx_fee_history_changed_by ON booking_fee_history(changed_by)
         `)
-        console.log("✓ Created booking_fee_history table")
+        await logInfo("Created booking_fee_history table")
       } catch (error: any) {
         // Table might already exist (race condition or manual creation)
         // Check if it's a "table already exists" error
         if (error?.message?.includes("already exists") || error?.cause?.message?.includes("already exists")) {
-          console.log("✓ booking_fee_history table already exists, skipping creation")
+          await logInfo("booking_fee_history table already exists, skipping creation")
         } else {
           // Re-throw if it's a different error
           throw error
@@ -732,7 +741,7 @@ export async function initializeDatabase(options?: { cleanupOrphanedImages?: boo
       await db.execute(`
         CREATE INDEX idx_admin_actions_created_at ON admin_actions(created_at)
       `)
-      console.log("✓ Created admin_actions table")
+      await logInfo("Created admin_actions table")
     }
 
     // Create action_locks table for preventing concurrent admin actions
@@ -762,7 +771,7 @@ export async function initializeDatabase(options?: { cleanupOrphanedImages?: boo
       await db.execute(`
         CREATE INDEX idx_action_locks_admin ON action_locks(admin_email)
       `)
-      console.log("✓ Created action_locks table")
+      await logInfo("Created action_locks table")
     } else {
       // Migrate existing action_locks table to support resource types
       const actionLocksColumns = await db.execute(`PRAGMA table_info(action_locks)`)
@@ -771,7 +780,7 @@ export async function initializeDatabase(options?: { cleanupOrphanedImages?: boo
       if (!columnNames.has("resource_type")) {
         const migrationVersion = "action_locks_add_resource_type"
         if (!(await isMigrationApplied(db, migrationVersion))) {
-          console.log("⚠️ Migrating action_locks table to support resource types...")
+          await logWarn("Migrating action_locks table to support resource types")
           
           // Step 1: Create new table with resource_type and resource_id
           await db.execute(`
@@ -810,7 +819,7 @@ export async function initializeDatabase(options?: { cleanupOrphanedImages?: boo
                 row.updated_at || Math.floor(Date.now() / 1000)
               ])
             }
-            console.log(`✓ Migrated ${existingLocks.rows.length} existing action locks`)
+            await logInfo(`Migrated existing action locks`, { count: existingLocks.rows.length })
           }
           
           // Step 3: Drop old table and rename new one
@@ -834,7 +843,7 @@ export async function initializeDatabase(options?: { cleanupOrphanedImages?: boo
             "Migrate action_locks table to support resource types",
             "-- Manual rollback required: Restore from backup"
           )
-          console.log("✓ Migrated action_locks table to support resource types")
+          await logInfo("Migrated action_locks table to support resource types")
         }
       }
     }
@@ -860,7 +869,7 @@ export async function initializeDatabase(options?: { cleanupOrphanedImages?: boo
       await db.execute(`
         CREATE INDEX idx_event_images_type ON event_images(event_id, image_type)
       `)
-      console.log("✓ Created event_images table")
+      await logInfo("Created event_images table")
     }
 
     // Create email_queue table for failed email retry system
@@ -915,7 +924,7 @@ export async function initializeDatabase(options?: { cleanupOrphanedImages?: boo
       await db.execute(`
         CREATE INDEX IF NOT EXISTS idx_email_queue_status_type_created ON email_queue(status, email_type, created_at)
       `)
-      console.log("✓ Created email_queue table")
+      await logInfo("Created email_queue table")
     }
 
     // Create email_sent_log table for duplicate email prevention
@@ -957,7 +966,7 @@ export async function initializeDatabase(options?: { cleanupOrphanedImages?: boo
       await db.execute(`
         CREATE INDEX IF NOT EXISTS idx_email_sent_log_type_status ON email_sent_log(email_type, status)
       `)
-      console.log("✓ Created email_sent_log table")
+      await logInfo("Created email_sent_log table")
     }
 
     // Create job_queue table for background job processing
@@ -989,7 +998,7 @@ export async function initializeDatabase(options?: { cleanupOrphanedImages?: boo
       await db.execute(`
         CREATE INDEX idx_job_queue_created ON job_queue(created_at)
       `)
-      console.log("✓ Created job_queue table")
+      await logInfo("Created job_queue table")
     }
 
     // Create error_logs table for error tracking
@@ -1014,7 +1023,7 @@ export async function initializeDatabase(options?: { cleanupOrphanedImages?: boo
       await db.execute(`
         CREATE INDEX idx_error_logs_created_at ON error_logs(created_at)
       `)
-      console.log("✓ Created error_logs table")
+      await logInfo("Created error_logs table")
     }
 
     // Run migrations for existing tables
@@ -1023,7 +1032,7 @@ export async function initializeDatabase(options?: { cleanupOrphanedImages?: boo
     // Optional: Cleanup orphaned image records (where blob files don't exist)
     if (options?.cleanupOrphanedImages && existingTables.has("images")) {
       try {
-        console.log("⚠️ Checking for orphaned image records...")
+        await logWarn("Checking for orphaned image records")
         const { imageExists } = await import('./blob')
         const allImages = await db.execute({
           sql: `SELECT id, blob_url, original_filename FROM images`,
@@ -1041,7 +1050,7 @@ export async function initializeDatabase(options?: { cleanupOrphanedImages?: boo
               args: [img.id],
             })
             orphanedCount++
-            console.log(`  ✓ Deleted record with no blob_url: ${img.original_filename || img.id}`)
+            await logInfo("Deleted record with no blob_url", { imageId: img.id, filename: img.original_filename })
             continue
           }
 
@@ -1055,7 +1064,7 @@ export async function initializeDatabase(options?: { cleanupOrphanedImages?: boo
                 args: [img.id],
               })
               orphanedCount++
-              console.log(`  ✓ Deleted orphaned record: ${img.original_filename || img.id}`)
+              await logInfo("Deleted orphaned record", { imageId: img.id, filename: img.original_filename })
             }
           } catch (error) {
             // Error checking blob existence - assume it doesn't exist
@@ -1064,17 +1073,17 @@ export async function initializeDatabase(options?: { cleanupOrphanedImages?: boo
               args: [img.id],
             })
             orphanedCount++
-            console.log(`  ✓ Deleted record (blob check failed): ${img.original_filename || img.id}`)
+            await logInfo("Deleted record (blob check failed)", { imageId: img.id, filename: img.original_filename })
           }
         }
 
         if (orphanedCount > 0) {
-          console.log(`✓ Cleaned up ${orphanedCount} orphaned image record(s)`)
+          await logInfo("Cleaned up orphaned image records", { count: orphanedCount })
         } else {
-          console.log("✓ No orphaned image records found")
+          await logInfo("No orphaned image records found")
         }
       } catch (cleanupError) {
-        console.error("⚠️ Error during orphaned image cleanup:", cleanupError)
+        await logError("Error during orphaned image cleanup", undefined, cleanupError instanceof Error ? cleanupError : new Error(String(cleanupError)))
         // Don't throw - cleanup is optional
       }
     }
@@ -1103,7 +1112,7 @@ export async function initializeDatabase(options?: { cleanupOrphanedImages?: boo
         VALUES ('bookings_enabled', '1', 'Enable or disable booking submissions. 1 = enabled, 0 = disabled', ?)
       `, [now])
       
-      console.log("✓ Created settings table with default values")
+      await logInfo("Created settings table with default values")
     } else {
       // Ensure bookings_enabled setting exists (for existing databases)
       const settingCheck = await db.execute(`
@@ -1116,13 +1125,13 @@ export async function initializeDatabase(options?: { cleanupOrphanedImages?: boo
           INSERT INTO settings (key, value, description, updated_at) 
           VALUES ('bookings_enabled', '1', 'Enable or disable booking submissions. 1 = enabled, 0 = disabled', ?)
         `, [now])
-        console.log("✓ Added bookings_enabled setting to existing database")
+        await logInfo("Added bookings_enabled setting to existing database")
       }
     }
 
-    console.log("✓ Database initialization complete")
+    await logInfo("Database initialization complete")
   } catch (error) {
-    console.error("Database initialization error:", error)
+    await logError("Database initialization error", undefined, error instanceof Error ? error : new Error(String(error)))
     throw error
   }
 }
@@ -1150,7 +1159,7 @@ async function createMigrationVersionTable(db: ReturnType<typeof createClient>):
     await db.execute(`
       CREATE INDEX IF NOT EXISTS idx_migration_versions_version ON migration_versions(version)
     `)
-    console.log("✓ Created migration_versions table")
+    await logInfo("Created migration_versions table")
   }
 }
 
@@ -1170,7 +1179,7 @@ async function recordMigrationVersion(
     `, [version, description, rollbackSql || null])
   } catch (error) {
     // Don't fail if version tracking fails
-    console.warn(`Failed to record migration version ${version}:`, error)
+    await logWarn(`Failed to record migration version`, { version, error: error instanceof Error ? error.message : String(error) })
   }
 }
 
@@ -1227,7 +1236,7 @@ async function migrateExistingTables(
             "Add category column to images table",
             "-- Rollback: ALTER TABLE images DROP COLUMN category (SQLite doesn't support DROP COLUMN, manual rollback required)"
           )
-          console.log("✓ Added category column to images table")
+          await logInfo("Added category column to images table")
         }
       }
 
@@ -1252,7 +1261,7 @@ async function migrateExistingTables(
               "Add display_order column and index to images table",
               "-- Rollback: DROP INDEX idx_images_category_order; ALTER TABLE images DROP COLUMN display_order (SQLite doesn't support DROP COLUMN, manual rollback required)"
             )
-            console.log("✓ Added display_order column to images table")
+            await logInfo("Added display_order column to images table")
           } catch (error) {
             await tx.rollback()
             throw error
@@ -1272,7 +1281,7 @@ async function migrateExistingTables(
             "Add ai_selected column to images table",
             "-- Rollback: ALTER TABLE images DROP COLUMN ai_selected (SQLite doesn't support DROP COLUMN, manual rollback required)"
           )
-          console.log("✓ Added ai_selected column to images table")
+          await logInfo("Added ai_selected column to images table")
         }
       }
 
@@ -1288,7 +1297,7 @@ async function migrateExistingTables(
             "Add ai_order column to images table",
             "-- Rollback: ALTER TABLE images DROP COLUMN ai_order (SQLite doesn't support DROP COLUMN, manual rollback required)"
           )
-          console.log("✓ Added ai_order column to images table")
+          await logInfo("Added ai_order column to images table")
         }
       }
     }
@@ -1324,7 +1333,7 @@ async function migrateExistingTables(
               "Add start_date column to events table and migrate data",
               "-- Rollback: ALTER TABLE events DROP COLUMN start_date (SQLite doesn't support DROP COLUMN, manual rollback required)"
             )
-            console.log("✓ Added start_date column to events table")
+            await logInfo("Added start_date column to events table")
           } catch (error) {
             await tx.rollback()
             throw error
@@ -1352,7 +1361,7 @@ async function migrateExistingTables(
               "Add end_date column and index to events table",
               "-- Rollback: DROP INDEX idx_events_end_date; ALTER TABLE events DROP COLUMN end_date (SQLite doesn't support DROP COLUMN, manual rollback required)"
             )
-            console.log("✓ Added end_date column to events table")
+            await logInfo("Added end_date column to events table")
           } catch (error) {
             await tx.rollback()
             throw error
@@ -1373,47 +1382,47 @@ async function migrateExistingTables(
       // Create search indexes if they don't exist
       if (!eventIndexNames.has("idx_events_title")) {
         await db.execute(`CREATE INDEX IF NOT EXISTS idx_events_title ON events(title)`)
-        console.log("✓ Added idx_events_title index")
+        await logInfo("Added idx_events_title index")
       }
       
       // Create date indexes if they don't exist
       if (!eventIndexNames.has("idx_events_event_date")) {
         await db.execute(`CREATE INDEX IF NOT EXISTS idx_events_event_date ON events(event_date)`)
-        console.log("✓ Added idx_events_event_date index")
+        await logInfo("Added idx_events_event_date index")
       }
       if (!eventIndexNames.has("idx_events_start_date")) {
         await db.execute(`CREATE INDEX IF NOT EXISTS idx_events_start_date ON events(start_date)`)
-        console.log("✓ Added idx_events_start_date index")
+        await logInfo("Added idx_events_start_date index")
       }
       
       // Create composite indexes if they don't exist
       if (!eventIndexNames.has("idx_events_date_range")) {
         await db.execute(`CREATE INDEX IF NOT EXISTS idx_events_date_range ON events(start_date, end_date)`)
-        console.log("✓ Added idx_events_date_range composite index")
+        await logInfo("Added idx_events_date_range composite index")
       }
       if (!eventIndexNames.has("idx_events_end_date_created_at")) {
         await db.execute(`CREATE INDEX IF NOT EXISTS idx_events_end_date_created_at ON events(end_date, created_at)`)
-        console.log("✓ Added idx_events_end_date_created_at composite index")
+        await logInfo("Added idx_events_end_date_created_at composite index")
       }
       if (!eventIndexNames.has("idx_events_start_date_created_at")) {
         await db.execute(`CREATE INDEX IF NOT EXISTS idx_events_start_date_created_at ON events(start_date, created_at)`)
-        console.log("✓ Added idx_events_start_date_created_at composite index")
+        await logInfo("Added idx_events_start_date_created_at composite index")
       }
       
       // Create timestamp indexes if they don't exist
       if (!eventIndexNames.has("idx_events_created_at")) {
         await db.execute(`CREATE INDEX IF NOT EXISTS idx_events_created_at ON events(created_at)`)
-        console.log("✓ Added idx_events_created_at index")
+        await logInfo("Added idx_events_created_at index")
       }
       if (!eventIndexNames.has("idx_events_updated_at")) {
         await db.execute(`CREATE INDEX IF NOT EXISTS idx_events_updated_at ON events(updated_at)`)
-        console.log("✓ Added idx_events_updated_at index")
+        await logInfo("Added idx_events_updated_at index")
       }
       
       // Create foreign key index if it doesn't exist
       if (!eventIndexNames.has("idx_events_image_id")) {
         await db.execute(`CREATE INDEX IF NOT EXISTS idx_events_image_id ON events(image_id)`)
-        console.log("✓ Added idx_events_image_id index")
+        await logInfo("Added idx_events_image_id index")
       }
     }
 
@@ -1439,16 +1448,16 @@ async function migrateExistingTables(
       if (!hasNewStatuses && createSql.includes("CHECK")) {
         const migrationVersion = "bookings_update_check_constraint"
         if (!(await isMigrationApplied(db, migrationVersion))) {
-          console.log("⚠️ Migrating bookings table to update CHECK constraint (preserving data)...")
+          await logWarn("Migrating bookings table to update CHECK constraint (preserving data)")
           
           // Check if there are any bookings
           const bookingCount = await db.execute(`SELECT COUNT(*) as count FROM bookings`)
           const count = (bookingCount.rows[0] as any)?.count || 0
           
           if (count > 0) {
-            console.log(`✓ Found ${count} existing bookings. Will preserve all data during migration.`)
+            await logInfo("Found existing bookings, will preserve all data during migration", { count })
           } else {
-            console.log("✓ No existing bookings found. Safe to recreate table.")
+            await logInfo("No existing bookings found, safe to recreate table")
           }
           
           // IMPROVED: Store rollback SQL for this complex migration
@@ -1511,7 +1520,7 @@ async function migrateExistingTables(
             updated_at INTEGER DEFAULT (unixepoch())
           )
         `)
-        console.log("✓ Created new bookings table with updated CHECK constraint")
+        await logInfo("Created new bookings table with updated CHECK constraint")
         
         // Step 3: Copy all data from old table to new table (if there's data)
         if (count > 0) {
@@ -1590,22 +1599,22 @@ async function migrateExistingTables(
               FROM bookings
             `)
           }
-          console.log(`✓ Copied ${count} bookings to new table`)
+          await logInfo("Copied bookings to new table", { count })
         }
         
         // Step 4: Drop old table and dependent tables
         if (existingTables.has("booking_status_history")) {
           await db.execute(`DROP TABLE IF EXISTS booking_status_history`)
-          console.log("✓ Dropped booking_status_history table (will be recreated)")
+          await logInfo("Dropped booking_status_history table (will be recreated)")
         }
         
         // Step 5: Drop old bookings table
         await db.execute(`DROP TABLE bookings`)
-        console.log("✓ Dropped old bookings table")
+        await logInfo("Dropped old bookings table")
         
         // Step 6: Rename new table to bookings
         await db.execute(`ALTER TABLE bookings_new RENAME TO bookings`)
-        console.log("✓ Renamed new table to bookings")
+        await logInfo("Renamed new table to bookings")
         
         // Step 7: Recreate all indexes
         await db.execute(`CREATE INDEX IF NOT EXISTS idx_bookings_status ON bookings(status)`)
@@ -1624,9 +1633,9 @@ async function migrateExistingTables(
         await db.execute(`CREATE INDEX IF NOT EXISTS idx_bookings_token_expires_at ON bookings(token_expires_at)`)
         await db.execute(`CREATE INDEX IF NOT EXISTS idx_bookings_reference_number ON bookings(reference_number)`)
         await db.execute(`CREATE UNIQUE INDEX IF NOT EXISTS idx_bookings_reference_number_unique ON bookings(reference_number)`)
-        console.log("✓ Recreated all indexes")
+        await logInfo("Recreated all indexes")
         
-        console.log("✓ Migration completed successfully - all booking data preserved")
+        await logInfo("Migration completed successfully - all booking data preserved")
         
         // Record migration version after successful completion
         await recordMigrationVersion(
@@ -1652,7 +1661,7 @@ async function migrateExistingTables(
         
         await db.execute(`CREATE INDEX IF NOT EXISTS idx_status_history_booking_id ON booking_status_history(booking_id)`)
         await db.execute(`CREATE INDEX IF NOT EXISTS idx_status_history_created_at ON booking_status_history(created_at)`)
-        console.log("✓ Recreated booking_status_history table with foreign key constraint")
+        await logInfo("Recreated booking_status_history table with foreign key constraint")
         }
       }
       
@@ -1670,42 +1679,42 @@ async function migrateExistingTables(
         await db.execute(`
           CREATE INDEX IF NOT EXISTS idx_bookings_response_token ON bookings(response_token)
         `)
-        console.log("✓ Added response_token column to bookings table")
+        await logInfo("Added response_token column to bookings table")
       }
 
       if (!columnNames.has("proposed_date")) {
         await db.execute(`
           ALTER TABLE bookings ADD COLUMN proposed_date INTEGER
         `)
-        console.log("✓ Added proposed_date column to bookings table")
+        await logInfo("Added proposed_date column to bookings table")
       }
 
       if (!columnNames.has("user_response")) {
         await db.execute(`
           ALTER TABLE bookings ADD COLUMN user_response TEXT
         `)
-        console.log("✓ Added user_response column to bookings table")
+        await logInfo("Added user_response column to bookings table")
       }
 
       if (!columnNames.has("response_date")) {
         await db.execute(`
           ALTER TABLE bookings ADD COLUMN response_date INTEGER
         `)
-        console.log("✓ Added response_date column to bookings table")
+        await logInfo("Added response_date column to bookings table")
       }
 
       if (!columnNames.has("token_expires_at")) {
         await db.execute(`
           ALTER TABLE bookings ADD COLUMN token_expires_at INTEGER
         `)
-        console.log("✓ Added token_expires_at column to bookings table")
+        await logInfo("Added token_expires_at column to bookings table")
       }
 
       if (!columnNames.has("proposed_end_date")) {
         await db.execute(`
           ALTER TABLE bookings ADD COLUMN proposed_end_date INTEGER
         `)
-        console.log("✓ Added proposed_end_date column to bookings table")
+        await logInfo("Added proposed_end_date column to bookings table")
       }
 
       // Add deposit-related fields
@@ -1713,28 +1722,28 @@ async function migrateExistingTables(
         await db.execute(`
           ALTER TABLE bookings ADD COLUMN deposit_evidence_url TEXT
         `)
-        console.log("✓ Added deposit_evidence_url column to bookings table")
+        await logInfo("Added deposit_evidence_url column to bookings table")
       }
 
       if (!columnNames.has("deposit_verified_at")) {
         await db.execute(`
           ALTER TABLE bookings ADD COLUMN deposit_verified_at INTEGER
         `)
-        console.log("✓ Added deposit_verified_at column to bookings table")
+        await logInfo("Added deposit_verified_at column to bookings table")
       }
 
       if (!columnNames.has("deposit_verified_by")) {
         await db.execute(`
           ALTER TABLE bookings ADD COLUMN deposit_verified_by TEXT
         `)
-        console.log("✓ Added deposit_verified_by column to bookings table")
+        await logInfo("Added deposit_verified_by column to bookings table")
       }
 
       if (!columnNames.has("deposit_verified_from_other_channel")) {
         await db.execute(`
           ALTER TABLE bookings ADD COLUMN deposit_verified_from_other_channel INTEGER DEFAULT 0
         `)
-        console.log("✓ Added deposit_verified_from_other_channel column to bookings table")
+        await logInfo("Added deposit_verified_from_other_channel column to bookings table")
       }
 
       // Add fee-related fields
@@ -1742,61 +1751,61 @@ async function migrateExistingTables(
         await db.execute(`
           ALTER TABLE bookings ADD COLUMN fee_amount REAL
         `)
-        console.log("✓ Added fee_amount column to bookings table")
+        await logInfo("Added fee_amount column to bookings table")
       }
 
       if (!columnNames.has("fee_amount_original")) {
         await db.execute(`
           ALTER TABLE bookings ADD COLUMN fee_amount_original REAL
         `)
-        console.log("✓ Added fee_amount_original column to bookings table")
+        await logInfo("Added fee_amount_original column to bookings table")
       }
 
       if (!columnNames.has("fee_currency")) {
         await db.execute(`
           ALTER TABLE bookings ADD COLUMN fee_currency TEXT
         `)
-        console.log("✓ Added fee_currency column to bookings table")
+        await logInfo("Added fee_currency column to bookings table")
       }
 
       if (!columnNames.has("fee_conversion_rate")) {
         await db.execute(`
           ALTER TABLE bookings ADD COLUMN fee_conversion_rate REAL
         `)
-        console.log("✓ Added fee_conversion_rate column to bookings table")
+        await logInfo("Added fee_conversion_rate column to bookings table")
       }
 
       if (!columnNames.has("fee_rate_date")) {
         await db.execute(`
           ALTER TABLE bookings ADD COLUMN fee_rate_date INTEGER
         `)
-        console.log("✓ Added fee_rate_date column to bookings table")
+        await logInfo("Added fee_rate_date column to bookings table")
       }
 
       if (!columnNames.has("fee_recorded_at")) {
         await db.execute(`
           ALTER TABLE bookings ADD COLUMN fee_recorded_at INTEGER
         `)
-        console.log("✓ Added fee_recorded_at column to bookings table")
+        await logInfo("Added fee_recorded_at column to bookings table")
       }
 
       if (!columnNames.has("fee_recorded_by")) {
         await db.execute(`
           ALTER TABLE bookings ADD COLUMN fee_recorded_by TEXT
         `)
-        console.log("✓ Added fee_recorded_by column to bookings table")
+        await logInfo("Added fee_recorded_by column to bookings table")
       }
 
       if (!columnNames.has("fee_notes")) {
         await db.execute(`
           ALTER TABLE bookings ADD COLUMN fee_notes TEXT
         `)
-        console.log("✓ Added fee_notes column to bookings table")
+        await logInfo("Added fee_notes column to bookings table")
       }
 
       // Add reference_number column for short booking IDs
       if (!columnNames.has("reference_number")) {
-        console.log("⚠️ Migrating bookings table to add reference_number column...")
+        await logWarn("Migrating bookings table to add reference_number column")
         
         // Step 1: Add column as nullable first (SQLite limitation)
         await db.execute(`
@@ -1839,7 +1848,7 @@ async function migrateExistingTables(
           CREATE INDEX IF NOT EXISTS idx_bookings_reference_number ON bookings(reference_number)
         `)
         
-        console.log(`✓ Added reference_number column to bookings table and generated ${allBookings.rows.length} reference numbers for existing bookings`)
+        await logInfo("Added reference_number column to bookings table and generated reference numbers", { count: allBookings.rows.length })
       } else {
         // Column exists - check if any bookings have NULL reference_number and fix them
         const nullReferenceBookings = await db.execute(`
@@ -1847,7 +1856,7 @@ async function migrateExistingTables(
         `)
         
         if (nullReferenceBookings.rows.length > 0) {
-          console.log(`⚠️ Found ${nullReferenceBookings.rows.length} bookings with NULL reference_number, generating values...`)
+          await logWarn("Found bookings with NULL reference_number, generating values", { count: nullReferenceBookings.rows.length })
           const { randomBytes } = await import('crypto')
           const generateReferenceNumber = () => {
             const timestamp = Math.floor(Date.now() / 1000)
@@ -1867,7 +1876,7 @@ async function migrateExistingTables(
               args: [referenceNumber, bookingId]
             })
           }
-          console.log(`✓ Generated reference numbers for ${nullReferenceBookings.rows.length} bookings`)
+          await logInfo("Generated reference numbers for bookings", { count: nullReferenceBookings.rows.length })
         }
       }
 
@@ -1884,27 +1893,27 @@ async function migrateExistingTables(
       // Create search indexes if they don't exist
       if (!indexNames.has("idx_bookings_name")) {
         await db.execute(`CREATE INDEX idx_bookings_name ON bookings(name)`)
-        console.log("✓ Added idx_bookings_name index")
+        await logInfo("Added idx_bookings_name index")
       }
       if (!indexNames.has("idx_bookings_phone")) {
         await db.execute(`CREATE INDEX idx_bookings_phone ON bookings(phone)`)
-        console.log("✓ Added idx_bookings_phone index")
+        await logInfo("Added idx_bookings_phone index")
       }
       if (!indexNames.has("idx_bookings_event_type")) {
         await db.execute(`CREATE INDEX idx_bookings_event_type ON bookings(event_type)`)
-        console.log("✓ Added idx_bookings_event_type index")
+        await logInfo("Added idx_bookings_event_type index")
       }
       if (!indexNames.has("idx_bookings_event_type_status_start_date")) {
         await db.execute(`CREATE INDEX idx_bookings_event_type_status_start_date ON bookings(event_type, status, start_date)`)
-        console.log("✓ Added idx_bookings_event_type_status_start_date composite index")
+        await logInfo("Added idx_bookings_event_type_status_start_date composite index")
       }
       if (!indexNames.has("idx_bookings_updated_at")) {
         await db.execute(`CREATE INDEX idx_bookings_updated_at ON bookings(updated_at)`)
-        console.log("✓ Added idx_bookings_updated_at index")
+        await logInfo("Added idx_bookings_updated_at index")
       }
       if (!indexNames.has("idx_bookings_token_expires_at")) {
         await db.execute(`CREATE INDEX idx_bookings_token_expires_at ON bookings(token_expires_at)`)
-        console.log("✓ Added idx_bookings_token_expires_at index")
+        await logInfo("Added idx_bookings_token_expires_at index")
       }
 
     }
@@ -1943,7 +1952,7 @@ async function migrateExistingTables(
       await db.execute(`
         CREATE INDEX IF NOT EXISTS idx_email_sent_log_type_status ON email_sent_log(email_type, status)
       `)
-      console.log("✓ Added email_sent_log table")
+      await logInfo("Added email_sent_log table")
     } else {
       // Ensure all indexes exist for existing email_sent_log table
       const existingEmailLogIndexes = await db.execute(`
@@ -1956,24 +1965,114 @@ async function migrateExistingTables(
       
       if (!emailLogIndexNames.has("idx_email_sent_log_type")) {
         await db.execute(`CREATE INDEX IF NOT EXISTS idx_email_sent_log_type ON email_sent_log(email_type)`)
-        console.log("✓ Added idx_email_sent_log_type index")
+        await logInfo("Added idx_email_sent_log_type index")
       }
       if (!emailLogIndexNames.has("idx_email_sent_log_status")) {
         await db.execute(`CREATE INDEX IF NOT EXISTS idx_email_sent_log_status ON email_sent_log(status)`)
-        console.log("✓ Added idx_email_sent_log_status index")
+        await logInfo("Added idx_email_sent_log_status index")
       }
       if (!emailLogIndexNames.has("idx_email_sent_log_created")) {
         await db.execute(`CREATE INDEX IF NOT EXISTS idx_email_sent_log_created ON email_sent_log(created_at)`)
-        console.log("✓ Added idx_email_sent_log_created index")
+        await logInfo("Added idx_email_sent_log_created index")
       }
       if (!emailLogIndexNames.has("idx_email_sent_log_type_status")) {
         await db.execute(`CREATE INDEX IF NOT EXISTS idx_email_sent_log_type_status ON email_sent_log(email_type, status)`)
-        console.log("✓ Added idx_email_sent_log_type_status index")
+        await logInfo("Added idx_email_sent_log_type_status index")
       }
     }
 
-    // Ensure all indexes exist for email_queue table
+    // Migrate email_queue table: add version column for optimistic locking (Issue #18)
     if (existingTables.has("email_queue")) {
+      const emailQueueColumns = await db.execute(`
+        PRAGMA table_info(email_queue)
+      `)
+      const emailQueueColumnNames = new Set(
+        emailQueueColumns.rows.map((row: any) => row.name)
+      )
+
+      // FIXED: Add version column for optimistic locking (Issue #18)
+      if (!emailQueueColumnNames.has("version")) {
+        const migrationVersion = "email_queue_add_version"
+        if (!(await isMigrationApplied(db, migrationVersion))) {
+          await db.execute(`
+            ALTER TABLE email_queue ADD COLUMN version INTEGER DEFAULT 1
+          `)
+          await db.execute(`
+            CREATE INDEX IF NOT EXISTS idx_email_queue_version ON email_queue(version)
+          `)
+          await recordMigrationVersion(
+            db,
+            migrationVersion,
+            "Add version column to email_queue table for optimistic locking (Issue #18)",
+            "-- Rollback: ALTER TABLE email_queue DROP COLUMN version (SQLite doesn't support DROP COLUMN, manual rollback required)"
+          )
+          await logInfo("Added version column to email_queue table (Issue #18)")
+        }
+      }
+
+      // FIXED: Add process_id column for concurrency tracking (Issue #29)
+      if (!emailQueueColumnNames.has("process_id")) {
+        const migrationVersion = "email_queue_add_process_id"
+        if (!(await isMigrationApplied(db, migrationVersion))) {
+          await db.execute(`
+            ALTER TABLE email_queue ADD COLUMN process_id TEXT
+          `)
+          await db.execute(`
+            CREATE INDEX IF NOT EXISTS idx_email_queue_process_id ON email_queue(process_id)
+          `)
+          await recordMigrationVersion(
+            db,
+            migrationVersion,
+            "Add process_id column to email_queue table for concurrency tracking (Issue #29)",
+            "-- Rollback: ALTER TABLE email_queue DROP COLUMN process_id (SQLite doesn't support DROP COLUMN, manual rollback required)"
+          )
+          await logInfo("Added process_id column to email_queue table (Issue #29)")
+        }
+      }
+
+      // FIXED: Add searchable_metadata column for full-text search (Issue #35)
+      if (!emailQueueColumnNames.has("searchable_metadata")) {
+        const migrationVersion = "email_queue_add_searchable_metadata"
+        if (!(await isMigrationApplied(db, migrationVersion))) {
+          await db.execute(`
+            ALTER TABLE email_queue ADD COLUMN searchable_metadata TEXT
+          `)
+          await db.execute(`
+            CREATE INDEX IF NOT EXISTS idx_email_queue_searchable_metadata ON email_queue(searchable_metadata)
+          `)
+          // Create FTS5 virtual table for full-text search (SQLite FTS5)
+          // Note: FTS5 is available in SQLite 3.9.0+ and Turso supports it
+          try {
+            await db.execute(`
+              CREATE VIRTUAL TABLE IF NOT EXISTS email_queue_fts USING fts5(
+                id UNINDEXED,
+                searchable_metadata,
+                recipient_email,
+                subject,
+                content='email_queue',
+                content_rowid='rowid'
+              )
+            `)
+            // Populate FTS table with existing data
+            await db.execute(`
+              INSERT INTO email_queue_fts(rowid, id, searchable_metadata, recipient_email, subject)
+              SELECT rowid, id, searchable_metadata, recipient_email, subject FROM email_queue
+            `)
+            await logInfo("Created FTS5 virtual table for email_queue search (Issue #35)")
+          } catch (ftsError) {
+            // FTS5 might not be available, fall back to regular index
+            await logWarn("FTS5 not available, using regular index for search", { error: ftsError instanceof Error ? ftsError.message : String(ftsError) })
+          }
+          await recordMigrationVersion(
+            db,
+            migrationVersion,
+            "Add searchable_metadata column and FTS5 index to email_queue table for full-text search (Issue #35)",
+            "-- Rollback: DROP TABLE IF EXISTS email_queue_fts; ALTER TABLE email_queue DROP COLUMN searchable_metadata (SQLite doesn't support DROP COLUMN, manual rollback required)"
+          )
+          await logInfo("Added searchable_metadata column to email_queue table (Issue #35)")
+        }
+      }
+
       const existingEmailQueueIndexes = await db.execute(`
         SELECT name FROM sqlite_master 
         WHERE type='index' AND tbl_name='email_queue' AND name LIKE 'idx_email_queue_%'
@@ -1984,23 +2083,23 @@ async function migrateExistingTables(
       
       if (!emailQueueIndexNames.has("idx_email_queue_critical")) {
         await db.execute(`CREATE INDEX IF NOT EXISTS idx_email_queue_critical ON email_queue(status, email_type, created_at)`)
-        console.log("✓ Added idx_email_queue_critical index")
+        await logInfo("Added idx_email_queue_critical index")
       }
       if (!emailQueueIndexNames.has("idx_email_queue_type")) {
         await db.execute(`CREATE INDEX IF NOT EXISTS idx_email_queue_type ON email_queue(email_type)`)
-        console.log("✓ Added idx_email_queue_type index")
+        await logInfo("Added idx_email_queue_type index")
       }
       if (!emailQueueIndexNames.has("idx_email_queue_recipient")) {
         await db.execute(`CREATE INDEX IF NOT EXISTS idx_email_queue_recipient ON email_queue(recipient_email)`)
-        console.log("✓ Added idx_email_queue_recipient index")
+        await logInfo("Added idx_email_queue_recipient index")
       }
       if (!emailQueueIndexNames.has("idx_email_queue_scheduled")) {
         await db.execute(`CREATE INDEX IF NOT EXISTS idx_email_queue_scheduled ON email_queue(scheduled_at)`)
-        console.log("✓ Added idx_email_queue_scheduled index")
+        await logInfo("Added idx_email_queue_scheduled index")
       }
       if (!emailQueueIndexNames.has("idx_email_queue_status_type_created")) {
         await db.execute(`CREATE INDEX IF NOT EXISTS idx_email_queue_status_type_created ON email_queue(status, email_type, created_at)`)
-        console.log("✓ Added idx_email_queue_status_type_created index")
+        await logInfo("Added idx_email_queue_status_type_created index")
       }
     }
 
@@ -2028,15 +2127,15 @@ async function migrateExistingTables(
       const extraColumns = Array.from(feeHistoryColumnNames).filter(col => !expectedColumns.includes(col))
       
       if (missingColumns.length > 0 || extraColumns.length > 0 || feeHistoryColumnNames.size !== 19) {
-        console.warn(`⚠️ booking_fee_history table structure mismatch. Expected 19 columns, found ${feeHistoryColumnNames.size}`)
+        await logWarn("booking_fee_history table structure mismatch", { expected: 19, found: feeHistoryColumnNames.size })
         if (missingColumns.length > 0) {
-          console.warn(`   Missing columns: ${missingColumns.join(', ')}`)
+          await logWarn("Missing columns in booking_fee_history", { missingColumns: missingColumns.join(', ') })
         }
         if (extraColumns.length > 0) {
-          console.warn(`   Extra columns: ${extraColumns.join(', ')}`)
+          await logWarn("Extra columns in booking_fee_history", { extraColumns: extraColumns.join(', ') })
         }
-        console.warn(`   Current columns: ${Array.from(feeHistoryColumnNames).join(', ')}`)
-        console.warn(`   ⚠️ Table structure doesn't match expected. Please recreate the table or fix manually.`)
+        await logWarn("Current columns in booking_fee_history", { columns: Array.from(feeHistoryColumnNames).join(', ') })
+        await logWarn("Table structure doesn't match expected. Please recreate the table or fix manually")
       }
     }
 
@@ -2061,12 +2160,12 @@ async function migrateExistingTables(
       await db.execute(`
         CREATE INDEX IF NOT EXISTS idx_error_logs_created_at ON error_logs(created_at)
       `)
-      console.log("✓ Added error_logs table")
+      await logInfo("Added error_logs table")
     }
   } catch (error) {
-    console.error("Migration error:", error)
+    await logError("Migration error", undefined, error instanceof Error ? error : new Error(String(error)))
     // Don't throw - migrations are optional enhancements
-    console.warn("Some migrations may have failed, but core functionality should still work")
+    await logWarn("Some migrations may have failed, but core functionality should still work")
   }
 }
 

@@ -84,12 +84,15 @@ export function useBookingEnabledSSE(
   const reconnectTimeoutRef = useRef<NodeJS.Timeout | null>(null)
   const reconnectAttemptsRef = useRef<number>(0)
   const fallbackPollIntervalRef = useRef<NodeJS.Timeout | null>(null)
+  // CRITICAL-3: Track if component is mounted to prevent operations after unmount
+  const isMountedRef = useRef<boolean>(true)
   // Store callbacks in refs to prevent recreation and stale closures
   const onStatusChangeRef = useRef(onStatusChange)
   const onDisabledRef = useRef(onDisabled)
   const showNotificationsRef = useRef(showNotifications)
+  // MEDIUM-6: Base delay for exponential backoff (in milliseconds)
+  const BASE_RECONNECT_DELAY_MS = 1000 // 1 second base delay
   const maxReconnectAttempts = 5
-  const reconnectDelay = 3000 // 3 seconds
 
   // Update refs when callbacks change
   useEffect(() => {
@@ -101,63 +104,83 @@ export function useBookingEnabledSSE(
   /**
    * Handle status update from SSE
    * Use refs to avoid stale closures and prevent duplicate notifications
+   * MEDIUM-5: Added try-catch around callbacks to prevent one failure from breaking others
    */
   const handleStatusUpdate = useCallback((newEnabled: boolean) => {
-    // Always update state directly (don't use functional form to avoid comparison issues)
-    // This ensures React always sees a state change and triggers re-render
+    // Check if status changed BEFORE updating state (using ref to avoid stale closures)
+    const previousEnabled = previousStatusRef.current
+    
+    // Update state (pure state update, no side effects)
     setEnabled((currentEnabled) => {
-      const previousEnabled = previousStatusRef.current ?? currentEnabled
-      
-      // Only update if status actually changed
-      if (previousEnabled !== newEnabled) {
-        // Update ref to match new state BEFORE returning
-        previousStatusRef.current = newEnabled
-        
-        // Call callbacks and force re-render after state update
-        // Use requestAnimationFrame to ensure callbacks run after render
-        requestAnimationFrame(() => {
-          // Force version update to ensure component re-renders
-          setVersion((v) => v + 1)
-          
-          if (onStatusChangeRef.current) {
-            onStatusChangeRef.current(newEnabled, previousEnabled)
-          }
-          
-          // Show notification if enabled (only once per change)
-          if (showNotificationsRef.current) {
-            if (!newEnabled && previousEnabled) {
-              toast.error("Bookings are currently disabled. Please try again later.")
-            } else if (newEnabled && !previousEnabled) {
-              toast.success("Bookings are now enabled.")
-            }
-          }
-          
-          // Call disabled callback if status changed to disabled
-          if (!newEnabled && previousEnabled && onDisabledRef.current) {
-            onDisabledRef.current()
-          }
-        })
-        
-        // Return new value to update state - this will trigger re-render
-        return newEnabled
-      } else {
-        // Force update even if value appears unchanged (handles edge cases)
-        // Update version to force re-render
-        requestAnimationFrame(() => {
-          setVersion((v) => v + 1)
-        })
-        return newEnabled
-      }
+      // Return new value to update state
+      // Ref will be updated outside the updater to maintain React purity
+      return newEnabled
     })
+    
+    // Update ref outside state updater to maintain React purity
+    previousStatusRef.current = newEnabled
+    
+    // Move all side effects outside the state updater to maintain React purity
+    // Use requestAnimationFrame to ensure callbacks run after render
+    const statusChanged = previousEnabled !== null && previousEnabled !== newEnabled
+    
+    if (statusChanged) {
+      requestAnimationFrame(() => {
+        // Force version update to ensure component re-renders
+        setVersion((v) => v + 1)
+        
+        // MEDIUM-5: Wrap callbacks in try-catch
+        if (onStatusChangeRef.current) {
+          try {
+            onStatusChangeRef.current(newEnabled, previousEnabled)
+          } catch (error) {
+            console.error('Error in onStatusChange callback:', error)
+          }
+        }
+        
+        // Show notification if enabled (only once per change)
+        if (showNotificationsRef.current) {
+          if (!newEnabled && previousEnabled) {
+            toast.error("Bookings are currently disabled. Please try again later.")
+          } else if (newEnabled && previousEnabled) {
+            toast.success("Bookings are now enabled.")
+          }
+        }
+        
+        // Call disabled callback if status changed to disabled
+        if (!newEnabled && previousEnabled && onDisabledRef.current) {
+          try {
+            onDisabledRef.current()
+          } catch (error) {
+            console.error('Error in onDisabled callback:', error)
+          }
+        }
+      })
+    } else {
+      // Force update even if value appears unchanged (handles edge cases)
+      requestAnimationFrame(() => {
+        setVersion((v) => v + 1)
+      })
+    }
   }, []) // Empty deps - use refs for all external values
 
   /**
    * Connect to SSE stream
+   * CRITICAL-3: Added mounted check to prevent operations after unmount
    */
   const connectSSE = useCallback(() => {
+    // CRITICAL-3: Don't connect if component is unmounted
+    if (!isMountedRef.current) {
+      return
+    }
+    
     // Clean up existing connection
     if (eventSourceRef.current) {
-      eventSourceRef.current.close()
+      try {
+        eventSourceRef.current.close()
+      } catch (error) {
+        // Ignore errors during cleanup
+      }
       eventSourceRef.current = null
     }
 
@@ -174,6 +197,15 @@ export function useBookingEnabledSSE(
 
       // Handle connection open
       eventSource.onopen = () => {
+        // CRITICAL-3: Check if still mounted before updating state
+        if (!isMountedRef.current) {
+          try {
+            eventSource.close()
+          } catch (error) {
+            // Ignore errors
+          }
+          return
+        }
         setConnected(true)
         setError(null)
         reconnectAttemptsRef.current = 0
@@ -182,6 +214,11 @@ export function useBookingEnabledSSE(
 
       // Handle messages
       eventSource.onmessage = (event) => {
+        // CRITICAL-3: Check if still mounted before processing
+        if (!isMountedRef.current) {
+          return
+        }
+        
         try {
           // Ignore heartbeat messages (lines starting with :)
           if (!event.data || event.data.trim() === '' || event.data.startsWith(':')) {
@@ -201,19 +238,45 @@ export function useBookingEnabledSSE(
 
       // Handle errors
       eventSource.onerror = () => {
+        // CRITICAL-3: Check if still mounted before processing
+        if (!isMountedRef.current) {
+          return
+        }
+        
         setConnected(false)
-        eventSource.close()
+        try {
+          eventSource.close()
+        } catch (error) {
+          // Ignore errors during cleanup
+        }
         eventSourceRef.current = null
+
+        // CRITICAL-3: Check if still mounted before attempting reconnection
+        if (!isMountedRef.current) {
+          return
+        }
 
         // Attempt reconnection
         if (reconnectAttemptsRef.current < maxReconnectAttempts) {
           reconnectAttemptsRef.current++
+          // MEDIUM-6: Exponential backoff: delay = baseDelay * 2^(attempt-1)
+          const reconnectDelay = BASE_RECONNECT_DELAY_MS * Math.pow(2, reconnectAttemptsRef.current - 1)
           reconnectTimeoutRef.current = setTimeout(() => {
-            connectSSE()
+            // CRITICAL-3: Check if still mounted before reconnecting
+            if (isMountedRef.current) {
+              connectSSE()
+            }
           }, reconnectDelay)
         } else {
           // Max reconnection attempts reached, fallback to polling
-          setError(new Error("SSE connection failed after multiple attempts. Falling back to polling."))
+          if (isMountedRef.current) {
+            setError(new Error("SSE connection failed after multiple attempts. Falling back to polling."))
+          }
+          
+          // CRITICAL-3: Only set up polling if still mounted
+          if (!isMountedRef.current) {
+            return
+          }
           
           // Clear any existing fallback polling
           if (fallbackPollIntervalRef.current) {
@@ -222,6 +285,15 @@ export function useBookingEnabledSSE(
           
           // Fallback to polling - set up interval
           fallbackPollIntervalRef.current = setInterval(async () => {
+            // CRITICAL-3: Check if still mounted before polling
+            if (!isMountedRef.current) {
+              if (fallbackPollIntervalRef.current) {
+                clearInterval(fallbackPollIntervalRef.current)
+                fallbackPollIntervalRef.current = null
+              }
+              return
+            }
+            
             try {
               const response = await fetch(API_PATHS.settingsBookingEnabled)
               const json = await response.json()
@@ -235,19 +307,26 @@ export function useBookingEnabledSSE(
         }
       }
     } catch (initError) {
-      setError(initError instanceof Error ? initError : new Error(String(initError)))
-      setConnected(false)
+      // CRITICAL-3: Only set error if still mounted
+      if (isMountedRef.current) {
+        setError(initError instanceof Error ? initError : new Error(String(initError)))
+        setConnected(false)
+      }
     }
   }, [handleStatusUpdate])
 
   /**
    * Initialize SSE connection
+   * CRITICAL-3: Added proper cleanup and mounted tracking
    */
   useEffect(() => {
     // Only connect on client side
     if (typeof window === 'undefined') {
       return
     }
+
+    // CRITICAL-3: Mark as mounted
+    isMountedRef.current = true
 
     // If we have initial status, use it immediately but still connect to SSE for updates
     if (initialStatus !== undefined) {
@@ -261,17 +340,27 @@ export function useBookingEnabledSSE(
 
     // Cleanup on unmount
     return () => {
-      if (eventSourceRef.current) {
-        eventSourceRef.current.close()
-        eventSourceRef.current = null
-      }
+      // CRITICAL-3: Mark as unmounted first to prevent operations
+      isMountedRef.current = false
+      
+      // CRITICAL-3: Clean up in order to prevent race conditions
       if (reconnectTimeoutRef.current) {
         clearTimeout(reconnectTimeoutRef.current)
         reconnectTimeoutRef.current = null
       }
+      
       if (fallbackPollIntervalRef.current) {
         clearInterval(fallbackPollIntervalRef.current)
         fallbackPollIntervalRef.current = null
+      }
+      
+      if (eventSourceRef.current) {
+        try {
+          eventSourceRef.current.close()
+        } catch (error) {
+          // Ignore errors during cleanup
+        }
+        eventSourceRef.current = null
       }
     }
   }, [connectSSE, initialStatus])

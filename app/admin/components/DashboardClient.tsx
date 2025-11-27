@@ -1,16 +1,15 @@
 "use client"
 
-import { useAdminStats } from "@/hooks/useAdminStats"
+import { useAdminStatsSSE } from "@/hooks/useAdminStatsSSE"
 import { DashboardCard } from "./DashboardCard"
 import { DeleteAllBookingsCard } from "./DeleteAllBookingsCard"
 
 /**
- * Client-side dashboard component that uses admin stats hook
- * This enables dynamic updates without page refresh
+ * Client-side dashboard component that uses admin stats SSE hook
+ * This enables real-time updates via Server-Sent Events
  */
 export function DashboardClient() {
-  const { stats, loading } = useAdminStats({
-    refetchInterval: 30000, // Refetch every 30 seconds
+  const { stats } = useAdminStatsSSE({
     enabled: true,
   })
 

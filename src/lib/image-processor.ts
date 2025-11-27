@@ -1,5 +1,6 @@
 import sharp from "sharp"
 import { uploadImage } from "./blob"
+import { logError } from "./logger"
 
 /**
  * Image Processing Utilities
@@ -142,7 +143,8 @@ export async function processAndUploadImage(
     processedBuffer = null
     sharpInstance = null
 
-    console.error("Image processing error:", error)
+    // Fire-and-forget logging
+    logError("Image processing error", {}, error instanceof Error ? error : new Error(String(error))).catch(() => {})
     throw new Error(
       `Failed to process image: ${error instanceof Error ? error.message : "Unknown error"}`
     )

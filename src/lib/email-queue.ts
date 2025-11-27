@@ -2,12 +2,41 @@ import { getTursoClient, dbTransaction } from "./turso"
 import { randomUUID } from "crypto"
 import nodemailer from "nodemailer"
 import { getTransporter } from "./email"
+import { logInfo, logWarn, logError, logDebug } from "./logger"
 
 /**
  * Email Queue Management
  * 
  * Handles failed email notifications with retry logic
  */
+
+/**
+ * FIXED: Extract searchable text from metadata JSON (Issue #35)
+ * Creates a searchable string from metadata fields for full-text search
+ */
+function extractSearchableMetadata(metadata: Record<string, any>): string {
+  const searchableFields: string[] = []
+  
+  // Extract common searchable fields
+  if (metadata.bookingId) searchableFields.push(`booking:${metadata.bookingId}`)
+  if (metadata.referenceNumber) searchableFields.push(`ref:${metadata.referenceNumber}`)
+  if (metadata.status) searchableFields.push(`status:${metadata.status}`)
+  if (metadata.name) searchableFields.push(metadata.name)
+  if (metadata.email) searchableFields.push(metadata.email)
+  if (metadata.changeReason) searchableFields.push(metadata.changeReason)
+  if (metadata.oldStatus) searchableFields.push(`oldStatus:${metadata.oldStatus}`)
+  if (metadata.newStatus) searchableFields.push(`newStatus:${metadata.newStatus}`)
+  
+  // Add all string values from metadata
+  Object.values(metadata).forEach(value => {
+    if (typeof value === 'string' && value.length > 0 && value.length < 100) {
+      // Only include reasonable-length strings to avoid bloating search index
+      searchableFields.push(value)
+    }
+  })
+  
+  return searchableFields.join(' ')
+}
 
 export interface EmailQueueItem {
   id: string
@@ -47,14 +76,48 @@ export async function addEmailToQueue(
   const db = getTursoClient()
   const now = Math.floor(Date.now() / 1000)
   
+  // FIXED: Validate metadata size before storing (Issue #20)
+  // Make size limit configurable via environment variable
+  const MAX_METADATA_SIZE = parseInt(
+    process.env.MAX_EMAIL_METADATA_SIZE || '102400', // 100KB default
+    10
+  )
+  
+  if (metadata) {
+    try {
+      const metadataJson = JSON.stringify(metadata)
+      if (metadataJson.length > MAX_METADATA_SIZE) {
+        throw new Error(
+          `Metadata exceeds maximum size of ${MAX_METADATA_SIZE} bytes (${metadataJson.length} bytes). ` +
+          `Please reduce metadata size or increase MAX_EMAIL_METADATA_SIZE environment variable.`
+        )
+      }
+    } catch (error) {
+      if (error instanceof Error && error.message.includes('exceeds maximum size')) {
+        throw error // Re-throw size limit errors
+      }
+      // If JSON.stringify fails for other reasons (circular ref, etc.), log and continue with empty metadata
+      await logWarn('Failed to validate metadata size, using empty metadata', { error: error instanceof Error ? error.message : String(error) })
+      metadata = {}
+    }
+  }
+  
   // IMPROVED: Check for duplicate emails before adding to queue
-  // Prevents duplicate emails for same booking/status change within 5 minutes
+  // Prevents duplicate emails for same booking/status change within configurable window
   // FIXED: Use JSON extraction instead of LIKE pattern matching to prevent false positives/negatives
+  // FIXED: Make duplicate check window configurable (default 10 minutes, was 5 minutes)
   if (!options?.skipDuplicateCheck && metadata?.bookingId) {
     try {
       // FIXED: Use JSON extraction to safely check for bookingId in metadata
       // This is more reliable than LIKE pattern matching and prevents false matches
       const bookingIdStr = String(metadata.bookingId)
+      
+      // Configurable duplicate check window (default 10 minutes, was 5 minutes)
+      // Increased to handle retry scenarios where original email might still be processing
+      const DUPLICATE_CHECK_WINDOW = parseInt(
+        process.env.EMAIL_DUPLICATE_CHECK_WINDOW || "600", // 10 minutes default (was 5 minutes)
+        10
+      )
       
       // For SQLite, we need to use JSON_EXTRACT or parse JSON manually
       // Since SQLite JSON support varies, we'll fetch recent emails and parse in code
@@ -71,7 +134,7 @@ export async function addEmailToQueue(
         args: [
           emailType,
           recipientEmail,
-          now - 300 // 5 minutes
+          now - DUPLICATE_CHECK_WINDOW // Configurable window
         ],
       })
       
@@ -98,7 +161,7 @@ export async function addEmailToQueue(
               if (existingStatus !== undefined && newStatus !== undefined) {
                 if (existingStatus === newStatus) {
                   const existingId = item.id
-                  console.log(`Duplicate email detected, returning existing queue item: ${existingId} (${emailType} to ${recipientEmail} for booking ${bookingIdStr}, status: ${newStatus})`)
+                  await logInfo('Duplicate email detected, returning existing queue item', { existingId, emailType, recipientEmail, bookingId: bookingIdStr, status: newStatus })
                   return existingId
                 }
                 // Different statuses - not a duplicate, continue searching
@@ -112,12 +175,12 @@ export async function addEmailToQueue(
               
               // Both missing status - treat as duplicate (legacy behavior, but should be rare)
               const existingId = item.id
-              console.log(`Duplicate email detected (both missing status), returning existing queue item: ${existingId} (${emailType} to ${recipientEmail} for booking ${bookingIdStr})`)
+              await logInfo('Duplicate email detected (both missing status), returning existing queue item', { existingId, emailType, recipientEmail, bookingId: bookingIdStr })
               return existingId
             } else {
               // For non-status emails, just check bookingId
               const existingId = item.id
-              console.log(`Duplicate email detected, returning existing queue item: ${existingId} (${emailType} to ${recipientEmail} for booking ${bookingIdStr})`)
+              await logInfo('Duplicate email detected, returning existing queue item', { existingId, emailType, recipientEmail, bookingId: bookingIdStr })
               return existingId
             }
           }
@@ -128,25 +191,43 @@ export async function addEmailToQueue(
       }
     } catch (error) {
       // If duplicate check fails, log but continue (don't block email queuing)
-      console.warn('Failed to check for duplicate email, continuing with queue addition:', error)
+      await logWarn('Failed to check for duplicate email, continuing with queue addition', { error: error instanceof Error ? error.message : String(error) })
     }
   }
   
   const id = randomUUID()
   
-  // Calculate next retry time (exponential backoff: 1min, 5min, 15min, 30min, 1hr)
-  const retryDelays = [60, 300, 900, 1800, 3600] // seconds
+  // FIXED: Use same exponential backoff with jitter as scheduleNextRetry (Issue #33)
+  // This ensures consistent retry timing across all email queue operations
+  const baseRetryDelays = [
+    parseInt(process.env.EMAIL_RETRY_BACKOFF_BASE || "60"),   // 1 minute
+    300,   // 5 minutes
+    900,   // 15 minutes
+    1800,  // 30 minutes
+    3600,  // 1 hour
+    7200,  // 2 hours (max)
+  ]
+  
+  // For initial queue, use first retry delay with jitter
+  const baseDelay = baseRetryDelays[0]
+  const jitterPercent = 0.2 // 20% jitter
+  const jitterAmount = baseDelay * jitterPercent * (Math.random() * 2 - 1) // -20% to +20%
+  const delay = Math.max(60, Math.floor(baseDelay + jitterAmount)) // Minimum 60 seconds
+  
   const nextRetryAt = options?.scheduledAt 
     ? options.scheduledAt 
-    : now + retryDelays[0] // First retry after 1 minute
+    : now + delay // First retry after base delay + jitter
+
+  // FIXED: Extract searchable metadata for full-text search (Issue #35)
+  const searchableMetadata = metadata ? extractSearchableMetadata(metadata) : null
 
   await db.execute({
     sql: `
       INSERT INTO email_queue (
         id, email_type, recipient_email, subject, html_content, text_content,
-        metadata, retry_count, max_retries, status, scheduled_at, next_retry_at,
+        metadata, searchable_metadata, retry_count, max_retries, status, scheduled_at, next_retry_at,
         created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `,
     args: [
       id,
@@ -156,6 +237,7 @@ export async function addEmailToQueue(
       htmlContent,
       textContent,
       metadata ? JSON.stringify(metadata) : null,
+      searchableMetadata,
       0,
       options?.maxRetries || 5,
       "pending",
@@ -166,7 +248,83 @@ export async function addEmailToQueue(
     ],
   })
 
-  console.log(`Email queued for retry: ${id} (${emailType} to ${recipientEmail})`)
+  // FIXED: Update FTS5 virtual table if it exists (Issue #35)
+  // This ensures searchable_metadata is indexed for full-text search
+  try {
+    await db.execute({
+      sql: `
+        INSERT INTO email_queue_fts(rowid, id, searchable_metadata, recipient_email, subject)
+        SELECT rowid, id, searchable_metadata, recipient_email, subject 
+        FROM email_queue 
+        WHERE id = ?
+      `,
+      args: [id],
+    })
+  } catch (ftsError) {
+    // FTS5 table might not exist (fallback to regular index)
+    // This is expected if FTS5 is not available - search will use LIKE pattern matching
+    await logDebug('FTS5 table update skipped (not available or not needed)', { 
+      emailId: id,
+      error: ftsError instanceof Error ? ftsError.message : String(ftsError)
+    })
+  }
+
+  // Broadcast email queued event (after successful DB insert)
+  try {
+    const { broadcastEmailQueueEvent } = await import('../../app/api/v1/admin/emails/stream/route')
+    const { broadcastStatsUpdate } = await import('../../app/api/v1/admin/stats/stream/route')
+    
+    broadcastEmailQueueEvent('email:queued', {
+      id,
+      emailType,
+      recipientEmail,
+      subject,
+      status: 'pending',
+      retryCount: 0,
+      errorMessage: null,
+      scheduledAt: options?.scheduledAt || now,
+      nextRetryAt: null,
+      sentAt: null,
+      createdAt: now,
+      updatedAt: now,
+    })
+
+    // Broadcast stats update
+    const stats = await getEmailQueueStats()
+    const { listBookings } = await import('./bookings')
+    const pendingBookingsResult = await listBookings({
+      statuses: ['pending', 'pending_deposit', 'paid_deposit'],
+      excludeArchived: true,
+      limit: 0,
+      offset: 0,
+    })
+    const pendingEmailCount = (stats.pending || 0) + (stats.failed || 0)
+    
+    broadcastStatsUpdate({
+      bookings: {
+        pending: pendingBookingsResult.total,
+      },
+      emailQueue: {
+        pending: stats.pending || 0,
+        failed: stats.failed || 0,
+        total: pendingEmailCount,
+      },
+    })
+  } catch (broadcastError) {
+    // Don't fail if broadcast fails - logging is optional
+    const errorMessage = broadcastError instanceof Error ? broadcastError.message : String(broadcastError)
+    try {
+      const { logWarn } = await import('./logger')
+      await logWarn('Failed to broadcast email queued event', {
+        emailId: id,
+        error: errorMessage,
+      })
+    } catch (logError) {
+      // Fallback: if logger fails, silently continue (avoid infinite loops)
+    }
+  }
+
+  await logInfo('Email queued for retry', { emailId: id, emailType, recipientEmail })
   return id
 }
 
@@ -190,13 +348,13 @@ export async function cleanupStuckEmails(): Promise<number> {
           WHERE status = 'processing' 
             AND updated_at < ?
             AND retry_count < max_retries
-            AND updated_at = updated_at`,  // Additional condition to ensure atomicity
+            `,  // FIXED: Removed redundant condition (updated_at = updated_at is always true)
     args: [now, now - STUCK_THRESHOLD],
   })
   
   const resetCount = result.rowsAffected || 0
   if (resetCount > 0) {
-    console.log(`[email-queue] Reset ${resetCount} stuck email(s) from 'processing' to 'pending'`)
+    await logInfo('Reset stuck emails from processing to pending', { resetCount })
     // Track monitoring metric
     try {
       const { trackStuckItemReset } = await import('./monitoring')
@@ -217,8 +375,8 @@ export async function getPendingEmails(limit: number = 10): Promise<EmailQueueIt
   const now = Math.floor(Date.now() / 1000)
 
   // Cleanup stuck emails before fetching (non-blocking)
-  cleanupStuckEmails().catch(err => {
-    console.error('[email-queue] Failed to cleanup stuck emails:', err)
+  cleanupStuckEmails().catch(async (err) => {
+    await logError('[email-queue] Failed to cleanup stuck emails', undefined, err instanceof Error ? err : new Error(String(err)))
     // Don't throw - cleanup failure shouldn't block email processing
   })
 
@@ -246,8 +404,8 @@ export async function getPendingCriticalStatusEmails(limit: number = 20): Promis
   const now = Math.floor(Date.now() / 1000)
 
   // Cleanup stuck emails before fetching (non-blocking)
-  cleanupStuckEmails().catch(err => {
-    console.error('[email-queue] Failed to cleanup stuck emails:', err)
+  cleanupStuckEmails().catch(async (err) => {
+    await logError('[email-queue] Failed to cleanup stuck emails', undefined, err instanceof Error ? err : new Error(String(err)))
     // Don't throw - cleanup failure shouldn't block email processing
   })
 
@@ -324,22 +482,47 @@ export async function getPendingCriticalStatusEmails(limit: number = 20): Promis
 /**
  * Update email queue item status
  */
+/**
+ * FIXED: Update email queue status with optimistic locking support (Issue #18)
+ * 
+ * @param id - Email queue item ID
+ * @param status - New status
+ * @param errorMessage - Optional error message
+ * @param expectedVersion - Optional expected version for optimistic locking
+ * @returns true if update succeeded, false if version mismatch (optimistic locking failed)
+ */
 export async function updateEmailQueueStatus(
   id: string,
   status: EmailQueueItem["status"],
-  errorMessage?: string
-): Promise<void> {
+  errorMessage?: string,
+  expectedVersion?: number
+): Promise<boolean> {
   const db = getTursoClient()
   const now = Math.floor(Date.now() / 1000)
 
-  await db.execute({
-    sql: `
-      UPDATE email_queue
-      SET status = ?, error_message = ?, updated_at = ?
-      WHERE id = ?
-    `,
-    args: [status, errorMessage || null, now, id],
-  })
+  if (expectedVersion !== undefined) {
+    // FIXED: Optimistic locking update (Issue #18)
+    const result = await db.execute({
+      sql: `
+        UPDATE email_queue
+        SET status = ?, error_message = ?, updated_at = ?, version = version + 1
+        WHERE id = ? AND version = ?
+      `,
+      args: [status, errorMessage || null, now, id, expectedVersion],
+    })
+    return (result.rowsAffected || 0) > 0
+  } else {
+    // Non-locked update (backwards compatibility)
+    await db.execute({
+      sql: `
+        UPDATE email_queue
+        SET status = ?, error_message = ?, updated_at = ?
+        WHERE id = ?
+      `,
+      args: [status, errorMessage || null, now, id],
+    })
+    return true
+  }
 }
 
 /**
@@ -349,6 +532,12 @@ export async function updateEmailQueueStatus(
 export async function markEmailProcessing(id: string): Promise<boolean> {
   const db = getTursoClient()
   const now = Math.floor(Date.now() / 1000)
+
+  // Get email details before updating (for broadcast)
+  const emailResult = await db.execute({
+    sql: `SELECT * FROM email_queue WHERE id = ? AND status = 'pending'`,
+    args: [id],
+  })
 
   // ATOMIC STATUS UPDATE: Only update if status is 'pending'
   // This prevents multiple cron jobs from processing the same email
@@ -361,9 +550,46 @@ export async function markEmailProcessing(id: string): Promise<boolean> {
     args: [now, id],
   })
 
+  const claimed = (result.rowsAffected || 0) > 0
+
+  // Broadcast email processing event (after successful DB update)
+  if (claimed && emailResult.rows.length > 0) {
+    const emailRow = emailResult.rows[0] as any
+    try {
+      const { broadcastEmailQueueEvent } = await import('../../app/api/v1/admin/emails/stream/route')
+      
+      broadcastEmailQueueEvent('email:processing', {
+        id: emailRow.id,
+        emailType: emailRow.email_type,
+        recipientEmail: emailRow.recipient_email,
+        subject: emailRow.subject,
+        status: 'processing',
+        retryCount: emailRow.retry_count,
+        errorMessage: emailRow.error_message,
+        scheduledAt: emailRow.scheduled_at,
+        nextRetryAt: emailRow.next_retry_at || null,
+        sentAt: emailRow.sent_at,
+        createdAt: emailRow.created_at,
+        updatedAt: now,
+      })
+    } catch (broadcastError) {
+      // Don't fail if broadcast fails - logging is optional
+      const errorMessage = broadcastError instanceof Error ? broadcastError.message : String(broadcastError)
+      try {
+        const { logWarn } = await import('./logger')
+        await logWarn('Failed to broadcast email processing event', {
+          emailId: id,
+          error: errorMessage,
+        })
+      } catch (logError) {
+        // Fallback: if logger fails, silently continue (avoid infinite loops)
+      }
+    }
+  }
+
   // If rowsAffected > 0, we successfully claimed the email
   // If rowsAffected = 0, another process already claimed it
-  return (result.rowsAffected || 0) > 0
+  return claimed
 }
 
 /**
@@ -371,9 +597,44 @@ export async function markEmailProcessing(id: string): Promise<boolean> {
  * This eliminates the race condition between getPendingEmails and markEmailProcessing
  * Returns emails that were successfully claimed by this process
  */
-export async function atomicallyClaimPendingEmails(limit: number = 10): Promise<EmailQueueItem[]> {
+/**
+ * FIXED: Generate unique process ID for this Vercel function instance (Issue #29)
+ * Uses UUID for guaranteed uniqueness across all environments (including serverless)
+ */
+function generateProcessId(): string {
+  // FIXED: Use UUID instead of process.pid for serverless compatibility
+  // process.pid may not be unique in serverless environments
+  // Note: randomUUID is already imported at the top of the file
+  const region = process.env.VERCEL_REGION || 'local'
+  const timestamp = Date.now()
+  const uuid = randomUUID().replace(/-/g, '').substring(0, 8) // Short UUID for readability
+  return `${region}-${uuid}-${timestamp}`
+}
+
+/**
+ * FIXED: Atomically claim pending emails with process ID tracking (Issue #29)
+ * 
+ * @param limit - Maximum number of emails to claim
+ * @param processId - Optional process ID (auto-generated if not provided)
+ * @returns Array of claimed email queue items
+ */
+export async function atomicallyClaimPendingEmails(
+  limit: number = 10,
+  processId: string = generateProcessId()
+): Promise<EmailQueueItem[]> {
   const db = getTursoClient()
   const now = Math.floor(Date.now() / 1000)
+  const stuckThreshold = 5 * 60 // 5 minutes
+
+  // FIXED: First, reset stuck emails (processing for >5 minutes) (Issue #29)
+  await db.execute({
+    sql: `UPDATE email_queue
+          SET status = 'pending', process_id = NULL, updated_at = ?
+          WHERE status = 'processing'
+            AND updated_at < ?
+            AND retry_count < max_retries`,
+    args: [now, now - stuckThreshold],
+  })
 
   // CRITICAL: Use a transaction to atomically select and claim emails
   // This prevents multiple processes from selecting the same emails
@@ -401,29 +662,29 @@ export async function atomicallyClaimPendingEmails(limit: number = 10): Promise<
       return []
     }
 
-    // Step 2: Extract IDs and claim them atomically
+    // Step 2: Extract IDs and claim them atomically with process_id (Issue #29)
     const ids = selectResult.rows.map(row => (row as any).id)
     
-    // Step 3: Atomically claim all selected emails in one UPDATE
+    // Step 3: Atomically claim all selected emails in one UPDATE with process_id (Issue #29)
     // Only update emails that are still 'pending' (handles race condition)
     const placeholders = ids.map(() => '?').join(',')
     await tx.execute({
       sql: `
         UPDATE email_queue
-        SET status = 'processing', updated_at = ?
+        SET status = 'processing', process_id = ?, updated_at = ?
         WHERE id IN (${placeholders}) AND status = 'pending'
       `,
-      args: [now, ...ids],
+      args: [processId, now, ...ids],
     })
 
     // Step 4: Return only emails that were successfully claimed
-    // Query again to get only emails that are now in 'processing' status with current timestamp
+    // Query again to get only emails that are now in 'processing' status with current process_id
     const claimedResult = await tx.execute({
       sql: `
         SELECT * FROM email_queue
-        WHERE id IN (${placeholders}) AND status = 'processing' AND updated_at = ?
+        WHERE id IN (${placeholders}) AND status = 'processing' AND process_id = ? AND updated_at = ?
       `,
-      args: [...ids, now],
+      args: [...ids, processId, now],
     })
 
     // Convert to EmailQueueItem format using existing helper
@@ -438,6 +699,12 @@ export async function markEmailSent(id: string): Promise<void> {
   const db = getTursoClient()
   const now = Math.floor(Date.now() / 1000)
 
+  // Get email details before updating (for broadcast)
+  const emailResult = await db.execute({
+    sql: `SELECT * FROM email_queue WHERE id = ?`,
+    args: [id],
+  })
+
   await db.execute({
     sql: `
       UPDATE email_queue
@@ -446,6 +713,64 @@ export async function markEmailSent(id: string): Promise<void> {
     `,
     args: [now, now, id],
   })
+
+  // Broadcast email sent event (after successful DB update)
+  if (emailResult.rows.length > 0) {
+    const emailRow = emailResult.rows[0] as any
+    try {
+      const { broadcastEmailQueueEvent } = await import('../../app/api/v1/admin/emails/stream/route')
+      const { broadcastStatsUpdate } = await import('../../app/api/v1/admin/stats/stream/route')
+      
+      broadcastEmailQueueEvent('email:sent', {
+        id: emailRow.id,
+        emailType: emailRow.email_type,
+        recipientEmail: emailRow.recipient_email,
+        subject: emailRow.subject,
+        status: 'sent',
+        retryCount: emailRow.retry_count,
+        errorMessage: emailRow.error_message,
+        scheduledAt: emailRow.scheduled_at,
+        nextRetryAt: emailRow.next_retry_at || null,
+        sentAt: now,
+        createdAt: emailRow.created_at,
+        updatedAt: now,
+      })
+
+      // Broadcast stats update
+      const stats = await getEmailQueueStats()
+      const { listBookings } = await import('./bookings')
+      const pendingBookingsResult = await listBookings({
+        statuses: ['pending', 'pending_deposit', 'paid_deposit'],
+        excludeArchived: true,
+        limit: 0,
+        offset: 0,
+      })
+      const pendingEmailCount = (stats.pending || 0) + (stats.failed || 0)
+      
+      broadcastStatsUpdate({
+        bookings: {
+          pending: pendingBookingsResult.total,
+        },
+        emailQueue: {
+          pending: stats.pending || 0,
+          failed: stats.failed || 0,
+          total: pendingEmailCount,
+        },
+      })
+    } catch (broadcastError) {
+      // Don't fail if broadcast fails - logging is optional
+      const errorMessage = broadcastError instanceof Error ? broadcastError.message : String(broadcastError)
+      try {
+        const { logWarn } = await import('./logger')
+        await logWarn('Failed to broadcast email sent event', {
+          emailId: id,
+          error: errorMessage,
+        })
+      } catch (logError) {
+        // Fallback: if logger fails, silently continue (avoid infinite loops)
+      }
+    }
+  }
 }
 
 /**
@@ -468,10 +793,29 @@ export async function scheduleNextRetry(id: string, errorMessage: string): Promi
   const item = result.rows[0] as any
   const retryCount = item.retry_count + 1
 
-  // Exponential backoff: 1min, 5min, 15min, 30min, 1hr
-  const retryDelays = [60, 300, 900, 1800, 3600] // seconds
-  const delayIndex = Math.min(retryCount - 1, retryDelays.length - 1)
-  const delay = retryDelays[delayIndex]
+  // FIXED: Exponential backoff with jitter to prevent thundering herd (Issue #33)
+  // Base delays: 1min, 5min, 15min, 30min, 1hr, 2hr (max)
+  // Configurable via env var: EMAIL_RETRY_BACKOFF_BASE (default: 60 seconds for first retry)
+  // Jitter: ±20% random variation to prevent synchronized retries
+  const baseRetryDelays = [
+    parseInt(process.env.EMAIL_RETRY_BACKOFF_BASE || "60"),   // 1 minute
+    300,   // 5 minutes
+    900,   // 15 minutes
+    1800,  // 30 minutes
+    3600,  // 1 hour
+    7200,  // 2 hours (max)
+  ]
+  
+  // Calculate delay index (cap at max delays)
+  const delayIndex = Math.min(retryCount - 1, baseRetryDelays.length - 1)
+  const baseDelay = baseRetryDelays[delayIndex]
+  
+  // Add jitter: ±20% random variation
+  // This prevents multiple failed emails from retrying at the exact same time
+  const jitterPercent = 0.2 // 20% jitter
+  const jitterAmount = baseDelay * jitterPercent * (Math.random() * 2 - 1) // -20% to +20%
+  const delay = Math.max(60, Math.floor(baseDelay + jitterAmount)) // Minimum 60 seconds
+  
   const nextRetryAt = now + delay
 
   // Update status based on retry count
@@ -489,8 +833,90 @@ export async function scheduleNextRetry(id: string, errorMessage: string): Promi
     args: [retryCount, nextRetryAt, status, errorMessage, now, id],
   })
 
+  // Broadcast email status change (after successful DB update)
+  try {
+    const { broadcastEmailQueueEvent } = await import('../../app/api/v1/admin/emails/stream/route')
+    const { broadcastStatsUpdate } = await import('../../app/api/v1/admin/stats/stream/route')
+    
+    // Get updated email details for broadcast
+    const updatedEmailResult = await db.execute({
+      sql: `SELECT * FROM email_queue WHERE id = ?`,
+      args: [id],
+    })
+
+    if (updatedEmailResult.rows.length > 0) {
+      const emailRow = updatedEmailResult.rows[0] as any
+      
+      if (status === "failed") {
+        broadcastEmailQueueEvent('email:failed', {
+          id: emailRow.id,
+          emailType: emailRow.email_type,
+          recipientEmail: emailRow.recipient_email,
+          subject: emailRow.subject,
+          status: 'failed',
+          retryCount: retryCount,
+          errorMessage: errorMessage,
+          scheduledAt: emailRow.scheduled_at,
+          nextRetryAt: emailRow.next_retry_at || null,
+          sentAt: emailRow.sent_at,
+          createdAt: emailRow.created_at,
+          updatedAt: now,
+        })
+      } else {
+        broadcastEmailQueueEvent('email:updated', {
+          id: emailRow.id,
+          emailType: emailRow.email_type,
+          recipientEmail: emailRow.recipient_email,
+          subject: emailRow.subject,
+          status: status,
+          retryCount: retryCount,
+          errorMessage: errorMessage,
+          scheduledAt: emailRow.scheduled_at,
+          nextRetryAt: emailRow.next_retry_at || null,
+          sentAt: emailRow.sent_at,
+          createdAt: emailRow.created_at,
+          updatedAt: now,
+        })
+      }
+
+      // Broadcast stats update
+      const stats = await getEmailQueueStats()
+      const { listBookings } = await import('./bookings')
+      const pendingBookingsResult = await listBookings({
+        statuses: ['pending', 'pending_deposit', 'paid_deposit'],
+        excludeArchived: true,
+        limit: 0,
+        offset: 0,
+      })
+      const pendingEmailCount = (stats.pending || 0) + (stats.failed || 0)
+      
+      broadcastStatsUpdate({
+        bookings: {
+          pending: pendingBookingsResult.total,
+        },
+        emailQueue: {
+          pending: stats.pending || 0,
+          failed: stats.failed || 0,
+          total: pendingEmailCount,
+        },
+      })
+    }
+  } catch (broadcastError) {
+    // Don't fail if broadcast fails - logging is optional
+    const errorMessage = broadcastError instanceof Error ? broadcastError.message : String(broadcastError)
+    try {
+      const { logWarn } = await import('./logger')
+      await logWarn('Failed to broadcast email status change', {
+        emailId: id,
+        error: errorMessage,
+      })
+    } catch (logError) {
+      // Fallback: if logger fails, silently continue (avoid infinite loops)
+    }
+  }
+
   if (status === "failed") {
-    console.error(`Email queue item ${id} failed after ${retryCount} retries`)
+    await logError(`Email queue item failed after max retries`, { emailId: id, retryCount })
     
     // Notify admin when email fails after max retries (non-blocking)
     // This ensures admins are aware of failed notifications
@@ -513,16 +939,120 @@ export async function scheduleNextRetry(id: string, errorMessage: string): Promi
       })
     } catch (notificationError) {
       // Don't fail if admin notification fails - just log it
-      console.error(`Failed to send admin notification for failed email ${id}:`, notificationError)
+      await logError('Failed to send admin notification for failed email', { emailId: id }, notificationError instanceof Error ? notificationError : new Error(String(notificationError)))
     }
   } else {
-    console.log(`Email queue item ${id} scheduled for retry #${retryCount} at ${new Date(nextRetryAt * 1000).toISOString()}`)
+    await logInfo('Email queue item scheduled for retry', { emailId: id, retryCount, nextRetryAt: new Date(nextRetryAt * 1000).toISOString() })
+  }
+}
+
+/**
+ * Token Bucket Rate Limiter
+ * FIXED: Implements token bucket algorithm for accurate rate limiting
+ * Checks rate limit before each email instead of at batch start
+ */
+class TokenBucketRateLimiter {
+  private tokens: number
+  private lastRefill: number
+  private readonly capacity: number
+  private readonly refillRate: number // tokens per second
+  private readonly db: ReturnType<typeof getTursoClient>
+  
+  constructor(capacity: number, refillRate: number) {
+    this.capacity = capacity
+    this.refillRate = refillRate
+    this.tokens = capacity
+    this.lastRefill = Date.now()
+    this.db = getTursoClient()
+  }
+  
+  /**
+   * Refill tokens based on elapsed time
+   */
+  private refill(): void {
+    const now = Date.now()
+    const elapsed = (now - this.lastRefill) / 1000 // seconds
+    const tokensToAdd = elapsed * this.refillRate
+    this.tokens = Math.min(this.capacity, this.tokens + tokensToAdd)
+    this.lastRefill = now
+  }
+  
+  /**
+   * Try to acquire a token (non-blocking)
+   * Returns true if token acquired, false if rate limited
+   */
+  async tryAcquire(): Promise<boolean> {
+    this.refill()
+    
+    // Also check database to account for emails sent by other processes
+    const now = Math.floor(Date.now() / 1000)
+    const windowStart = Math.floor(now / 60) * 60 // 1 minute window
+    
+    const rateCheckResult = await this.db.execute({
+      sql: `
+        SELECT COUNT(*) as count 
+        FROM email_queue 
+        WHERE status = 'sent' 
+          AND sent_at >= ?
+      `,
+      args: [windowStart],
+    })
+    
+    const sentInWindow = (rateCheckResult.rows[0] as any)?.count || 0
+    
+    // Check both token bucket and database count
+    if (this.tokens >= 1 && sentInWindow < this.capacity) {
+      this.tokens--
+      return true
+    }
+    
+    return false
+  }
+  
+  /**
+   * Wait for a token to become available (blocking)
+   * Returns when token is available
+   */
+  async waitForToken(): Promise<void> {
+    while (!(await this.tryAcquire())) {
+      // Calculate wait time based on token refill rate
+      const tokensNeeded = 1 - this.tokens
+      const waitTime = Math.ceil((tokensNeeded / this.refillRate) * 1000) // milliseconds
+      
+      // Also check database window
+      const now = Math.floor(Date.now() / 1000)
+      const windowStart = Math.floor(now / 60) * 60
+      const windowEnd = windowStart + 60
+      const dbWaitTime = (windowEnd - now) * 1000
+      
+      // Wait for the longer of the two
+      const actualWaitTime = Math.min(Math.max(waitTime, dbWaitTime), 60000) // Max 60 seconds
+      
+      if (actualWaitTime > 0) {
+        await new Promise(resolve => setTimeout(resolve, actualWaitTime))
+      } else {
+        // Small delay to prevent tight loop
+        await new Promise(resolve => setTimeout(resolve, 100))
+      }
+      
+      // Refill after waiting
+      this.refill()
+    }
+  }
+  
+  /**
+   * Get current token count (for debugging)
+   */
+  getTokens(): number {
+    this.refill()
+    return this.tokens
   }
 }
 
 /**
  * Process pending emails in queue
- * IMPROVED: Added rate limiting to prevent overwhelming SMTP server
+ * FIXED: Uses token bucket rate limiting algorithm
+ * Checks rate limit before each email instead of at batch start
  */
 export async function processEmailQueue(limit: number = 10): Promise<{
   processed: number
@@ -530,74 +1060,38 @@ export async function processEmailQueue(limit: number = 10): Promise<{
   failed: number
   errors: string[]
 }> {
-  // IMPROVED: Rate limiting for email queue processing
-  // Prevents overwhelming SMTP server or triggering email provider rate limits
+  // FIXED: Use token bucket rate limiter
   // Default: 30 emails per minute (configurable via EMAIL_QUEUE_RATE_LIMIT env var)
-  const EMAIL_RATE_LIMIT = parseInt(process.env.EMAIL_QUEUE_RATE_LIMIT || "30") // emails per minute
-  const EMAIL_RATE_WINDOW = 60 // 1 minute in seconds
-  
-  // Check rate limit before processing
-  const db = getTursoClient()
-  const now = Math.floor(Date.now() / 1000)
-  const windowStart = Math.floor(now / EMAIL_RATE_WINDOW) * EMAIL_RATE_WINDOW
-  
-  // Get count of emails sent in current window
-  const rateCheckResult = await db.execute({
-    sql: `
-      SELECT COUNT(*) as count 
-      FROM email_queue 
-      WHERE status = 'sent' 
-        AND sent_at >= ?
-    `,
-    args: [windowStart],
-  })
-  
-  const sentInWindow = (rateCheckResult.rows[0] as any)?.count || 0
-  
-  if (sentInWindow >= EMAIL_RATE_LIMIT) {
-    const waitTime = EMAIL_RATE_WINDOW - (now - windowStart)
-    console.log(`[email-queue] Rate limit reached (${sentInWindow}/${EMAIL_RATE_LIMIT} emails in current window). Waiting ${waitTime} seconds before processing.`)
-    return {
-      processed: 0,
-      sent: 0,
-      failed: 0,
-      errors: [`Rate limit reached: ${sentInWindow}/${EMAIL_RATE_LIMIT} emails sent in current minute`],
-    }
-  }
-  
-  // Calculate how many emails we can process in this batch
-  const remainingQuota = EMAIL_RATE_LIMIT - sentInWindow
-  const effectiveLimit = Math.min(limit, remainingQuota)
-  
-  if (effectiveLimit <= 0) {
-    return {
-      processed: 0,
-      sent: 0,
-      failed: 0,
-      errors: [`Rate limit reached: no quota remaining in current window`],
-    }
-  }
+  const EMAIL_RATE_LIMIT = parseInt(process.env.EMAIL_QUEUE_RATE_LIMIT || "30", 10) // emails per minute
+  const rateLimiter = new TokenBucketRateLimiter(
+    EMAIL_RATE_LIMIT, // capacity
+    EMAIL_RATE_LIMIT / 60 // refill rate (tokens per second)
+  )
   
   // CRITICAL: Use atomic claim to eliminate race condition
   // This selects and claims emails in one atomic operation
-  const pendingEmails = await atomicallyClaimPendingEmails(effectiveLimit)
+  // Note: We claim up to limit, but will respect rate limit when sending
+  const pendingEmails = await atomicallyClaimPendingEmails(limit)
   const results = {
     processed: 0,
     sent: 0,
     failed: 0,
     errors: [] as string[],
   }
-
-  // IMPROVED: Add delay between emails to respect rate limits
-  // Small delay (100ms) between emails to prevent burst sending
-  const DELAY_BETWEEN_EMAILS = 100 // milliseconds
   
   for (let i = 0; i < pendingEmails.length; i++) {
     const email = pendingEmails[i]
     
-    // Add delay between emails (except for first one)
-    if (i > 0) {
-      await new Promise(resolve => setTimeout(resolve, DELAY_BETWEEN_EMAILS))
+    // FIXED: Check rate limit before each email (not at batch start)
+    // This ensures accurate rate limiting even if processing takes time
+    try {
+      await rateLimiter.waitForToken()
+    } catch (rateLimitError) {
+      // If rate limit wait fails, skip this email and continue
+      results.errors.push(`Rate limit error for email ${email.id}: ${rateLimitError instanceof Error ? rateLimitError.message : String(rateLimitError)}`)
+      // Reset email to pending so it can be retried later
+      await updateEmailQueueStatus(email.id, 'pending')
+      continue
     }
     
     try {
@@ -607,9 +1101,20 @@ export async function processEmailQueue(limit: number = 10): Promise<{
 
       // Send email
       const transporter = await getTransporter()
-      const metadata = typeof email.metadata === 'object' 
-        ? email.metadata 
-        : (email.metadata ? safeParseMetadata(email.metadata) || {} : {})
+      // IMPROVED: Handle metadata parsing with error status
+      let metadata: Record<string, any> = {}
+      if (email.metadata) {
+        if (typeof email.metadata === 'object') {
+          metadata = email.metadata
+        } else {
+          const parseResult = safeParseMetadata(email.metadata)
+          metadata = parseResult.metadata || {}
+          if (parseResult.error) {
+            // Log error but continue processing (metadata might have parse errors)
+            await logWarn('Metadata parsing error for email', { emailId: email.id, error: parseResult.error })
+          }
+        }
+      }
       
       const mailOptions: nodemailer.SendMailOptions = {
         from: `"Hell University Reservation System" <${process.env.SMTP_USER}>`,
@@ -626,7 +1131,7 @@ export async function processEmailQueue(limit: number = 10): Promise<{
       await markEmailSent(email.id)
       results.sent++
       
-      console.log(`Email queue item ${email.id} sent successfully: ${result.messageId}`)
+      await logInfo('Email queue item sent successfully', { emailId: email.id, messageId: result.messageId })
     } catch (error) {
       // IMPROVED: Safely extract and sanitize error message
       // Removes sensitive information before logging/queuing
@@ -674,19 +1179,15 @@ export async function processEmailQueue(limit: number = 10): Promise<{
           })
         } catch (notificationError) {
           // Don't fail if admin notification fails - just log it
-          console.error(`Failed to send admin notification for failed email ${email.id}:`, notificationError)
+          await logError('Failed to send admin notification for failed email', { emailId: email.id }, notificationError instanceof Error ? notificationError : new Error(String(notificationError)))
         }
       }
       
-      console.error(`Email queue item ${email.id} failed: ${errorMessage}`)
+      await logError('Email queue item failed', { emailId: email.id, errorMessage })
     }
     
-    // IMPROVED: Check if we've hit the rate limit during processing
-    // If we've sent enough emails, stop processing to respect rate limits
-    if (results.sent >= remainingQuota) {
-      console.log(`[email-queue] Rate limit reached during processing (${results.sent} emails sent). Stopping batch.`)
-      break
-    }
+    // Note: Rate limiting is handled by TokenBucketRateLimiter before each email
+    // No need to check remainingQuota here - the rate limiter will block if needed
   }
 
   return results
@@ -695,6 +1196,7 @@ export async function processEmailQueue(limit: number = 10): Promise<{
 /**
  * Process pending critical status change emails
  * Handles: pending_deposit, confirmed, cancelled
+ * FIXED: Uses atomic claiming to prevent race conditions (Issue #4)
  */
 export async function processCriticalStatusEmails(limit: number = 20): Promise<{
   processed: number
@@ -702,7 +1204,9 @@ export async function processCriticalStatusEmails(limit: number = 20): Promise<{
   failed: number
   errors: string[]
 }> {
-  const pendingEmails = await getPendingCriticalStatusEmails(limit)
+  // FIXED: Use atomic claiming instead of getPendingCriticalStatusEmails + markEmailProcessing (Issue #4)
+  // This eliminates the race condition window between selection and claiming
+  const claimedEmails = await atomicallyClaimPendingEmails(limit)
   const results = {
     processed: 0,
     sent: 0,
@@ -710,26 +1214,30 @@ export async function processCriticalStatusEmails(limit: number = 20): Promise<{
     errors: [] as string[],
   }
 
-  console.log(`Processing ${pendingEmails.length} critical emails (status changes, user confirmations, admin notifications)`)
+  await logInfo('Processing critical emails', { count: claimedEmails.length })
 
-  for (const email of pendingEmails) {
+  for (const email of claimedEmails) {
     try {
-      // ATOMIC CLAIM: Try to claim email atomically
-      // If another process already claimed it, skip this email
-      const claimed = await markEmailProcessing(email.id)
-      if (!claimed) {
-        // Another process already claimed this email, skip it
-        console.log(`Email ${email.id} already claimed by another process, skipping`)
-        continue
-      }
-      
+      // Email is already claimed atomically by atomicallyClaimPendingEmails
+      // No need to claim again - it's already in 'processing' status
       results.processed++
 
       // Send email
       const transporter = await getTransporter()
-      const metadata = typeof email.metadata === 'object' 
-        ? email.metadata 
-        : (email.metadata ? safeParseMetadata(email.metadata) || {} : {})
+      // IMPROVED: Handle metadata parsing with error status
+      let metadata: Record<string, any> = {}
+      if (email.metadata) {
+        if (typeof email.metadata === 'object') {
+          metadata = email.metadata
+        } else {
+          const parseResult = safeParseMetadata(email.metadata)
+          metadata = parseResult.metadata || {}
+          if (parseResult.error) {
+            // Log error but continue processing (metadata might have parse errors)
+            await logWarn('Metadata parsing error for email', { emailId: email.id, error: parseResult.error })
+          }
+        }
+      }
       
       const mailOptions: nodemailer.SendMailOptions = {
         from: `"Hell University Reservation System" <${process.env.SMTP_USER}>`,
@@ -748,11 +1256,11 @@ export async function processCriticalStatusEmails(limit: number = 20): Promise<{
       
       // Log based on email type
       if (email.emailType === 'user_confirmation') {
-        console.log(`User confirmation email ${email.id} sent successfully: ${result.messageId}`)
+        await logInfo('User confirmation email sent successfully', { emailId: email.id, messageId: result.messageId })
       } else if (email.emailType === 'admin_notification') {
-        console.log(`Admin notification email ${email.id} sent successfully: ${result.messageId}`)
+        await logInfo('Admin notification email sent successfully', { emailId: email.id, messageId: result.messageId })
       } else {
-        console.log(`Critical status email ${email.id} sent successfully: ${result.messageId} (Status: ${metadata.status || 'N/A'})`)
+        await logInfo('Critical status email sent successfully', { emailId: email.id, messageId: result.messageId, status: metadata.status || 'N/A' })
       }
     } catch (error) {
       // IMPROVED: Safely extract and sanitize error message
@@ -786,9 +1294,9 @@ export async function processCriticalStatusEmails(limit: number = 20): Promise<{
       
       if (email.retryCount + 1 >= email.maxRetries) {
         results.failed++
-        console.error(`${email.emailType} email ${email.id} failed after ${email.retryCount + 1} retries`)
+        await logError('Email failed after max retries', { emailType: email.emailType, emailId: email.id, retryCount: email.retryCount + 1 })
       } else {
-        console.error(`${email.emailType} email ${email.id} failed, scheduled for retry: ${errorMessage}`)
+        await logError('Email failed, scheduled for retry', { emailType: email.emailType, emailId: email.id, errorMessage })
       }
     }
   }
@@ -827,18 +1335,98 @@ export async function getEmailQueueItems(options?: {
     args.push(options.emailType)
   }
   
-  // Search for booking reference in metadata JSON
-  // Metadata can contain bookingId or booking reference number
-  // We search in the JSON string for the reference pattern
+  // FIXED: Use FTS5 full-text search when available, fallback to LIKE pattern matching (Issue #35)
   if (options?.bookingReference) {
     const refLower = options.bookingReference.toLowerCase().trim()
     if (refLower) {
-      // Search for booking reference in metadata JSON
-      // Pattern: looks for "bookingId" or "referenceNumber" fields containing the search term
-      // Use LIKE with escaped pattern to search in JSON string
-      const escapedRef = refLower.replace(/%/g, '\\%').replace(/_/g, '\\_')
-      sql += " AND (metadata LIKE ? OR metadata LIKE ? OR subject LIKE ?)"
-      args.push(`%"bookingId":"%${escapedRef}%`, `%"referenceNumber":"%${escapedRef}%`, `%[${escapedRef}%`)
+      // Try FTS5 full-text search first (much faster and more accurate)
+      try {
+        // Check if FTS5 table exists
+        const ftsCheck = await db.execute({
+          sql: `SELECT name FROM sqlite_master WHERE type='table' AND name='email_queue_fts'`,
+        })
+        
+        if (ftsCheck.rows.length > 0) {
+          // FIXED: Add corruption detection for FTS5 table
+          // Test FTS5 table integrity before using it
+          try {
+            const integrityCheck = await db.execute({
+              sql: `SELECT COUNT(*) as count FROM email_queue_fts LIMIT 1`,
+            })
+            // If integrity check passes, proceed with FTS5 search
+          } catch (integrityError) {
+            // FTS5 table is corrupted, log and fallback to LIKE
+            await logWarn('FTS5 table corruption detected, falling back to LIKE search', {
+              error: integrityError instanceof Error ? integrityError.message : String(integrityError),
+              searchTerm: refLower
+            })
+            throw new Error('FTS5 table corrupted')
+          }
+          
+          // Use FTS5 for full-text search
+          // FTS5 uses MATCH operator and supports better search syntax
+          // FIXED: Escape FTS5 special characters to prevent query injection (Issue #14)
+          const escapeFTS5Term = (term: string): string => {
+            // Escape FTS5 special characters: ", *, OR, AND, NOT
+            // Replace quotes with escaped quotes, remove other special chars
+            return term
+              .replace(/"/g, '""') // Escape quotes by doubling them
+              .replace(/[*]/g, '') // Remove wildcards (not needed for exact match)
+          }
+          const ftsQuery = refLower.split(/\s+/)
+            .map(term => term.trim())
+            .filter(term => term.length > 0)
+            .map(term => `"${escapeFTS5Term(term)}"`)
+            .join(' OR ')
+          
+          // Get matching rowids from FTS5 table
+          const ftsResult = await db.execute({
+            sql: `
+              SELECT rowid FROM email_queue_fts 
+              WHERE email_queue_fts MATCH ? 
+              ORDER BY rank
+              LIMIT 1000
+            `,
+            args: [ftsQuery],
+          })
+          
+          if (ftsResult.rows.length > 0) {
+            // Use rowids from FTS5 to filter main query
+            const rowids = ftsResult.rows.map((row: any) => row.rowid)
+            const placeholders = rowids.map(() => '?').join(',')
+            sql += ` AND rowid IN (${placeholders})`
+            args.push(...rowids)
+            
+            await logDebug('Using FTS5 for email queue search', { 
+              searchTerm: refLower,
+              matchCount: rowids.length
+            })
+          } else {
+            // No matches from FTS5, return empty result
+            sql += " AND 1=0" // Force no results
+            await logDebug('FTS5 search returned no matches', { searchTerm: refLower })
+          }
+        } else {
+          // FTS5 not available, fallback to LIKE pattern matching
+          throw new Error('FTS5 table not available')
+        }
+      } catch (ftsError) {
+        // Fallback to LIKE pattern matching if FTS5 is not available
+        // This maintains backwards compatibility
+        const escapedRef = refLower.replace(/%/g, '\\%').replace(/_/g, '\\_')
+        sql += " AND (searchable_metadata LIKE ? OR metadata LIKE ? OR metadata LIKE ? OR subject LIKE ?)"
+        args.push(
+          `%${escapedRef}%`, // Search in searchable_metadata column
+          `%"bookingId":"%${escapedRef}%`, // Search in metadata JSON
+          `%"referenceNumber":"%${escapedRef}%`, // Search in metadata JSON
+          `%[${escapedRef}%` // Search in subject (reference number format)
+        )
+        
+        await logDebug('Using LIKE pattern matching for email queue search (FTS5 not available)', { 
+          searchTerm: refLower,
+          error: ftsError instanceof Error ? ftsError.message : String(ftsError)
+        })
+      }
     }
   }
   
@@ -865,6 +1453,212 @@ export async function getEmailQueueItems(options?: {
   return {
     items: result.rows.map((row: any) => formatEmailQueueItem(row)),
     total,
+  }
+}
+
+/**
+ * FIXED: Search email queue using FTS5 full-text search (Issue #35)
+ * 
+ * @param searchTerm - Search term to find in metadata, subject, or recipient email
+ * @param options - Additional search options
+ * @returns Array of matching email queue items
+ */
+export async function searchEmailQueue(
+  searchTerm: string,
+  options?: {
+    status?: EmailQueueItem["status"]
+    emailType?: EmailQueueItem["emailType"]
+    limit?: number
+    offset?: number
+  }
+): Promise<{ items: EmailQueueItem[]; total: number }> {
+  const db = getTursoClient()
+  
+  if (!searchTerm || !searchTerm.trim()) {
+    // Empty search term - return empty results
+    return { items: [], total: 0 }
+  }
+  
+  const searchLower = searchTerm.toLowerCase().trim()
+  
+  try {
+    // Check if FTS5 table exists
+    const ftsCheck = await db.execute({
+      sql: `SELECT name FROM sqlite_master WHERE type='table' AND name='email_queue_fts'`,
+    })
+    
+    if (ftsCheck.rows.length > 0) {
+      // FIXED: Add corruption detection for FTS5 table
+      // Test FTS5 table integrity before using it
+      try {
+        const integrityCheck = await db.execute({
+          sql: `SELECT COUNT(*) as count FROM email_queue_fts LIMIT 1`,
+        })
+        // If integrity check passes, proceed with FTS5 search
+      } catch (integrityError) {
+        // FTS5 table is corrupted, log and fallback to LIKE
+        await logWarn('FTS5 table corruption detected in searchEmailQueue, falling back to LIKE search', {
+          error: integrityError instanceof Error ? integrityError.message : String(integrityError),
+          searchTerm: searchLower
+        })
+        throw new Error('FTS5 table corrupted')
+      }
+      
+      // Use FTS5 for full-text search
+      // FTS5 supports better search syntax with phrase matching
+      // FIXED: Escape FTS5 special characters to prevent query injection (Issue #14)
+      const escapeFTS5Term = (term: string): string => {
+        // Escape FTS5 special characters: ", *, OR, AND, NOT
+        // Replace quotes with escaped quotes, remove other special chars
+        return term
+          .replace(/"/g, '""') // Escape quotes by doubling them
+          .replace(/[*]/g, '') // Remove wildcards (not needed for exact match)
+      }
+      const ftsQuery = searchLower.split(/\s+/)
+        .map(term => term.trim())
+        .filter(term => term.length > 0)
+        .map(term => `"${escapeFTS5Term(term)}"`)
+        .join(' OR ')
+      
+      // Build WHERE clause for additional filters
+      let filterSql = ""
+      const filterArgs: any[] = []
+      
+      if (options?.status) {
+        filterSql += " AND status = ?"
+        filterArgs.push(options.status)
+      }
+      
+      if (options?.emailType) {
+        filterSql += " AND email_type = ?"
+        filterArgs.push(options.emailType)
+      }
+      
+      // Get matching rowids from FTS5 table
+      const ftsResult = await db.execute({
+        sql: `
+          SELECT rowid FROM email_queue_fts 
+          WHERE email_queue_fts MATCH ? 
+          ORDER BY rank
+          LIMIT 1000
+        `,
+        args: [ftsQuery],
+      })
+      
+      if (ftsResult.rows.length === 0) {
+        return { items: [], total: 0 }
+      }
+      
+      // Get total count
+      const rowids = ftsResult.rows.map((row: any) => row.rowid)
+      const placeholders = rowids.map(() => '?').join(',')
+      const countSql = `
+        SELECT COUNT(*) as count FROM email_queue 
+        WHERE rowid IN (${placeholders})${filterSql}
+      `
+      const countResult = await db.execute({
+        sql: countSql,
+        args: [...rowids, ...filterArgs],
+      })
+      const total = (countResult.rows[0] as any)?.count || 0
+      
+      // Get items with pagination
+      let itemsSql = `
+        SELECT * FROM email_queue 
+        WHERE rowid IN (${placeholders})${filterSql}
+        ORDER BY created_at DESC
+      `
+      const itemsArgs = [...rowids, ...filterArgs]
+      
+      if (options?.limit) {
+        itemsSql += " LIMIT ?"
+        itemsArgs.push(options.limit)
+        if (options?.offset) {
+          itemsSql += " OFFSET ?"
+          itemsArgs.push(options.offset)
+        }
+      }
+      
+      const result = await db.execute({
+        sql: itemsSql,
+        args: itemsArgs,
+      })
+      
+      await logDebug('FTS5 email queue search completed', {
+        searchTerm: searchLower,
+        matchCount: total,
+        limit: options?.limit,
+        offset: options?.offset,
+      })
+      
+      return {
+        items: result.rows.map((row: any) => formatEmailQueueItem(row)),
+        total,
+      }
+    } else {
+      // FTS5 not available, fallback to LIKE pattern matching
+      throw new Error('FTS5 table not available')
+    }
+  } catch (ftsError) {
+    // Fallback to LIKE pattern matching
+    const escapedSearch = searchLower.replace(/%/g, '\\%').replace(/_/g, '\\_')
+    
+    let sql = `
+      SELECT * FROM email_queue 
+      WHERE (
+        searchable_metadata LIKE ? 
+        OR metadata LIKE ? 
+        OR subject LIKE ? 
+        OR recipient_email LIKE ?
+      )
+    `
+    const args: any[] = [
+      `%${escapedSearch}%`,
+      `%${escapedSearch}%`,
+      `%${escapedSearch}%`,
+      `%${escapedSearch}%`,
+    ]
+    
+    if (options?.status) {
+      sql += " AND status = ?"
+      args.push(options.status)
+    }
+    
+    if (options?.emailType) {
+      sql += " AND email_type = ?"
+      args.push(options.emailType)
+    }
+    
+    // Get total count
+    const countSql = sql.replace("SELECT *", "SELECT COUNT(*) as count")
+    const countResult = await db.execute({ sql: countSql, args })
+    const total = (countResult.rows[0] as any)?.count || 0
+    
+    // Get items with pagination
+    sql += " ORDER BY created_at DESC"
+    if (options?.limit) {
+      sql += " LIMIT ?"
+      args.push(options.limit)
+      if (options?.offset) {
+        sql += " OFFSET ?"
+        args.push(options.offset)
+      }
+    }
+    
+    const result = await db.execute({ sql, args })
+    
+    await logDebug('LIKE pattern matching email queue search completed (FTS5 not available)', {
+      searchTerm: searchLower,
+      matchCount: total,
+      limit: options?.limit,
+      offset: options?.offset,
+      error: ftsError instanceof Error ? ftsError.message : String(ftsError),
+    })
+    
+    return {
+      items: result.rows.map((row: any) => formatEmailQueueItem(row)),
+      total,
+    }
   }
 }
 
@@ -903,15 +1697,39 @@ export async function retryEmail(id: string): Promise<{ success: boolean; error?
     return { success: false, error: "Email is cancelled" }
   }
   
+  // FIXED: Check if email is already being processed by another process
+  // Use atomic claim to prevent concurrent retries
+  if (email.status === "processing") {
+    return { success: false, error: "Email is already being processed by another process" }
+  }
+  
   try {
-    // Mark as processing
-    await markEmailProcessing(id)
+    // FIXED: Use atomic claim instead of direct status update
+    // This prevents concurrent retries from multiple processes
+    const claimed = await markEmailProcessing(id)
+    if (!claimed) {
+      return { 
+        success: false, 
+        error: "Email is already being processed by another process (atomic claim failed)" 
+      }
+    }
     
     // Send email
     const transporter = await getTransporter()
-    const metadata = typeof email.metadata === 'object' 
-      ? email.metadata 
-      : (email.metadata ? safeParseMetadata(email.metadata) || {} : {})
+    // IMPROVED: Handle metadata parsing with error status
+    let metadata: Record<string, any> = {}
+    if (email.metadata) {
+      if (typeof email.metadata === 'object') {
+        metadata = email.metadata
+      } else {
+        const parseResult = safeParseMetadata(email.metadata)
+        metadata = parseResult.metadata || {}
+        if (parseResult.error) {
+          // Log error but continue processing (metadata might have parse errors)
+          await logWarn('Metadata parsing error for email', { emailId: email.id, error: parseResult.error })
+        }
+      }
+    }
     
     const mailOptions: nodemailer.SendMailOptions = {
       from: `"Hell University Reservation System" <${process.env.SMTP_USER}>`,
@@ -927,9 +1745,10 @@ export async function retryEmail(id: string): Promise<{ success: boolean; error?
     // Mark as sent
     await markEmailSent(id)
     
-    console.log(`Email ${id} manually retried successfully: ${result.messageId}`)
+    await logInfo('Email manually retried successfully', { emailId: id, messageId: result.messageId })
     return { success: true }
   } catch (error) {
+    // FIXED: If email sending fails, schedule retry instead of leaving in processing state
     // Safely extract error message
     let errorMessage = "Unknown error"
     if (error instanceof Error) {
@@ -954,22 +1773,177 @@ export async function retryEmail(id: string): Promise<{ success: boolean; error?
     // Sanitize error message to remove sensitive information
     errorMessage = sanitizeEmailErrorMessage(errorMessage, email.recipientEmail)
     
+    // Schedule retry with sanitized error message
     await scheduleNextRetry(id, errorMessage)
     return { success: false, error: errorMessage }
   }
 }
 
 /**
- * Cancel an email in queue
+ * FIXED: Cancel an email in queue with proper status checks (Issue #39)
+ * 
+ * SSE Interconnection: Broadcasts email:updated event when email is cancelled
+ * 
+ * @param id - Email queue item ID
+ * @returns Object with success status and message
+ * @throws Error if email is already being processed or sent
  */
-export async function cancelEmail(id: string): Promise<void> {
+export async function cancelEmail(id: string): Promise<{
+  success: boolean
+  message: string
+}> {
   const db = getTursoClient()
   const now = Math.floor(Date.now() / 1000)
   
-  await db.execute({
-    sql: "UPDATE email_queue SET status = 'cancelled', updated_at = ? WHERE id = ?",
+  // FIXED: Check email status before cancellation (Issue #39)
+  const emailResult = await db.execute({
+    sql: `SELECT * FROM email_queue WHERE id = ?`,
+    args: [id],
+  })
+  
+  if (emailResult.rows.length === 0) {
+    return {
+      success: false,
+      message: `Email ${id} not found`,
+    }
+  }
+  
+  const email = emailResult.rows[0] as any
+  
+  // FIXED: Prevent cancellation of emails that are already sent or processing (Issue #39)
+  if (email.status === 'sent') {
+    return {
+      success: false,
+      message: 'Cannot cancel email that has already been sent',
+    }
+  }
+  
+  if (email.status === 'processing') {
+    // FIXED: Allow cancellation of processing emails but warn admin (Issue #39)
+    // The email might be in-flight, but we can mark it as cancelled
+    // The processing will fail gracefully when it tries to update status
+    await logWarn('Cancelling email that is currently processing - email may still be sent', { emailId: id })
+  }
+  
+  if (email.status === 'cancelled') {
+    return {
+      success: true,
+      message: 'Email is already cancelled',
+    }
+  }
+  
+  // FIXED: Atomic cancellation with status check (Issue #39)
+  // Only cancel if status is still pending or failed (not sent/processing)
+  const result = await db.execute({
+    sql: `
+      UPDATE email_queue 
+      SET status = 'cancelled', updated_at = ?
+      WHERE id = ? 
+        AND status IN ('pending', 'failed')
+    `,
     args: [now, id],
   })
+  
+  if ((result.rowsAffected || 0) === 0) {
+    // Email status changed between check and update (race condition)
+    // Re-check status
+    const recheckResult = await db.execute({
+      sql: `SELECT status FROM email_queue WHERE id = ?`,
+      args: [id],
+    })
+    
+    if (recheckResult.rows.length > 0) {
+      const currentStatus = (recheckResult.rows[0] as any).status
+      if (currentStatus === 'sent') {
+        return {
+          success: false,
+          message: 'Email was sent before cancellation could complete',
+        }
+      }
+      if (currentStatus === 'processing') {
+        return {
+          success: false,
+          message: 'Email is currently being processed and cannot be cancelled',
+        }
+      }
+    }
+    
+    return {
+      success: false,
+      message: 'Failed to cancel email - status may have changed',
+    }
+  }
+  
+  // FIXED: Broadcast email:updated event for cancellation (Issue #39)
+  // SSE Interconnection: Admin clients see cancellation in real-time
+  try {
+    const { broadcastEmailQueueEvent } = await import('../../app/api/v1/admin/emails/stream/route')
+    const { broadcastStatsUpdate } = await import('../../app/api/v1/admin/stats/stream/route')
+    
+    // Get updated email details for broadcast
+    const updatedEmailResult = await db.execute({
+      sql: `SELECT * FROM email_queue WHERE id = ?`,
+      args: [id],
+    })
+    
+    if (updatedEmailResult.rows.length > 0) {
+      const emailRow = updatedEmailResult.rows[0] as any
+      
+      broadcastEmailQueueEvent('email:updated', {
+        id: emailRow.id,
+        emailType: emailRow.email_type,
+        recipientEmail: emailRow.recipient_email,
+        subject: emailRow.subject,
+        status: 'cancelled',
+        retryCount: emailRow.retry_count,
+        errorMessage: emailRow.error_message,
+        scheduledAt: emailRow.scheduled_at,
+        nextRetryAt: emailRow.next_retry_at || null,
+        sentAt: emailRow.sent_at,
+        createdAt: emailRow.created_at,
+        updatedAt: now,
+      })
+      
+      // Broadcast stats update
+      const stats = await getEmailQueueStats()
+      const { listBookings } = await import('./bookings')
+      const pendingBookingsResult = await listBookings({
+        statuses: ['pending', 'pending_deposit', 'paid_deposit'],
+        excludeArchived: true,
+        limit: 0,
+        offset: 0,
+      })
+      const pendingEmailCount = (stats.pending || 0) + (stats.failed || 0)
+      
+      broadcastStatsUpdate({
+        bookings: {
+          pending: pendingBookingsResult.total,
+        },
+        emailQueue: {
+          pending: stats.pending || 0,
+          failed: stats.failed || 0,
+          total: pendingEmailCount,
+        },
+      })
+    }
+  } catch (broadcastError) {
+    // Don't fail if broadcast fails - logging is optional
+    const errorMessage = broadcastError instanceof Error ? broadcastError.message : String(broadcastError)
+    try {
+      const { logWarn } = await import('./logger')
+      await logWarn('Failed to broadcast email cancellation event', {
+        emailId: id,
+        error: errorMessage,
+      })
+    } catch (logError) {
+      // Fallback: if logger fails, silently continue
+    }
+  }
+  
+  return {
+    success: true,
+    message: 'Email cancelled successfully',
+  }
 }
 
 /**
@@ -978,32 +1952,193 @@ export async function cancelEmail(id: string): Promise<void> {
 export async function deleteEmail(id: string): Promise<void> {
   const db = getTursoClient()
   
+  // Get email details before deleting (for broadcast)
+  const emailResult = await db.execute({
+    sql: `SELECT * FROM email_queue WHERE id = ?`,
+    args: [id],
+  })
+  
   await db.execute({
     sql: "DELETE FROM email_queue WHERE id = ?",
     args: [id],
   })
+
+  // Broadcast email deleted event (after successful DB delete)
+  if (emailResult.rows.length > 0) {
+    const emailRow = emailResult.rows[0] as any
+    try {
+      const { broadcastEmailQueueEvent } = await import('../../app/api/v1/admin/emails/stream/route')
+      const { broadcastStatsUpdate } = await import('../../app/api/v1/admin/stats/stream/route')
+      
+      broadcastEmailQueueEvent('email:deleted', {
+        id: emailRow.id,
+        emailType: emailRow.email_type,
+        recipientEmail: emailRow.recipient_email,
+        subject: emailRow.subject,
+        status: emailRow.status,
+        retryCount: emailRow.retry_count,
+        errorMessage: emailRow.error_message,
+        scheduledAt: emailRow.scheduled_at,
+        nextRetryAt: emailRow.next_retry_at || null,
+        sentAt: emailRow.sent_at,
+        createdAt: emailRow.created_at,
+        updatedAt: emailRow.updated_at,
+      })
+
+      // Broadcast stats update
+      const stats = await getEmailQueueStats()
+      const { listBookings } = await import('./bookings')
+      const pendingBookingsResult = await listBookings({
+        statuses: ['pending', 'pending_deposit', 'paid_deposit'],
+        excludeArchived: true,
+        limit: 0,
+        offset: 0,
+      })
+      const pendingEmailCount = (stats.pending || 0) + (stats.failed || 0)
+      
+      broadcastStatsUpdate({
+        bookings: {
+          pending: pendingBookingsResult.total,
+        },
+        emailQueue: {
+          pending: stats.pending || 0,
+          failed: stats.failed || 0,
+          total: pendingEmailCount,
+        },
+      })
+    } catch (broadcastError) {
+      // Don't fail if broadcast fails - logging is optional
+      const errorMessage = broadcastError instanceof Error ? broadcastError.message : String(broadcastError)
+      try {
+        const { logWarn } = await import('./logger')
+        await logWarn('Failed to broadcast email deleted event', {
+          emailId: id,
+          error: errorMessage,
+        })
+      } catch (logError) {
+        // Fallback: if logger fails, silently continue (avoid infinite loops)
+      }
+    }
+  }
 }
 
 /**
- * Cleanup all sent emails (removes all emails with status 'sent')
+ * FIXED: Cleanup sent emails with age check and retention policy (Issue #26)
  * 
- * NOTE: This function deletes ALL sent emails, not just old ones.
- * If you need to delete only emails older than a certain threshold,
- * modify the SQL query to add a date filter.
+ * Configurable via environment variables:
+ * - EMAIL_CLEANUP_RETENTION_DAYS: Number of days to keep sent emails (default: 30)
+ * - EMAIL_CLEANUP_ENABLED: Enable/disable cleanup (default: true)
+ * 
+ * SSE Interconnection: Broadcasts email:deleted events for each cleaned email
  */
 export async function cleanupAllSentEmails(): Promise<number> {
   const db = getTursoClient()
+  const now = Math.floor(Date.now() / 1000)
   
+  // FIXED: Configurable retention policy (Issue #26)
+  const retentionDays = parseInt(process.env.EMAIL_CLEANUP_RETENTION_DAYS || "30")
+  const cleanupEnabled = process.env.EMAIL_CLEANUP_ENABLED !== "false" // Default: enabled
+  const retentionSeconds = retentionDays * 24 * 60 * 60
+  const cutoffTime = now - retentionSeconds
+  
+  if (!cleanupEnabled) {
+    await logInfo('Email cleanup is disabled via EMAIL_CLEANUP_ENABLED')
+    return 0
+  }
+  
+  // FIXED: Get emails to delete BEFORE deletion (for SSE broadcasts)
+  const emailsToDelete = await db.execute({
+    sql: `
+      SELECT * FROM email_queue
+      WHERE status = 'sent'
+        AND sent_at IS NOT NULL
+        AND sent_at < ?
+    `,
+    args: [cutoffTime],
+  })
+  
+  const deletedCount = emailsToDelete.rows.length
+  
+  if (deletedCount === 0) {
+    return 0
+  }
+  
+  // Delete emails
   const result = await db.execute({
     sql: `
       DELETE FROM email_queue
       WHERE status = 'sent'
         AND sent_at IS NOT NULL
+        AND sent_at < ?
     `,
-    args: [],
+    args: [cutoffTime],
   })
   
-  return result.rowsAffected || 0
+  const actualDeleted = result.rowsAffected || 0
+  
+  // FIXED: Broadcast email:deleted events for each cleaned email (Issue #26)
+  // SSE Interconnection: Admin clients see cleanup in real-time
+  try {
+    const { broadcastEmailQueueEvent } = await import('../../app/api/v1/admin/emails/stream/route')
+    const { broadcastStatsUpdate } = await import('../../app/api/v1/admin/stats/stream/route')
+    
+    // Broadcast deletion for each email
+    for (const emailRow of emailsToDelete.rows) {
+      const email = emailRow as any
+      broadcastEmailQueueEvent('email:deleted', {
+        id: email.id,
+        emailType: email.email_type,
+        recipientEmail: email.recipient_email,
+        subject: email.subject,
+        status: 'sent',
+        retryCount: email.retry_count,
+        errorMessage: email.error_message,
+        scheduledAt: email.scheduled_at,
+        nextRetryAt: email.next_retry_at || null,
+        sentAt: email.sent_at,
+        createdAt: email.created_at,
+        updatedAt: now,
+      })
+    }
+    
+    // Broadcast stats update after cleanup
+    const stats = await getEmailQueueStats()
+    const { listBookings } = await import('./bookings')
+    const pendingBookingsResult = await listBookings({
+      statuses: ['pending', 'pending_deposit', 'paid_deposit'],
+      excludeArchived: true,
+      limit: 0,
+      offset: 0,
+    })
+    const pendingEmailCount = (stats.pending || 0) + (stats.failed || 0)
+    
+    broadcastStatsUpdate({
+      bookings: {
+        pending: pendingBookingsResult.total,
+      },
+      emailQueue: {
+        pending: stats.pending || 0,
+        failed: stats.failed || 0,
+        total: pendingEmailCount,
+      },
+    })
+  } catch (broadcastError) {
+    // Don't fail if broadcast fails - logging is optional
+    const errorMessage = broadcastError instanceof Error ? broadcastError.message : String(broadcastError)
+    try {
+      const { logWarn } = await import('./logger')
+      await logWarn('Failed to broadcast email cleanup events', {
+        deletedCount: actualDeleted,
+        error: errorMessage,
+      })
+    } catch (logError) {
+      // Fallback: if logger fails, silently continue
+    }
+  }
+  
+  await logInfo('Cleaned up sent emails', { deletedCount: actualDeleted, retentionDays })
+  
+  return actualDeleted
 }
 
 /**
@@ -1087,19 +2222,46 @@ function sanitizeEmailErrorMessage(errorMessage: string, recipientEmail: string)
  * Safely parse JSON metadata
  * IMPROVED: Enhanced robustness with comprehensive error handling
  */
-function safeParseMetadata(metadata: string | null | undefined): Record<string, any> | undefined {
-  if (!metadata) return undefined
+/**
+ * Safely parse email queue metadata with proper error handling
+ * Returns object with metadata and error status
+ * FIXED: Improved circular reference detection and error handling
+ */
+function safeParseMetadata(
+  metadata: string | null | undefined
+): {
+  metadata: Record<string, any> | undefined
+  error: string | null
+} {
+  if (!metadata) {
+    return { metadata: undefined, error: null }
+  }
   
   // If already an object, validate it's not circular and return as-is
   if (typeof metadata === 'object' && !Array.isArray(metadata) && metadata !== null) {
-    // Check for circular references (basic check)
+    // IMPROVED: Better circular reference detection using WeakSet
+    const seen = new WeakSet()
     try {
-      JSON.stringify(metadata)
-      return metadata
+      // Try to stringify with circular reference detection
+      JSON.stringify(metadata, (key, value) => {
+        if (typeof value === 'object' && value !== null) {
+          if (seen.has(value)) {
+            throw new Error('Circular reference detected')
+          }
+          seen.add(value)
+        }
+        return value
+      })
+      return { metadata: metadata as Record<string, any>, error: null }
     } catch (error) {
-      // Circular reference detected - return safe fallback
-      console.warn('Metadata contains circular reference, using fallback')
-      return { _parseError: true, _error: 'circular_reference' }
+      // Circular reference detected - return error status
+      const errorMessage = error instanceof Error ? error.message : 'Circular reference detected'
+      // Fire-and-forget logging for utility function
+      logWarn('Metadata contains circular reference', { error: errorMessage }).catch(() => {})
+      return { 
+        metadata: { _parseError: true, _error: 'circular_reference' },
+        error: errorMessage
+      }
     }
   }
   
@@ -1108,7 +2270,7 @@ function safeParseMetadata(metadata: string | null | undefined): Record<string, 
     // Validate string is not empty or just whitespace
     const trimmed = metadata.trim()
     if (trimmed === '' || trimmed === 'null' || trimmed === 'undefined') {
-      return undefined
+      return { metadata: undefined, error: null }
     }
     
     // CRITICAL: Check size before parsing to prevent DoS
@@ -1118,55 +2280,173 @@ function safeParseMetadata(metadata: string | null | undefined): Record<string, 
       10
     )
     if (trimmed.length > MAX_METADATA_SIZE) {
-      console.warn(`Metadata string too large: ${trimmed.length} bytes, max: ${MAX_METADATA_SIZE} bytes`)
+      const errorMessage = `Metadata exceeds maximum size of ${MAX_METADATA_SIZE} bytes (${trimmed.length} bytes)`
+      // Fire-and-forget logging for utility function
+      logWarn('Metadata string too large', { size: trimmed.length, maxSize: MAX_METADATA_SIZE }).catch(() => {})
       return { 
-        _parseError: true, 
-        _error: 'metadata_too_large',
-        _errorMessage: `Metadata exceeds maximum size of ${MAX_METADATA_SIZE} bytes`
+        metadata: { 
+          _parseError: true, 
+          _error: 'metadata_too_large',
+          _errorMessage: errorMessage
+        },
+        error: errorMessage
+      }
+    }
+    
+    // IMPROVED: Validate JSON structure before parsing
+    // Check for common JSON issues (unclosed brackets, quotes, etc.)
+    if (!isValidJSONStructure(trimmed)) {
+      const errorMessage = 'Invalid JSON structure detected'
+      // Fire-and-forget logging for utility function
+      logError('Invalid JSON structure in metadata').catch(() => {})
+      return {
+        metadata: {
+          _parseError: true,
+          _error: 'invalid_json_structure',
+          _errorMessage: errorMessage
+        },
+        error: errorMessage
       }
     }
     
     try {
-      const parsed = JSON.parse(trimmed)
+      // IMPROVED: Parse with circular reference detection using reviver
+      const seen = new WeakSet()
+      const parsed = JSON.parse(trimmed, (key, value) => {
+        if (typeof value === 'object' && value !== null) {
+          if (seen.has(value)) {
+            throw new Error('Circular reference detected in parsed JSON')
+          }
+          seen.add(value)
+        }
+        return value
+      })
       
       // Validate parsed result is an object (not array, string, number, etc.)
       if (typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed)) {
-        // Check for circular references in parsed object
+        // Additional validation: ensure no circular references
         try {
-          JSON.stringify(parsed)
-          return parsed
+          const seen2 = new WeakSet()
+          JSON.stringify(parsed, (key, value) => {
+            if (typeof value === 'object' && value !== null) {
+              if (seen2.has(value)) {
+                throw new Error('Circular reference detected after parsing')
+              }
+              seen2.add(value)
+            }
+            return value
+          })
+          return { metadata: parsed, error: null }
         } catch (circularError) {
-          console.warn('Parsed metadata contains circular reference, using fallback')
-          return { _parseError: true, _error: 'circular_reference' }
+          const errorMessage = circularError instanceof Error ? circularError.message : 'Circular reference detected'
+          // Fire-and-forget logging for utility function
+          logWarn('Parsed metadata contains circular reference', { error: errorMessage }).catch(() => {})
+          return { 
+            metadata: { _parseError: true, _error: 'circular_reference' },
+            error: errorMessage
+          }
         }
       } else {
         // Parsed but not an object - wrap it
-        console.warn('Metadata parsed but is not an object, wrapping it')
-        return { _parsedValue: parsed }
+        // Fire-and-forget logging for utility function
+        logWarn('Metadata parsed but is not an object, wrapping it').catch(() => {})
+        return { metadata: { _parsedValue: parsed }, error: null }
       }
     } catch (error) {
-      // JSON parse failed - log for investigation but don't fail
+      // JSON parse failed - return error status
       const errorMessage = error instanceof Error ? error.message : String(error)
-      console.error('Failed to parse metadata JSON:', errorMessage)
-      console.error('Metadata value (first 200 chars):', metadata.substring(0, 200))
+      // Fire-and-forget logging for utility function
+      logError('Failed to parse metadata JSON', { error: errorMessage, metadataPreview: metadata.substring(0, 200) }).catch(() => {})
       
-      // Return a safe fallback object with error info (but sanitized)
+      // Return error status with sanitized error message
       return { 
-        _parseError: true, 
-        _error: 'invalid_json',
-        _errorMessage: errorMessage.substring(0, 100) // Limit error message length
+        metadata: { 
+          _parseError: true, 
+          _error: 'invalid_json',
+          _errorMessage: errorMessage.substring(0, 100) // Limit error message length
+        },
+        error: errorMessage
       }
     }
   }
   
   // Unknown type - return undefined
-  return undefined
+  return { metadata: undefined, error: 'Unknown metadata type' }
+}
+
+/**
+ * Basic JSON structure validation
+ * Checks for common issues like unclosed brackets, quotes, etc.
+ */
+function isValidJSONStructure(str: string): boolean {
+  // Basic checks: balanced brackets, quotes, etc.
+  let depth = 0
+  let inString = false
+  let escapeNext = false
+  
+  for (let i = 0; i < str.length; i++) {
+    const char = str[i]
+    
+    if (escapeNext) {
+      escapeNext = false
+      continue
+    }
+    
+    if (char === '\\') {
+      escapeNext = true
+      continue
+    }
+    
+    if (char === '"') {
+      inString = !inString
+      continue
+    }
+    
+    if (inString) {
+      continue
+    }
+    
+    if (char === '{' || char === '[') {
+      depth++
+    } else if (char === '}' || char === ']') {
+      depth--
+      if (depth < 0) {
+        return false // Unmatched closing bracket
+      }
+    }
+  }
+  
+  return depth === 0 && !inString
 }
 
 /**
  * Format email queue item from database row
  */
+/**
+ * Format email queue item from database row
+ * FIXED: Handles metadata parsing errors correctly (Issue #8)
+ */
 function formatEmailQueueItem(row: any): EmailQueueItem {
+  // FIXED: Handle metadata parsing errors - if parsing fails, use empty object instead of error object
+  const parseResult = safeParseMetadata(row.metadata)
+  let metadata: Record<string, any> | undefined = undefined
+  
+  if (parseResult.metadata) {
+    // Check if metadata is an error object (has _parseError flag)
+    if (parseResult.metadata._parseError) {
+      // Metadata parsing failed - use empty object to prevent downstream issues
+      // Log warning but don't fail - email can still be processed
+      logWarn('Metadata parsing error in formatEmailQueueItem, using empty metadata', {
+        emailId: row.id,
+        error: parseResult.error || 'Unknown parsing error'
+      }).catch(() => {}) // Fire-and-forget logging
+      metadata = undefined
+    } else {
+      // Valid metadata
+      metadata = parseResult.metadata
+    }
+  }
+  
   return {
     id: row.id,
     emailType: row.email_type,
@@ -1174,7 +2454,7 @@ function formatEmailQueueItem(row: any): EmailQueueItem {
     subject: row.subject,
     htmlContent: row.html_content,
     textContent: row.text_content,
-    metadata: safeParseMetadata(row.metadata),
+    metadata,
     retryCount: row.retry_count,
     maxRetries: row.max_retries,
     status: row.status,

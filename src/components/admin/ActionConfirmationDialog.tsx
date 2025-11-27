@@ -47,8 +47,8 @@ export function ActionConfirmationDialog({
 }: ActionConfirmationDialogProps) {
   if (!action || !booking) return null
 
-  const hasErrors = validation && validation.errors.length > 0
-  const hasWarnings = validation && validation.warnings.length > 0
+  const hasErrors = validation ? validation.errors.length > 0 : false
+  const hasWarnings = validation ? validation.warnings.length > 0 : false
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -139,7 +139,7 @@ export function ActionConfirmationDialog({
             <AlertTitle>Email Notification</AlertTitle>
             <AlertDescription>
               An email notification will be sent to {booking.email} with the status update
-              {action.targetStatus === "accepted" || action.targetStatus === "postponed"
+              {action.targetStatus === "pending_deposit"
                 ? " and a link to manage their reservation"
                 : ""}
               .

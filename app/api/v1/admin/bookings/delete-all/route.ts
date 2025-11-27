@@ -100,7 +100,8 @@ export const POST = withVersioning(async (request: Request) => {
       ? ["pending", "pending_deposit", "paid_deposit", "confirmed"]
       : ["finished", "cancelled"]
 
-    // Get all bookings to delete (for logging and notifications)
+    // FIXED: Get all bookings to delete BEFORE deletion (Issue #7)
+    // This ensures we can check status and send emails for all bookings, even if they're already cancelled/finished
     const placeholders = statusesToDelete.map(() => "?").join(", ")
     const bookingsResult = await db.execute({
       sql: `SELECT * FROM bookings WHERE status IN (${placeholders})`,
@@ -122,6 +123,15 @@ export const POST = withVersioning(async (request: Request) => {
     }
 
     await logger.info(`Deleting ${bookingCount} ${bookingType} bookings`, { bookingType, count: bookingCount })
+    
+    // FIXED: Filter bookings that need user cancellation emails BEFORE deletion
+    // This ensures we send emails for all active bookings, even if some are already cancelled/finished
+    const bookingsNeedingUserNotification = bookings.filter((booking: any) => {
+      // Only send user cancellation emails for active bookings that weren't already cancelled/finished
+      return bookingType === "active" &&
+             booking.status !== "cancelled" &&
+             booking.status !== "finished"
+    })
 
     // CRITICAL: Acquire action lock to prevent concurrent bulk deletions
     // Use dynamic resource ID based on bookingType to allow independent locks for active vs archive
@@ -164,6 +174,8 @@ export const POST = withVersioning(async (request: Request) => {
           const { releaseActionLock } = await import('@/lib/action-lock')
           await releaseActionLock(actionLockId, adminEmail)
           await logger.debug('Action lock released', { lockId: actionLockId })
+          // Clear lock ID to make function idempotent
+          actionLockId = null
         } catch (releaseError) {
           await logger.warn('Failed to release action lock', {
             error: releaseError instanceof Error ? releaseError.message : String(releaseError),
@@ -173,6 +185,114 @@ export const POST = withVersioning(async (request: Request) => {
       }
     }
 
+    // CRITICAL: Set up automatic lock extension for long operations
+    // Bulk deletion can take longer than 30 seconds, so we need to extend the lock automatically
+    // Declare lockManager outside try block so it's accessible in finally block
+    let lockManager: Awaited<ReturnType<typeof import('@/lib/action-lock').createLockExtensionManager>> | null = null
+    if (actionLockId && adminEmail) {
+      try {
+        const { createLockExtensionManager } = await import('@/lib/action-lock')
+        lockManager = createLockExtensionManager(actionLockId, adminEmail)
+        if (lockManager) {
+          // FIXED: Wrap start() in try-catch to ensure cleanup on failure (Issue #1)
+          try {
+            lockManager.start()
+            await logger.debug('Automatic lock extension started for bulk deletion', { bookingType, lockId: actionLockId })
+          } catch (startError) {
+            // If start() fails, stop the manager to prevent memory leaks
+            lockManager.stop()
+            await logger.warn('Failed to start lock extension manager for bulk deletion', {
+              bookingType,
+              lockId: actionLockId,
+              error: startError instanceof Error ? startError.message : String(startError),
+            })
+            lockManager = null // Clear manager reference
+          }
+        }
+      } catch (importError) {
+        // If import fails, log but continue (lock extension is optional)
+        await logger.warn('Failed to import lock extension manager for bulk deletion', {
+          bookingType,
+          error: importError instanceof Error ? importError.message : String(importError),
+        })
+      }
+    }
+
+    // CRITICAL: Use try-finally to ensure lock is ALWAYS released, even on unhandled exceptions
+    try {
+      // CRITICAL: Broadcast booking deletion events BEFORE deletion (need booking data)
+    // Loop through bookings array and broadcast each deletion
+    try {
+      const { broadcastBookingEvent } = await import('../stream/route')
+      
+      for (const bookingRow of bookings) {
+        try {
+          // Prepare booking data with raw timestamps (Unix timestamps, not date strings)
+          const bookingData = {
+            id: bookingRow.id,
+            reference_number: bookingRow.reference_number ?? null,
+            name: bookingRow.name,
+            email: bookingRow.email,
+            phone: bookingRow.phone ?? null,
+            participants: bookingRow.participants ?? null,
+            event_type: bookingRow.event_type,
+            other_event_type: bookingRow.other_event_type ?? null,
+            date_range: bookingRow.date_range ?? 0,
+            start_date: bookingRow.start_date ?? null,
+            end_date: bookingRow.end_date ?? null,
+            start_time: bookingRow.start_time ?? null,
+            end_time: bookingRow.end_time ?? null,
+            organization_type: bookingRow.organization_type ?? null,
+            organized_person: bookingRow.organized_person ?? null,
+            introduction: bookingRow.introduction ?? null,
+            biography: bookingRow.biography ?? null,
+            special_requests: bookingRow.special_requests ?? null,
+            status: bookingRow.status,
+            admin_notes: bookingRow.admin_notes ?? null,
+            response_token: bookingRow.response_token ?? null,
+            token_expires_at: bookingRow.token_expires_at ?? null,
+            proposed_date: bookingRow.proposed_date ?? null,
+            proposed_end_date: bookingRow.proposed_end_date ?? null,
+            user_response: bookingRow.user_response ?? null,
+            response_date: bookingRow.response_date ?? null,
+            deposit_evidence_url: bookingRow.deposit_evidence_url ?? null,
+            deposit_verified_at: bookingRow.deposit_verified_at ?? null,
+            deposit_verified_by: bookingRow.deposit_verified_by ?? null,
+            deposit_verified_from_other_channel: bookingRow.deposit_verified_from_other_channel ?? false,
+            fee_amount: bookingRow.fee_amount ?? null,
+            fee_amount_original: bookingRow.fee_amount_original ?? null,
+            fee_currency: bookingRow.fee_currency ?? null,
+            fee_conversion_rate: bookingRow.fee_conversion_rate ?? null,
+            fee_rate_date: bookingRow.fee_rate_date ?? null,
+            fee_recorded_at: bookingRow.fee_recorded_at ?? null,
+            fee_recorded_by: bookingRow.fee_recorded_by ?? null,
+            fee_notes: bookingRow.fee_notes ?? null,
+            created_at: bookingRow.created_at,
+            updated_at: bookingRow.updated_at,
+          }
+          
+          await broadcastBookingEvent('booking:deleted', bookingData, {
+            changedBy: deletedBy,
+            changeReason: `All ${bookingType} bookings deleted by administrator`,
+          })
+        } catch (broadcastError) {
+          // Log but continue with other bookings
+          await logger.warn('Failed to broadcast deletion for booking', {
+            bookingId: bookingRow.id,
+            error: broadcastError instanceof Error ? broadcastError.message : String(broadcastError),
+          })
+        }
+      }
+      
+      await logger.info(`Bulk deletion broadcasts sent for ${bookingCount} bookings`, { bookingType })
+    } catch (broadcastError) {
+      // Don't fail if broadcast fails - it's non-critical
+      await logger.warn('Failed to broadcast bulk deletion events', {
+        bookingType,
+        error: broadcastError instanceof Error ? broadcastError.message : String(broadcastError),
+      })
+    }
+    
     try {
       // Delete all bookings
       await db.execute({
@@ -182,6 +302,43 @@ export const POST = withVersioning(async (request: Request) => {
     } catch (error) {
       await releaseLock()
       throw error
+    }
+    
+    // CRITICAL: Broadcast stats update (bulk deletion affects pending count)
+    try {
+      const { broadcastStatsUpdate } = await import('../../stats/stream/route')
+      const { listBookings } = await import('@/lib/bookings')
+      const { getEmailQueueStats } = await import('@/lib/email-queue')
+      
+      // Get updated stats
+      const pendingBookingsResult = await listBookings({
+        statuses: ['pending', 'pending_deposit', 'paid_deposit'],
+        excludeArchived: true,
+        limit: 0,
+        offset: 0,
+      })
+      
+      const emailQueueStats = await getEmailQueueStats()
+      const pendingEmailCount = (emailQueueStats.pending || 0) + (emailQueueStats.failed || 0)
+      
+      await broadcastStatsUpdate({
+        bookings: {
+          pending: pendingBookingsResult.total,
+        },
+        emailQueue: {
+          pending: emailQueueStats.pending || 0,
+          failed: emailQueueStats.failed || 0,
+          total: pendingEmailCount,
+        },
+      })
+      
+      await logger.info('Stats update broadcast sent after bulk deletion')
+    } catch (statsError) {
+      // Don't fail if stats broadcast fails - it's non-critical
+      await logger.warn('Failed to broadcast stats update after bulk deletion', {
+        bookingType,
+        error: statsError instanceof Error ? statsError.message : String(statsError),
+      })
     }
 
     // Log admin action
@@ -232,12 +389,13 @@ export const POST = withVersioning(async (request: Request) => {
         )
       }
 
-      // Queue user notification email (only for active bookings that weren't already cancelled/finished)
-      if (
-        bookingType === "active" &&
-        formattedBooking.status !== "cancelled" &&
-        formattedBooking.status !== "finished"
-      ) {
+      // FIXED: Queue user notification email for bookings that need it (Issue #7)
+      // Check if this booking needs user notification (determined BEFORE deletion)
+      const needsUserNotification = bookingsNeedingUserNotification.some(
+        (b: any) => b.id === formattedBooking.id
+      )
+      
+      if (needsUserNotification) {
         backgroundOperations.push(
           (async () => {
             try {
@@ -306,6 +464,48 @@ export const POST = withVersioning(async (request: Request) => {
       },
       { requestId }
     )
+    } finally {
+      // CRITICAL: Stop automatic lock extension before releasing lock
+      // FIXED: Ensure lockManager is stopped even if it was created but start() failed (Issue #2)
+      // FIXED: Add defensive cleanup if stop() throws to prevent memory leaks (HIGH-3)
+      if (lockManager) {
+        try {
+          lockManager.stop()
+          await logger.debug('Automatic lock extension stopped for bulk deletion', { bookingType, lockId: actionLockId })
+        } catch (stopError) {
+          // FIXED: Log error but continue - lock release is more important (Issue #2)
+          await logger.warn('Error stopping lock extension manager for bulk deletion', {
+            bookingType,
+            lockId: actionLockId,
+            error: stopError instanceof Error ? stopError.message : String(stopError),
+          })
+          
+          // FIXED: Defensive cleanup - try to manually clear interval if stop() failed (HIGH-3)
+          // This is a last resort to prevent memory leaks if stop() throws unexpectedly
+          try {
+            // Access private intervalId via type assertion (last resort defensive measure)
+            const manager = lockManager as any
+            if (manager.intervalId) {
+              clearInterval(manager.intervalId)
+              manager.intervalId = null
+              manager.isActive = false
+              await logger.warn('Manually cleared lock extension interval after stop() failure for bulk deletion', {
+                bookingType,
+                lockId: actionLockId,
+              })
+            }
+          } catch (cleanupError) {
+            // Ignore cleanup errors - already logged the original error
+            // This is a defensive measure, so failure here is acceptable
+          }
+        }
+      }
+      
+      // CRITICAL: Always release lock, even if an unhandled exception occurs
+      // This ensures locks are never left hanging, preventing other admins from being blocked
+      // Note: releaseLock is idempotent, so calling it multiple times is safe
+      await releaseLock()
+    }
   }, { endpoint: getRequestPath(request) })
 })
 

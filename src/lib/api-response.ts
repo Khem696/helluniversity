@@ -8,6 +8,7 @@
 import { NextResponse } from 'next/server'
 import { randomUUID } from 'crypto'
 import { withSecurityHeaders } from './security-headers'
+import { addVersionHeaders } from './api-versioning'
 
 export interface ApiResponse<T = any> {
   success: boolean
@@ -94,8 +95,9 @@ export function successResponse<T>(
   
   // Add API version headers if version is detected
   if (meta?.apiVersion) {
-    const { addVersionHeaders } = require('./api-versioning')
-    return addVersionHeaders(securedResponse, meta.apiVersion)
+    // FIXED: Use ES6 import instead of require() for consistency
+    // FIXED: Cast return type to preserve generic type (TypeScript error fix)
+    return addVersionHeaders(securedResponse, meta.apiVersion) as NextResponse<ApiResponse<T>>
   }
   
   return securedResponse

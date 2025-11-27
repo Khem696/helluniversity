@@ -145,28 +145,21 @@ export const POST = withVersioning(async (
         { requestId }
       )
     }
-    let { response, proposedDate, proposedEndDate, proposedStartTime, proposedEndTime, message } = body
-    
-    // Extract date part from ISO strings if needed (frontend sends ISO strings)
-    if (proposedDate && proposedDate.includes('T')) {
-      proposedDate = proposedDate.split('T')[0]
-    }
-    if (proposedEndDate && proposedEndDate.includes('T')) {
-      proposedEndDate = proposedEndDate.split('T')[0]
-    }
+    const { response, message } = body
     
     await logger.debug('User response data parsed', { 
       response,
-      hasProposedDate: !!proposedDate,
       hasMessage: !!message
     })
 
     // Validate response type
-    if (!response || !["accept", "propose", "cancel"].includes(response)) {
+    // NOTE: Only "cancel" is supported in the current booking flow
+    // Legacy responses ("accept", "propose", "check-in") have been removed
+    if (!response || response !== "cancel") {
       await logger.warn('User response rejected: invalid response type', { response })
       return errorResponse(
         ErrorCodes.VALIDATION_ERROR,
-        "Invalid response. Must be: accept, propose, or cancel",
+        "Invalid response. Only 'cancel' is supported.",
         undefined,
         400,
         { requestId }
@@ -244,257 +237,8 @@ export const POST = withVersioning(async (
       )
     }
 
-    // Validate proposed date if response is "propose"
-    if (response === "propose" && !proposedDate) {
-      await logger.warn('User response rejected: missing proposed date', { bookingId: booking.id })
-      return errorResponse(
-        ErrorCodes.VALIDATION_ERROR,
-        "proposedDate is required when response is 'propose'",
-        undefined,
-        400,
-        { requestId }
-      )
-    }
-
-    // Check for overlaps if user is proposing a new date
-    if (response === "propose" && proposedDate) {
-      const { checkBookingOverlap } = await import('@/lib/booking-validations')
-      const { createBangkokTimestamp, getBangkokTime, getBangkokDateString } = await import('@/lib/timezone')
-      
-      // Validate that proposed date is not today (users cannot propose current date)
-      const now = getBangkokTime()
-      const todayDateStr = getBangkokDateString()
-      if (proposedDate === todayDateStr) {
-        await logger.warn('Proposed date is today rejected', { bookingId: booking.id, proposedDate })
-        return errorResponse(
-          ErrorCodes.INVALID_INPUT,
-          'Proposed date cannot be today. Please select a future date.',
-          {},
-          400,
-          { requestId }
-        )
-      }
-      
-      // CRITICAL: Calculate timestamps correctly (date + time)
-      // Pattern: createBangkokTimestamp(dateString, null) then calculateStartTimestamp(timestamp, timeString)
-      const { calculateStartTimestamp } = await import('@/lib/booking-validations')
-      const proposedStartDateTimestamp = createBangkokTimestamp(proposedDate, null)
-      const proposedStartTimestamp = calculateStartTimestamp(
-        proposedStartDateTimestamp,
-        proposedStartTime || null
-      )
-      
-      let proposedEndDateTimestamp: number | null = null
-      if (proposedEndDate) {
-        proposedEndDateTimestamp = createBangkokTimestamp(proposedEndDate, null)
-      }
-      
-      // Validate that proposed date is in the future
-      if (proposedStartTimestamp <= now) {
-        await logger.warn('Proposed date is in the past rejected', { bookingId: booking.id, proposedDate, proposedStartTimestamp, now })
-        return errorResponse(
-          ErrorCodes.INVALID_INPUT,
-          'Proposed date must be in the future. Please select a future date.',
-          {},
-          400,
-          { requestId }
-        )
-      }
-      
-      // Validate date range consistency: end_date must be >= start_date
-      if (proposedEndDateTimestamp && proposedEndDateTimestamp < proposedStartDateTimestamp) {
-        await logger.warn('Proposed date range rejected: end date is before start date', {
-          bookingId: booking.id,
-          proposedDate,
-          proposedEndDate,
-          proposedStartDateTimestamp,
-          proposedEndDateTimestamp
-        })
-        return errorResponse(
-          ErrorCodes.INVALID_INPUT,
-          'Proposed end date must be after or equal to start date.',
-          {},
-          400,
-          { requestId }
-        )
-      }
-      
-      // CRITICAL: If end_date equals start_date, treat as single-day booking
-      const isEffectivelySingleDay = !proposedEndDateTimestamp || proposedEndDateTimestamp === proposedStartDateTimestamp
-      
-      // Parse time strings helper (HH:MM format)
-      const parseTime = (timeStr: string): { hour24: number; minutes: number } | null => {
-        if (!timeStr) return null
-        const match = timeStr.trim().match(/^(\d{1,2}):(\d{2})$/)
-        if (match) {
-          const hour24 = parseInt(match[1], 10)
-          const minutes = parseInt(match[2] || '00', 10)
-          if (hour24 >= 0 && hour24 <= 23 && minutes >= 0 && minutes <= 59) {
-            return { hour24, minutes }
-          }
-        }
-        return null
-      }
-      
-      // Validate time range for single-day bookings (including when end_date equals start_date)
-      if (isEffectivelySingleDay && proposedStartTime && proposedEndTime) {
-        const startParsed = parseTime(proposedStartTime)
-        const endParsed = parseTime(proposedEndTime)
-        
-        if (startParsed && endParsed) {
-          const startTotal = startParsed.hour24 * 60 + startParsed.minutes
-          const endTotal = endParsed.hour24 * 60 + endParsed.minutes
-          
-          if (endTotal <= startTotal) {
-            await logger.warn('Proposed date rejected: end time is not after start time for single-day booking', {
-              bookingId: booking.id,
-              proposedStartTime,
-              proposedEndTime,
-              proposedDate,
-              proposedEndDate
-            })
-            return errorResponse(
-              ErrorCodes.INVALID_INPUT,
-              'For single-day bookings, end time must be after start time.',
-              {},
-              400,
-              { requestId }
-            )
-          }
-        }
-      }
-      
-      // CRITICAL: Validate that end timestamp is > start timestamp (accounts for dates + times)
-      // This catches edge cases like: same date but invalid times, or dates valid but times make it invalid
-      let proposedEndTimestamp: number
-      if (proposedEndDateTimestamp) {
-        // Multi-day booking: calculate end timestamp from end_date + end_time
-        if (proposedEndTime) {
-          const endParsed = parseTime(proposedEndTime)
-          if (endParsed) {
-            try {
-              const { TZDate } = await import('@date-fns/tz')
-              const BANGKOK_TIMEZONE = 'Asia/Bangkok'
-              const utcDate = new Date(proposedEndDateTimestamp * 1000)
-              const tzDate = new TZDate(utcDate.getTime(), BANGKOK_TIMEZONE)
-              const year = tzDate.getFullYear()
-              const month = tzDate.getMonth()
-              const day = tzDate.getDate()
-              const tzDateWithTime = new TZDate(year, month, day, endParsed.hour24, endParsed.minutes, 0, BANGKOK_TIMEZONE)
-              proposedEndTimestamp = Math.floor(tzDateWithTime.getTime() / 1000)
-            } catch (error) {
-              proposedEndTimestamp = proposedEndDateTimestamp
-            }
-          } else {
-            proposedEndTimestamp = proposedEndDateTimestamp
-          }
-        } else {
-          proposedEndTimestamp = proposedEndDateTimestamp
-        }
-      } else {
-        // Single-day booking: calculate end timestamp from start_date + end_time
-        if (proposedEndTime) {
-          const endParsed = parseTime(proposedEndTime)
-          if (endParsed) {
-            try {
-              const { TZDate } = await import('@date-fns/tz')
-              const BANGKOK_TIMEZONE = 'Asia/Bangkok'
-              const utcDate = new Date(proposedStartDateTimestamp * 1000)
-              const tzDate = new TZDate(utcDate.getTime(), BANGKOK_TIMEZONE)
-              const year = tzDate.getFullYear()
-              const month = tzDate.getMonth()
-              const day = tzDate.getDate()
-              const tzDateWithTime = new TZDate(year, month, day, endParsed.hour24, endParsed.minutes, 0, BANGKOK_TIMEZONE)
-              proposedEndTimestamp = Math.floor(tzDateWithTime.getTime() / 1000)
-            } catch (error) {
-              proposedEndTimestamp = proposedStartTimestamp
-            }
-          } else {
-            proposedEndTimestamp = proposedStartTimestamp
-          }
-        } else {
-          proposedEndTimestamp = proposedStartTimestamp
-        }
-      }
-      
-      // Final validation: end timestamp must be > start timestamp
-      if (proposedEndTimestamp <= proposedStartTimestamp) {
-        await logger.warn('Proposed date rejected: end timestamp is not after start timestamp', {
-          bookingId: booking.id,
-          proposedStartTimestamp,
-          proposedEndTimestamp,
-          proposedDate,
-          proposedEndDate,
-          proposedStartTime,
-          proposedEndTime
-        })
-        return errorResponse(
-          ErrorCodes.INVALID_INPUT,
-          'The proposed end date and time must be after the start date and time.',
-          {},
-          400,
-          { requestId }
-        )
-      }
-      
-      await logger.info('Checking overlap for proposed date', { 
-        bookingId: booking.id,
-        proposedDate,
-        proposedEndDate 
-      })
-      
-      const overlapCheck = await checkBookingOverlap(
-        booking.id, // Exclude current booking from overlap check
-        proposedStartDateTimestamp, // Pass date timestamp (without time) - checkBookingOverlap will add time
-        proposedEndDateTimestamp,
-        proposedStartTime || null,
-        proposedEndTime || null
-      )
-      
-      if (overlapCheck.overlaps) {
-        const overlappingNames = overlapCheck.overlappingBookings
-          ?.map((b: any) => b.name || "Unknown")
-          .join(", ") || "existing booking"
-        await logger.warn('Proposed date overlap detected', { 
-          bookingId: booking.id,
-          overlappingNames 
-        })
-        return errorResponse(
-          ErrorCodes.BOOKING_OVERLAP,
-          `The proposed date and time overlaps with an existing checked-in booking (${overlappingNames}). Please choose a different date or time.`,
-          { overlappingBookings: overlapCheck.overlappingBookings },
-          409,
-          { requestId }
-        )
-      }
-      
-      // FINAL OVERLAP CHECK: Re-check right before submitting to prevent race conditions
-      await logger.info('Performing final overlap check before submitting proposed date')
-      const finalOverlapCheck = await checkBookingOverlap(
-        booking.id,
-        proposedStartDateTimestamp, // Pass date timestamp (without time) - checkBookingOverlap will add time
-        proposedEndDateTimestamp,
-        proposedStartTime || null,
-        proposedEndTime || null
-      )
-      
-      if (finalOverlapCheck.overlaps) {
-        const overlappingNames = finalOverlapCheck.overlappingBookings
-          ?.map((b: any) => b.name || "Unknown")
-          .join(", ") || "existing booking"
-        await logger.warn('Final overlap check detected conflict - proposed date became unavailable', { 
-          bookingId: booking.id,
-          overlappingNames 
-        })
-        return errorResponse(
-          ErrorCodes.BOOKING_OVERLAP,
-          `The proposed date and time is no longer available. It overlaps with a recently checked-in booking (${overlappingNames}). Please refresh and choose a different date or time.`,
-          { overlappingBookings: finalOverlapCheck.overlappingBookings },
-          409,
-          { requestId }
-        )
-      }
-    }
+    // NOTE: "propose" response handling has been removed
+    // Only "cancel" is supported in the current booking flow
 
     // CRITICAL: Re-validate token before database update
     // This prevents token expiration during long validation/processing operations
@@ -531,15 +275,11 @@ export const POST = withVersioning(async (
       )
     }
 
-    // Submit user response
+    // Submit user response (only "cancel" is supported)
     await logger.info('Submitting user response', { bookingId: booking.id, response })
     let updatedBooking
     try {
       updatedBooking = await submitUserResponse(booking.id, response, {
-      proposedDate,
-      proposedEndDate,
-      proposedStartTime,
-      proposedEndTime,
       message,
     })
     } catch (submitError) {
@@ -577,27 +317,6 @@ export const POST = withVersioning(async (
       newStatus: updatedBooking.status
     })
 
-    // Send user confirmation email when they propose a new date
-    if (response === "propose") {
-      try {
-        // Skip duplicate check to ensure user gets confirmation email even if status was already postponed
-        // Do NOT include responseToken - user will only get the link again when admin responds
-        await sendBookingStatusNotification(updatedBooking, "postponed", {
-          changeReason: "Your proposed date has been received. Our admin team will review your proposal and respond shortly.",
-          proposedDate: proposedDate || null,
-          proposedEndDate: proposedEndDate || null,
-          proposedStartTime: proposedStartTime || null,
-          proposedEndTime: proposedEndTime || null,
-          responseToken: undefined, // No link - user will get link again when admin responds
-          skipDuplicateCheck: true, // Skip duplicate check to ensure user always gets confirmation
-        })
-        await logger.info('User confirmation email sent for proposed date', { bookingId: booking.id })
-      } catch (userEmailError) {
-        await logger.error('Failed to send user confirmation email for proposed date', userEmailError instanceof Error ? userEmailError : new Error(String(userEmailError)))
-        // Don't fail the request - email is secondary
-      }
-    }
-
     // Send user confirmation email when they cancel
     if (response === "cancel") {
       try {
@@ -620,13 +339,9 @@ export const POST = withVersioning(async (
       }
     }
 
-    // Send admin notification for user responses (propose, accept, cancel)
+    // Send admin notification for user cancellation
     try {
       await sendAdminUserResponseNotification(updatedBooking, response, {
-        proposedDate,
-        proposedEndDate,
-        proposedStartTime,
-        proposedEndTime,
         message,
       })
       await logger.info('Admin notification sent for user response', { bookingId: booking.id, response })

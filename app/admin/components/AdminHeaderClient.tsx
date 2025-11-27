@@ -1,16 +1,15 @@
 "use client"
 
 import Link from "next/link"
-import { useAdminStats } from "@/hooks/useAdminStats"
+import { useAdminStatsSSE } from "@/hooks/useAdminStatsSSE"
 import { NotificationBadge } from "./NotificationBadge"
 
 /**
  * Client-side admin header navigation with notification badges
- * This enables dynamic updates without page refresh
+ * This enables real-time updates via Server-Sent Events
  */
 export function AdminHeaderClient() {
-  const { stats } = useAdminStats({
-    refetchInterval: 30000, // Refetch every 30 seconds
+  const { stats } = useAdminStatsSSE({
     enabled: true,
   })
 

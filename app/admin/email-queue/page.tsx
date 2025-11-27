@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useEffect, useMemo } from "react"
+import { useState, useEffect, useMemo, useRef, useCallback } from "react"
 import { redirect } from "next/navigation"
 import { useSession } from "next-auth/react"
 import { Button } from "@/components/ui/button"
@@ -36,6 +36,7 @@ import { toast } from "sonner"
 import { format } from "date-fns"
 import { TZDate } from '@date-fns/tz'
 import { useInfiniteAdminEmails, type EmailQueueItem } from "@/hooks/useInfiniteAdminEmails"
+import { useAdminEmailsSSE } from "@/hooks/useAdminEmailsSSE"
 import { API_PATHS, buildApiUrl } from "@/lib/api-config"
 import { useInfiniteScroll } from "@/hooks/useInfiniteScroll"
 import { GenericDeleteConfirmationDialog } from "@/components/admin/GenericDeleteConfirmationDialog"
@@ -72,6 +73,12 @@ export default function EmailQueuePage() {
   const [debouncedBookingReferenceFilter, setDebouncedBookingReferenceFilter] = useState("")
   const [pageSize, setPageSize] = useState(25)
   
+  // FIXED: Track optimistic updates to prevent SSE from overwriting user actions (Issue #2)
+  // This protects against race conditions where SSE events arrive while user is retrying/canceling emails
+  const pendingOptimisticUpdatesRef = useRef<Map<string, number>>(new Map())
+  // Track timeout IDs for optimistic updates to allow cleanup on unmount
+  const optimisticUpdateTimeoutsRef = useRef<Map<string, NodeJS.Timeout>>(new Map())
+  
   // Search handlers for booking reference
   const handleBookingReferenceSearch = (value: string) => {
     setDebouncedBookingReferenceFilter(value)
@@ -96,6 +103,81 @@ export default function EmailQueuePage() {
     return buildApiUrl(API_PATHS.adminEmailQueue, Object.fromEntries(params))
   }, [statusFilter, emailTypeFilter, debouncedBookingReferenceFilter])
   
+  // Track SSE connection status for fallback polling
+  // FIXED: Initialize sseConnected to true (optimistic) to prevent premature polling (Bug #51)
+  // This assumes SSE will connect successfully. If it fails, the useEffect syncing
+  // sseHookResult will update this to false, enabling fallback polling.
+  // The initial data fetch is not affected by refetchInterval, so this is safe.
+  const [sseError, setSseError] = useState<Error | null>(null)
+  const [sseConnected, setSseConnected] = useState<boolean>(true)
+
+  // FIXED: Use useMemo to make refetchInterval reactive to SSE state changes (Bug #52)
+  // This ensures polling activates/deactivates when SSE connection status changes
+  const refetchInterval = useMemo(() => {
+    // Enable fallback polling if SSE is not connected OR has an error (30 seconds interval)
+    // When SSE is connected and working, polling is disabled for efficiency
+    return (!sseConnected || sseError) ? 30000 : false
+  }, [sseConnected, sseError])
+
+  // FIXED: Cleanup optimistic update timeouts on unmount (Issue #2)
+  useEffect(() => {
+    return () => {
+      // Clear all pending optimistic update timeouts
+      if (optimisticUpdateTimeoutsRef.current) {
+        for (const timeoutId of optimisticUpdateTimeoutsRef.current.values()) {
+          clearTimeout(timeoutId)
+        }
+        optimisticUpdateTimeoutsRef.current.clear()
+      }
+      // Clear optimistic updates map on unmount
+      pendingOptimisticUpdatesRef.current.clear()
+    }
+  }, [])
+
+  // Helper function to check if SSE update should be applied
+  // FIXED: Prevent SSE from overwriting optimistic updates (Issue #2)
+  const shouldApplySSEUpdate = useCallback((emailId: string, sseUpdatedAt: number): boolean => {
+    const pendingTimestamp = pendingOptimisticUpdatesRef.current.get(emailId)
+    
+    // If there's no pending optimistic update, always apply SSE update
+    if (!pendingTimestamp) {
+      return true
+    }
+    
+    // FIXED: Handle timestamp precision mismatch between server (seconds) and client (milliseconds)
+    // pendingTimestamp is in milliseconds (from Date.now())
+    // sseUpdatedAt is in seconds (Unix timestamp from server)
+    // Convert SSE timestamp to milliseconds for comparison
+    const sseTimestampMs = sseUpdatedAt * 1000
+    
+    // CRITICAL: When server processes an update within the same second as the client's optimistic update,
+    // the converted SSE timestamp (rounded down to start of second) will be EARLIER than the client's
+    // precise millisecond timestamp. For example:
+    // - Client optimistic update: 1234567890500 (500ms into second)
+    // - Server SSE timestamp: 1234567890 (start of second) -> 1234567890000ms
+    // - Difference: -500ms (SSE appears earlier, but it's actually the same update)
+    // 
+    // Solution: Handle precision loss for older updates (within 500ms), but block significantly older updates.
+    // For newer updates, allow if at least 500ms newer OR within the same second (to handle precision).
+    const timeDiffMs = sseTimestampMs - pendingTimestamp
+    
+    // If SSE is newer (positive timeDiffMs):
+    // - Allow if it's at least 500ms newer (legitimate real-time update from another source)
+    // - This prevents SSE from immediately reverting optimistic updates (same-second echo)
+    // - Precision loss only affects negative timeDiffMs (when server timestamp is rounded down)
+    if (timeDiffMs >= 0) {
+      // Allow if >= 500ms (prevents 0-499ms echo, allows 500ms+ legitimate updates)
+      return timeDiffMs >= 500
+    }
+    
+    // If SSE is older (negative timeDiffMs):
+    // - Block if it's within 500ms older (likely the same update being echoed back due to precision loss)
+    // - Only allow if it's significantly older (< -500ms), which would be unusual and might indicate
+    //   a legitimate older update from another source (though this is rare)
+    // This prevents SSE echoes from overwriting optimistic updates while still allowing edge cases
+    return timeDiffMs < -500
+  }, [])
+
   // Use infinite scroll hook for emails
   const {
     emails,
@@ -106,18 +188,94 @@ export default function EmailQueuePage() {
     loadMore,
     refetch: fetchEmails,
     updateItem,
+    addItem,
     removeItem,
     replaceItem
   } = useInfiniteAdminEmails({
     baseEndpoint,
     pageSize,
-    refetchInterval: 30000,
+    refetchInterval,
     enabled: !!session,
     isDialogOpen: () => viewDialogOpen,
     onStatsUpdate: (stats) => {
       setStats(stats)
     },
   })
+
+  // Real-time email queue updates via SSE (replaces polling)
+  const sseHookResult = useAdminEmailsSSE({
+    enabled: !!session,
+    onEmailUpdate: (event) => {
+      // Handle email status changes
+      if (event.email) {
+        const email = event.email
+        
+        // Handle new email queued - add to list
+        if (event.type === 'email:queued') {
+          // FIXED: Check if SSE update should be applied (prevent overwriting optimistic updates) (Issue #2)
+          // For new emails, we check updatedAt timestamp to prevent overwriting recently created emails
+          if (!shouldApplySSEUpdate(email.id, email.updatedAt)) {
+            // Skip this SSE update - optimistic update is pending
+            return
+          }
+          
+          // Create EmailQueueItem from SSE event data
+          // Note: SSE event may not have all fields, so we use defaults for missing ones
+          const emailItem: EmailQueueItem = {
+            id: email.id,
+            emailType: email.emailType,
+            recipientEmail: email.recipientEmail,
+            subject: email.subject,
+            htmlContent: '', // Will be loaded when email details are fetched
+            textContent: '', // Will be loaded when email details are fetched
+            metadata: undefined,
+            retryCount: email.retryCount || 0,
+            maxRetries: 5, // Default max retries (matches lib/email-queue.ts default)
+            status: email.status,
+            errorMessage: email.errorMessage || undefined,
+            scheduledAt: email.scheduledAt || email.createdAt || Date.now(), // Use scheduledAt from SSE, fallback to createdAt, then current time
+            nextRetryAt: email.nextRetryAt || undefined,
+            sentAt: email.sentAt || undefined,
+            createdAt: email.createdAt,
+            updatedAt: email.updatedAt,
+          }
+          addItem(emailItem)
+        } 
+        // Update email in list if it exists
+        else if (event.type === 'email:updated' || event.type === 'email:sent' || event.type === 'email:failed' || event.type === 'email:processing') {
+          // FIXED: Check if SSE update should be applied (prevent overwriting optimistic updates) (Issue #2)
+          if (!shouldApplySSEUpdate(email.id, email.updatedAt)) {
+            // Skip this SSE update - optimistic update is pending
+            return
+          }
+          
+          updateItem(email.id, {
+            status: email.status as any,
+            retryCount: email.retryCount || 0,
+            errorMessage: email.errorMessage || undefined,
+            scheduledAt: email.scheduledAt ?? email.createdAt ?? Date.now(), // Use scheduledAt from SSE, fallback to createdAt, then current time
+            nextRetryAt: email.nextRetryAt || undefined,
+            sentAt: email.sentAt || undefined,
+            updatedAt: email.updatedAt,
+          })
+        } 
+        // Remove email from list if deleted
+        else if (event.type === 'email:deleted') {
+          removeItem(email.id)
+        }
+      }
+    },
+    onStatsUpdate: (stats) => {
+      // Update stats when received from SSE
+      setStats(stats)
+    },
+  })
+
+  // Update SSE status state for fallback polling
+  useEffect(() => {
+    setSseError(sseHookResult.error)
+    setSseConnected(sseHookResult.connected)
+  }, [sseHookResult.error, sseHookResult.connected])
   
   // Infinite scroll setup
   const { elementRef: scrollSentinelRef } = useInfiniteScroll({
@@ -171,6 +329,31 @@ export default function EmailQueuePage() {
 
   // Retry specific email
   const handleRetryEmail = async (id: string) => {
+    // FIXED: Register optimistic update BEFORE API call to prevent SSE events from arriving first (Issue #2, Issue #5)
+    // This closes the timing window where SSE events could arrive before optimistic registration
+    const optimisticUpdateTimestamp = Date.now()
+    pendingOptimisticUpdatesRef.current.set(id, optimisticUpdateTimestamp)
+    
+    // FIXED: Set timeout to clear optimistic update after grace period (Issue #2, Issue #5)
+    // Use id in closure to ensure correct email is referenced after delay
+    const timeoutId = setTimeout(() => {
+      const currentTimestamp = pendingOptimisticUpdatesRef.current.get(id)
+      // Only clear if this is still the same optimistic update (not overwritten by another)
+      if (currentTimestamp === optimisticUpdateTimestamp) {
+        pendingOptimisticUpdatesRef.current.delete(id)
+      }
+    }, 2000) // 2 second grace period for server response
+    
+    // FIXED: Store timeout ID for cleanup (Issue #2, Issue #5)
+    // Clear any existing timeout for this email before storing new one
+    // This prevents memory leaks and unnecessary callback executions when
+    // optimistic updates are triggered multiple times for the same email
+    const existingTimeout = optimisticUpdateTimeoutsRef.current.get(id)
+    if (existingTimeout) {
+      clearTimeout(existingTimeout)
+    }
+    optimisticUpdateTimeoutsRef.current.set(id, timeoutId)
+    
     try {
       const response = await fetch(API_PATHS.adminEmailQueueItem(id), {
         method: "PATCH",
@@ -179,6 +362,16 @@ export default function EmailQueuePage() {
       })
       
       if (!response.ok) {
+        // FIXED: Clear optimistic update on error (Issue #2, Issue #5)
+        // Clear timeout if it hasn't fired yet
+        const timeoutId = optimisticUpdateTimeoutsRef.current.get(id)
+        if (timeoutId) {
+          clearTimeout(timeoutId)
+          optimisticUpdateTimeoutsRef.current.delete(id)
+        }
+        // Clear optimistic update timestamp
+        pendingOptimisticUpdatesRef.current.delete(id)
+        
         const errorText = await response.text()
         let errorData
         try {
@@ -194,7 +387,17 @@ export default function EmailQueuePage() {
       const json = await response.json()
       if (json.success) {
         const updatedEmail = json.data?.email || json.email
-        // Update the email status optimistically
+        // FIXED: Clear optimistic update timeout on successful server response (Issue #2, Issue #5)
+        // Clear timeout if it hasn't fired yet
+        const timeoutId = optimisticUpdateTimeoutsRef.current.get(id)
+        if (timeoutId) {
+          clearTimeout(timeoutId)
+          optimisticUpdateTimeoutsRef.current.delete(id)
+        }
+        // Note: Keep optimistic update timestamp until SSE confirms or timeout expires
+        // This ensures SSE events arriving after API response are still blocked
+        
+        // Update the email status with server response
         if (updatedEmail) {
           replaceItem(id, updatedEmail)
         }
@@ -205,10 +408,30 @@ export default function EmailQueuePage() {
           window.dispatchEvent(event)
         }
       } else {
+        // FIXED: Clear optimistic update on error (Issue #2, Issue #5)
+        // Clear timeout if it hasn't fired yet
+        const timeoutId = optimisticUpdateTimeoutsRef.current.get(id)
+        if (timeoutId) {
+          clearTimeout(timeoutId)
+          optimisticUpdateTimeoutsRef.current.delete(id)
+        }
+        // Clear optimistic update timestamp
+        pendingOptimisticUpdatesRef.current.delete(id)
+        
         const errorMsg = typeof json.error === 'string' ? json.error : json.error?.message || JSON.stringify(json.error) || "Failed to retry email"
         toast.error(errorMsg)
       }
     } catch (error) {
+      // FIXED: Clear optimistic update on error (Issue #2, Issue #5)
+      // Clear timeout if it hasn't fired yet
+      const timeoutId = optimisticUpdateTimeoutsRef.current.get(id)
+      if (timeoutId) {
+        clearTimeout(timeoutId)
+        optimisticUpdateTimeoutsRef.current.delete(id)
+      }
+      // Clear optimistic update timestamp
+      pendingOptimisticUpdatesRef.current.delete(id)
+      
       const errorMsg = error instanceof Error ? error.message : "Failed to retry email"
       toast.error(errorMsg)
       console.error("Retry email error:", error)

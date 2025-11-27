@@ -1,6 +1,6 @@
 "use client"
 
-import React, { useState, useEffect } from "react"
+import React, { useState, useEffect, useMemo, useRef, useCallback } from "react"
 import { redirect } from "next/navigation"
 import { useSession } from "next-auth/react"
 import { Button } from "@/components/ui/button"
@@ -40,6 +40,7 @@ import { toast } from "sonner"
 import { format } from "date-fns"
 import { TZDate } from '@date-fns/tz'
 import { useInfiniteAdminData } from "@/hooks/useInfiniteAdminData"
+import { useAdminEventsSSE } from "@/hooks/useAdminEventsSSE"
 import { API_PATHS, buildApiUrl } from "@/lib/api-config"
 import { useInfiniteScroll } from "@/hooks/useInfiniteScroll"
 import { GenericDeleteConfirmationDialog } from "@/components/admin/GenericDeleteConfirmationDialog"
@@ -199,6 +200,13 @@ export default function EventsPage() {
   const [uploadingPhotos, setUploadingPhotos] = useState(false)
   const [uploadProgress, setUploadProgress] = useState<{ uploaded: number; total: number }>({ uploaded: 0, total: 0 })
   const createFormRef = React.useRef<HTMLFormElement>(null)
+  
+  // FIXED: Track optimistic updates to prevent SSE from overwriting user edits (Issue #1)
+  // This protects against race conditions where SSE events arrive while user is editing
+  const pendingOptimisticUpdatesRef = useRef<Map<string, number>>(new Map())
+  // Track timeout IDs for optimistic updates to allow cleanup on unmount
+  const optimisticUpdateTimeoutsRef = useRef<Map<string, NodeJS.Timeout>>(new Map())
+  
   const [titleFilter, setTitleFilter] = useState("")
   const [debouncedTitleFilter, setDebouncedTitleFilter] = useState("")
   const [upcomingFilter, setUpcomingFilter] = useState(false)
@@ -243,6 +251,22 @@ export default function EventsPage() {
     return buildApiUrl(API_PATHS.adminEvents, Object.fromEntries(params))
   }, [upcomingFilter, debouncedTitleFilter, eventDateFilter, eventDateFrom, eventDateTo, useDateRange, sortBy, sortOrder])
   
+  // Track SSE connection status for fallback polling
+  // FIXED: Initialize sseConnected to true (optimistic) to prevent premature polling (Bug #51)
+  // This assumes SSE will connect successfully. If it fails, the useEffect syncing
+  // sseHookResult will update this to false, enabling fallback polling.
+  // The initial data fetch is not affected by pollInterval, so this is safe.
+  const [sseError, setSseError] = useState<Error | null>(null)
+  const [sseConnected, setSseConnected] = useState<boolean>(true)
+
+  // FIXED: Use useMemo to make pollInterval reactive to SSE state changes (Bug #52)
+  // This ensures polling activates/deactivates when SSE connection status changes
+  const pollInterval = useMemo(() => {
+    // Enable fallback polling if SSE is not connected OR has an error (30 seconds interval)
+    // When SSE is connected and working, polling is disabled for efficiency
+    return (!sseConnected || sseError) ? 30000 : false
+  }, [sseConnected, sseError])
+
   // Use infinite scroll hook for events
   const {
     data: events,
@@ -259,7 +283,7 @@ export default function EventsPage() {
     baseEndpoint,
     pageSize,
     enablePolling: true,
-    pollInterval: 30000,
+    pollInterval,
     transformResponse: (json) => {
       return Array.isArray(json.data?.events) 
         ? json.data.events 
@@ -269,6 +293,58 @@ export default function EventsPage() {
     },
     isDialogOpen: () => createDialogOpen || editDialogOpen,
   })
+
+  // Real-time event updates via SSE (replaces polling)
+  const sseHookResult = useAdminEventsSSE({
+    enabled: !!session,
+    onEventUpdate: (event) => {
+      // Handle event updates
+      if (event.type === 'event:created' && event.event) {
+        // FIXED: Check if SSE update should be applied (prevent overwriting optimistic updates) (Issue #1)
+        // For new events, we check updated_at timestamp to prevent overwriting recently created events
+        if (!shouldApplySSEUpdate(event.event.id, event.event.updated_at)) {
+          // Skip this SSE update - optimistic update is pending
+          return
+        }
+        
+        // Add new event to the list (at the beginning)
+        addItem(event.event as Event)
+      } else if (event.type === 'event:updated' && event.event) {
+        // FIXED: Check if SSE update should be applied (prevent overwriting optimistic updates) (Issue #1)
+        if (!shouldApplySSEUpdate(event.event.id, event.event.updated_at)) {
+          // Skip this SSE update - optimistic update is pending
+          return
+        }
+        
+        // Update event in the list
+        updateItem(event.event.id, event.event as Partial<Event>)
+        // If this is the event being edited, refresh its details
+        if (editingEvent?.id === event.event.id) {
+          fetchEventDetails(event.event.id).then(updated => {
+            if (updated) {
+              setEditingEvent(updated)
+            }
+          }).catch(() => {
+            // Silently handle fetch errors - dialog will show stale data but won't crash
+          })
+        }
+      } else if (event.type === 'event:deleted' && event.event) {
+        // Remove event from the list
+        removeItem(event.event.id)
+        // If this is the event being edited, close the dialog
+        if (editingEvent?.id === event.event.id) {
+          setEditDialogOpen(false)
+          setEditingEvent(null)
+        }
+      }
+    },
+  })
+
+  // Update SSE status state for fallback polling
+  useEffect(() => {
+    setSseError(sseHookResult.error)
+    setSseConnected(sseHookResult.connected)
+  }, [sseHookResult.error, sseHookResult.connected])
   
   // Infinite scroll setup
   const { elementRef: scrollSentinelRef } = useInfiniteScroll({
@@ -286,6 +362,64 @@ export default function EventsPage() {
     }
   }, [status])
 
+  // FIXED: Cleanup optimistic update timeouts on unmount (Issue #1)
+  useEffect(() => {
+    return () => {
+      // Clear all pending optimistic update timeouts
+      if (optimisticUpdateTimeoutsRef.current) {
+        for (const timeoutId of optimisticUpdateTimeoutsRef.current.values()) {
+          clearTimeout(timeoutId)
+        }
+        optimisticUpdateTimeoutsRef.current.clear()
+      }
+      // Clear optimistic updates map on unmount
+      pendingOptimisticUpdatesRef.current.clear()
+    }
+  }, [])
+
+  // Helper function to check if SSE update should be applied
+  // FIXED: Prevent SSE from overwriting optimistic updates (Issue #1)
+  const shouldApplySSEUpdate = useCallback((eventId: string, sseUpdatedAt: number): boolean => {
+    const pendingTimestamp = pendingOptimisticUpdatesRef.current.get(eventId)
+    
+    // If there's no pending optimistic update, always apply SSE update
+    if (!pendingTimestamp) {
+      return true
+    }
+    
+    // FIXED: Handle timestamp precision mismatch between server (seconds) and client (milliseconds)
+    // pendingTimestamp is in milliseconds (from Date.now())
+    // sseUpdatedAt is in seconds (Unix timestamp from server)
+    // Convert SSE timestamp to milliseconds for comparison
+    const sseTimestampMs = sseUpdatedAt * 1000
+    
+    // CRITICAL: When server processes an update within the same second as the client's optimistic update,
+    // the converted SSE timestamp (rounded down to start of second) will be EARLIER than the client's
+    // precise millisecond timestamp. For example:
+    // - Client optimistic update: 1234567890500 (500ms into second)
+    // - Server SSE timestamp: 1234567890 (start of second) -> 1234567890000ms
+    // - Difference: -500ms (SSE appears earlier, but it's actually the same update)
+    // 
+    // Solution: Handle precision loss for older updates (within 500ms), but block significantly older updates.
+    // For newer updates, allow if at least 500ms newer OR within the same second (to handle precision).
+    const timeDiffMs = sseTimestampMs - pendingTimestamp
+    
+    // If SSE is newer (positive timeDiffMs):
+    // - Allow if it's at least 500ms newer (legitimate real-time update from another source)
+    // - This prevents SSE from immediately reverting optimistic updates (same-second echo)
+    // - Precision loss only affects negative timeDiffMs (when server timestamp is rounded down)
+    if (timeDiffMs >= 0) {
+      // Allow if >= 500ms (prevents 0-499ms echo, allows 500ms+ legitimate updates)
+      return timeDiffMs >= 500
+    }
+    
+    // If SSE is older (negative timeDiffMs):
+    // - Block if it's within 500ms older (likely the same update being echoed back due to precision loss)
+    // - Only allow if it's significantly older (< -500ms), which would be unusual and might indicate
+    //   a legitimate older update from another source (though this is rare)
+    // This prevents SSE echoes from overwriting optimistic updates while still allowing edge cases
+    return timeDiffMs < -500
+  }, [])
 
   // Fetch event details with in-event photos
   const fetchEventDetails = async (eventId: string) => {
@@ -608,9 +742,31 @@ export default function EventsPage() {
       const json = await response.json()
       if (json.success) {
         const newEvent = json.data?.event || json.event
-        // Optimistically add to list (instant UI update)
+        // FIXED: Register optimistic update for new event to prevent SSE overwrites (Issue #1)
+        // Note: For new events, SSE might arrive before the response, so we register after response
+        // This is less critical than updates since new events are typically added, not overwritten
         if (newEvent) {
+          const optimisticUpdateTimestamp = Date.now()
+          pendingOptimisticUpdatesRef.current.set(newEvent.id, optimisticUpdateTimestamp)
+          
+          // Optimistically add to list (instant UI update)
           addItem(newEvent)
+          
+          // FIXED: Set timeout to clear optimistic update after grace period (Issue #1)
+          const timeoutId = setTimeout(() => {
+            const currentTimestamp = pendingOptimisticUpdatesRef.current.get(newEvent.id)
+            // Only clear if this is still the same optimistic update (not overwritten by another)
+            if (currentTimestamp === optimisticUpdateTimestamp) {
+              pendingOptimisticUpdatesRef.current.delete(newEvent.id)
+            }
+          }, 2000) // 2 second grace period for server response
+          
+          // FIXED: Store timeout ID for cleanup (Issue #1)
+          const existingTimeout = optimisticUpdateTimeoutsRef.current.get(newEvent.id)
+          if (existingTimeout) {
+            clearTimeout(existingTimeout)
+          }
+          optimisticUpdateTimeoutsRef.current.set(newEvent.id, timeoutId)
         }
         toast.success("Event created successfully")
         setCreateDialogOpen(false)
@@ -624,10 +780,16 @@ export default function EventsPage() {
           e.currentTarget.reset()
         }
       } else {
+        // FIXED: Clear optimistic update on error (Issue #1)
+        // If we registered an optimistic update but the server rejected, clear it
+        // Note: For create operations, we only register on success, so this is a safety check
         const errorMessage = json.error?.message || json.error || "Failed to create event"
         toast.error(errorMessage)
       }
     } catch (error) {
+      // FIXED: Clear optimistic update on error (Issue #1)
+      // If we registered an optimistic update but the request failed, clear it
+      // Note: For create operations, we only register on success, so this is a safety check
       toast.error("Failed to create event")
       console.error(error)
     } finally {
@@ -711,8 +873,32 @@ export default function EventsPage() {
     }
 
     try {
+      // FIXED: Register optimistic update BEFORE applying it to prevent SSE overwrites (Issue #1)
+      const optimisticUpdateTimestamp = Date.now()
+      pendingOptimisticUpdatesRef.current.set(editingEvent.id, optimisticUpdateTimestamp)
+      
       // Optimistically update UI first
       updateItem(editingEvent.id, updates as Partial<Event>)
+      
+      // FIXED: Set timeout to clear optimistic update after grace period (Issue #1)
+      // Use editingEvent.id in closure to ensure correct event is referenced after delay
+      const timeoutId = setTimeout(() => {
+        const currentTimestamp = pendingOptimisticUpdatesRef.current.get(editingEvent.id)
+        // Only clear if this is still the same optimistic update (not overwritten by another)
+        if (currentTimestamp === optimisticUpdateTimestamp) {
+          pendingOptimisticUpdatesRef.current.delete(editingEvent.id)
+        }
+      }, 2000) // 2 second grace period for server response
+      
+      // FIXED: Store timeout ID for cleanup (Issue #1)
+      // Clear any existing timeout for this event before storing new one
+      // This prevents memory leaks and unnecessary callback executions when
+      // optimistic updates are triggered multiple times for the same event
+      const existingTimeout = optimisticUpdateTimeoutsRef.current.get(editingEvent.id)
+      if (existingTimeout) {
+        clearTimeout(existingTimeout)
+      }
+      optimisticUpdateTimeoutsRef.current.set(editingEvent.id, timeoutId)
       
       const response = await fetch(API_PATHS.adminEvent(editingEvent.id), {
         method: "PATCH",
@@ -727,6 +913,17 @@ export default function EventsPage() {
         if (updatedEvent) {
           replaceItem(editingEvent.id, updatedEvent)
         }
+        
+        // FIXED: Clear optimistic update on successful server response (Issue #1)
+        // Clear timeout if it hasn't fired yet
+        const timeoutId = optimisticUpdateTimeoutsRef.current.get(editingEvent.id)
+        if (timeoutId) {
+          clearTimeout(timeoutId)
+          optimisticUpdateTimeoutsRef.current.delete(editingEvent.id)
+        }
+        // Clear optimistic update timestamp
+        pendingOptimisticUpdatesRef.current.delete(editingEvent.id)
+        
         toast.success("Event updated successfully")
         setEditDialogOpen(false)
         setEditingEvent(null)
@@ -734,12 +931,32 @@ export default function EventsPage() {
         setEditPosterPreview(null)
         setEditSelectedImageId(null)
       } else {
+        // FIXED: Clear optimistic update on error (Issue #1)
+        // Clear timeout if it hasn't fired yet
+        const timeoutId = optimisticUpdateTimeoutsRef.current.get(editingEvent.id)
+        if (timeoutId) {
+          clearTimeout(timeoutId)
+          optimisticUpdateTimeoutsRef.current.delete(editingEvent.id)
+        }
+        // Clear optimistic update timestamp
+        pendingOptimisticUpdatesRef.current.delete(editingEvent.id)
+        
         // Rollback on error
         fetchEvents()
         const errorMessage = json.error?.message || json.error || "Failed to update event"
         toast.error(errorMessage)
       }
     } catch (error) {
+      // FIXED: Clear optimistic update on error (Issue #1)
+      // Clear timeout if it hasn't fired yet
+      const timeoutId = optimisticUpdateTimeoutsRef.current.get(editingEvent.id)
+      if (timeoutId) {
+        clearTimeout(timeoutId)
+        optimisticUpdateTimeoutsRef.current.delete(editingEvent.id)
+      }
+      // Clear optimistic update timestamp
+      pendingOptimisticUpdatesRef.current.delete(editingEvent.id)
+      
       // Rollback on error
       fetchEvents()
       toast.error("Failed to update event")
@@ -1680,6 +1897,8 @@ export default function EventsPage() {
                     
                     Promise.all(previewPromises).then((previews) => {
                       setInEventPhotoPreviews(previews)
+                    }).catch(() => {
+                      // Silently handle preview generation errors
                     })
                   }}
                 />

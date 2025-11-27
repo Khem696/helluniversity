@@ -13,28 +13,52 @@ export function Hero() {
 
   // Check if events exist to show the scroll indicator
   useEffect(() => {
+    let mounted = true // Track if component is still mounted
+    
     async function checkEvents() {
       try {
         const response = await fetch(API_PATHS.events)
+        if (!mounted) return // Don't update state if component unmounted
+        
         if (!response.ok) {
-          setHasEvents(false)
+          if (mounted) setHasEvents(false)
           return
         }
         const json = await response.json()
+        if (!mounted) return // Check again after async operation
+        
         if (json.success) {
           const responseData = json.data || json
           const events = responseData.events || responseData.pastEvents || responseData.currentEvents || []
-          setHasEvents(Array.isArray(events) && events.length > 0)
+          if (mounted) setHasEvents(Array.isArray(events) && events.length > 0)
         } else {
-          setHasEvents(false)
+          if (mounted) setHasEvents(false)
         }
       } catch (error) {
-        console.error("Failed to check events:", error)
-        setHasEvents(false)
+        if (!mounted) return // Don't update state if component unmounted
+        // Use structured logger if available, otherwise console.error
+        try {
+          const { logError } = await import('@/lib/logger')
+          logError('Failed to check events', {
+            error: error instanceof Error ? error.message : String(error),
+          }, error instanceof Error ? error : new Error(String(error))).catch(() => {
+            // Fallback to console if logger fails
+            console.error("Failed to check events:", error)
+          })
+        } catch {
+          // Fallback if logger import fails
+          console.error("Failed to check events:", error)
+        }
+        if (mounted) setHasEvents(false)
       }
     }
 
     checkEvents()
+    
+    // Cleanup: mark component as unmounted
+    return () => {
+      mounted = false
+    }
 
     // Hide arrow when user scrolls down
     const handleScroll = () => {
