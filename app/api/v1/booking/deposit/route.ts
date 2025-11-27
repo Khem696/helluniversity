@@ -303,6 +303,10 @@ export const POST = withVersioning(async (request: Request) => {
     // Get old status and updatedAt from re-checked booking (for optimistic locking)
     const oldStatus = recheckBooking.status
     const originalUpdatedAt = recheckBooking.updatedAt
+    
+    // CRITICAL: Check if this is a re-upload (user had previously uploaded evidence)
+    // This is important for admin email notification to indicate it's a re-upload
+    const isReUpload = !!recheckBooking.depositEvidenceUrl
 
     // Update booking with deposit evidence (status changes to "paid_deposit")
     // updateBookingStatus already has optimistic locking, so if booking was modified, it will throw
@@ -316,26 +320,31 @@ export const POST = withVersioning(async (request: Request) => {
       // CRITICAL: This is a critical status change - user needs confirmation that deposit was uploaded
       try {
         await sendBookingStatusNotification(updatedBooking, "paid_deposit", {
-          changeReason: "Your deposit evidence has been uploaded successfully. Our admin team will review it and confirm your booking shortly.",
+          changeReason: isReUpload 
+            ? "Your deposit evidence has been re-uploaded successfully. Our admin team will review it and confirm your booking shortly."
+            : "Your deposit evidence has been uploaded successfully. Our admin team will review it and confirm your booking shortly.",
           responseToken: updatedBooking.responseToken, // Token for future access if needed
           skipDuplicateCheck: true, // Always send confirmation - user needs to know deposit was received
         })
-        await logger.info('User notification sent for deposit upload', { bookingId: booking.id })
+        await logger.info('User notification sent for deposit upload', { bookingId: booking.id, isReUpload })
       } catch (userEmailError) {
         await logger.error('Failed to send user notification for deposit upload', userEmailError instanceof Error ? userEmailError : new Error(String(userEmailError)))
         // Don't fail the request - email is secondary
       }
 
       // Send admin notification for deposit upload
+      // CRITICAL: Include re-upload information in the change reason
       try {
         await sendAdminStatusChangeNotification(
           updatedBooking,
           oldStatus,
           "paid_deposit",
-          "User uploaded deposit evidence",
+          isReUpload 
+            ? "User re-uploaded deposit evidence"
+            : "User uploaded deposit evidence",
           "system"
         )
-        await logger.info('Admin notification sent for deposit upload', { bookingId: booking.id })
+        await logger.info('Admin notification sent for deposit upload', { bookingId: booking.id, isReUpload })
       } catch (adminEmailError) {
         await logger.error('Failed to send admin notification for deposit upload', adminEmailError instanceof Error ? adminEmailError : new Error(String(adminEmailError)))
         // Don't fail the request - email is secondary

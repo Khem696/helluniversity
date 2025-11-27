@@ -978,6 +978,22 @@ export const PATCH = withVersioning(async (
           skipDuplicateCheck: true, // CRITICAL: Always send date change emails, even if multiple changes occur
         })
         await logger.info('Date change notification email sent successfully', { bookingId: id })
+        
+        // Send admin notification for date change
+        try {
+          const { sendAdminStatusChangeNotification } = await import('@/lib/email')
+          await sendAdminStatusChangeNotification(
+            updatedBooking,
+            currentBooking.status,
+            updatedBooking.status,
+            `Booking date changed by admin.\n\nPrevious Date & Time: ${oldDateRange}\nNew Date & Time: ${newDateRange}${changeReason ? `\n\nReason: ${changeReason}` : ''}`,
+            adminEmail || adminName || "Admin"
+          )
+          await logger.info('Admin date change notification email sent successfully', { bookingId: id })
+        } catch (adminEmailError) {
+          await logger.error("Failed to send admin date change notification email", adminEmailError instanceof Error ? adminEmailError : new Error(String(adminEmailError)), { bookingId: id })
+          // Don't fail the request - email is secondary
+        }
       } catch (emailError) {
         await logger.error("Failed to send date change notification email", emailError instanceof Error ? emailError : new Error(String(emailError)), { bookingId: id })
         // Don't fail the request - email is secondary
