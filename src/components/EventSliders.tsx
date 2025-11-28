@@ -20,9 +20,12 @@ export function EventSliders() {
   const [isLoading, setIsLoading] = useState(true)
 
   useEffect(() => {
+    let pollInterval: ReturnType<typeof setInterval> | null = null
+
     async function fetchEvents() {
       try {
-        const response = await fetch(API_PATHS.events)
+        // Add cache-busting query parameter to ensure fresh data
+        const response = await fetch(`${API_PATHS.events}?t=${Date.now()}`)
         if (!response.ok) {
           throw new Error("Failed to fetch events")
         }
@@ -64,29 +67,35 @@ export function EventSliders() {
 
           // Use API data if available
           if (responseData.pastEvents && responseData.currentEvents) {
-            setPastEvents(responseData.pastEvents.map(convertToEventSlide))
-            setCurrentEvents(responseData.currentEvents.map(convertToEventSlide))
+            const pastSlides = responseData.pastEvents.map(convertToEventSlide)
+            const currentSlides = responseData.currentEvents.map(convertToEventSlide)
+            
+            setPastEvents(pastSlides)
+            setCurrentEvents(currentSlides)
           } else if (responseData.events) {
             // If single array, split by end_date
-            // CRITICAL: Use Bangkok time for date comparisons to match business logic
+            // CRITICAL: All date comparisons use Bangkok timezone (GMT+7)
+            // - Timestamps from API are UTC (converted from Bangkok time)
+            // - getBangkokTime() returns current UTC timestamp
+            // - Comparisons are done in UTC, which correctly represents Bangkok time
             const { getBangkokTime } = await import("@/lib/timezone-client")
             const now = getBangkokTime()
             const past: EventSlide[] = []
             const current: EventSlide[] = []
 
-            responseData.events.forEach((event: any) => {
+            responseData.events.forEach((event: any): void => {
               const endDate = event.end_date || event.event_date || event.start_date
               const startDate = event.start_date || event.event_date
               const slide = convertToEventSlide(event)
               
               if (!endDate) {
-                // No date information, treat as current
+                // No date information, treat as current (always show upcoming events without dates)
                 current.push(slide)
                 return
               }
               
               // If start_date and end_date are the same (or only event_date exists),
-              // treat the event as ending at 23:59:59 of that day for comparison
+              // treat the event as ending at 23:59:59 of that day in Bangkok timezone for comparison
               // This ensures events on the same day are not incorrectly classified as past
               let comparisonTimestamp = endDate
               
@@ -96,14 +105,15 @@ export function EventSliders() {
               const hasEventDate = event.event_date != null
               
               if (startDate && endDate === startDate) {
-                // Same start and end date - treat as end of day (23:59:59)
+                // Same start and end date - treat as end of day (23:59:59) in Bangkok timezone
                 // Add 86399 seconds (23 hours, 59 minutes, 59 seconds) to the date timestamp
                 comparisonTimestamp = endDate + 86399
               } else if (!hasEndDate && !hasStartDate && hasEventDate) {
-                // Only event_date exists - treat as end of day
+                // Only event_date exists - treat as end of day in Bangkok timezone
                 comparisonTimestamp = event.event_date + 86399
               }
               
+              // Compare using Bangkok timezone (UTC timestamps representing Bangkok time)
               if (comparisonTimestamp < now) {
                 past.push(slide)
               } else {
@@ -123,7 +133,6 @@ export function EventSliders() {
           throw new Error("API returned error")
         }
       } catch (error) {
-        console.error("Failed to fetch events from API, using mock data:", error)
         // Fallback to mock data
         const { pastEvents: mockPast, currentEvents: mockCurrent } = splitEventsByDate(mockEvents)
         setPastEvents(mockPast)
@@ -133,7 +142,21 @@ export function EventSliders() {
       }
     }
 
+    // Initial fetch
     fetchEvents()
+
+    // Set up polling to refetch events every 30 seconds
+    // This ensures newly created events appear on the home page without manual refresh
+    pollInterval = setInterval(() => {
+      fetchEvents()
+    }, 30000) // 30 seconds
+
+    // Cleanup interval on unmount
+    return () => {
+      if (pollInterval) {
+        clearInterval(pollInterval)
+      }
+    }
   }, [])
 
   // Show loading state (optional - can be removed if not needed)
@@ -157,7 +180,8 @@ export function EventSliders() {
       )}
 
       {/* Current Slider - Shows current/upcoming events (bottom) */}
-      {currentEvents.length > 0 && (
+      {/* Always show current events section if there are any current events */}
+      {currentEvents.length > 0 ? (
         <section id={pastEvents.length === 0 ? "event-sliders" : undefined} className="relative w-full min-h-[100vh] h-[100dvh] overflow-hidden" style={{ backgroundColor: "#A8D5BA" }}>
           {/* Section Title */}
           <div className="absolute top-0 left-0 right-0 z-20 pt-[clamp(2rem,4vh,3rem)] sm:pt-[clamp(2.5rem,5vh,4rem)] lg:pt-[clamp(3rem,6vh,5rem)] px-4 sm:px-6 min-[769px]:px-8 lg:px-12 xl:px-16 3xl:px-20 4xl:px-28 5xl:px-36">
@@ -167,7 +191,7 @@ export function EventSliders() {
           </div>
           <EventSlider events={currentEvents} />
         </section>
-      )}
+      ) : null}
     </>
   )
 }

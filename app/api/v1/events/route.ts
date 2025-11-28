@@ -18,6 +18,7 @@ import { createRequestLogger } from "@/lib/logger"
 import { withErrorHandling, successResponse, ErrorCodes } from "@/lib/api-response"
 import { withVersioning } from "@/lib/api-version-wrapper"
 import { getRequestPath } from "@/lib/api-versioning"
+import { getBangkokTime } from "@/lib/timezone"
 
 export const GET = withVersioning(async (request: Request) => {
   return withErrorHandling(async () => {
@@ -30,7 +31,10 @@ export const GET = withVersioning(async (request: Request) => {
     const { searchParams } = new URL(request.url)
     const pastOnly = searchParams.get("past") === "true"
     const currentOnly = searchParams.get("current") === "true"
-    const now = Math.floor(Date.now() / 1000)
+    // CRITICAL: Use Bangkok timezone for all date comparisons
+    // All timestamps in database are UTC (converted from Bangkok time via createBangkokTimestamp)
+    // getBangkokTime() returns current UTC timestamp, which is correct for comparison
+    const now = getBangkokTime()
     
     await logger.debug('Events list parameters', { pastOnly, currentOnly })
 
@@ -76,8 +80,13 @@ export const GET = withVersioning(async (request: Request) => {
     const events = eventsResult.rows
 
     // Split events into past and current/upcoming
-    // CRITICAL: For events with same start_date and end_date (or only event_date),
-    // we need to treat them as the end of the day (23:59:59) for comparison
+    // CRITICAL: All date comparisons use Bangkok timezone (GMT+7)
+    // - Timestamps in database are UTC (converted from Bangkok time via createBangkokTimestamp)
+    // - 'now' is current UTC timestamp (via getBangkokTime())
+    // - Comparisons are done in UTC, which correctly represents Bangkok time
+    // - For events with same start_date and end_date (or only event_date),
+    //   we treat them as ending at 23:59:59 of that day in Bangkok timezone for comparison
+    //   This ensures events on the same day are not incorrectly classified as past
     const pastEvents: any[] = []
     const currentEvents: any[] = []
 
@@ -86,13 +95,13 @@ export const GET = withVersioning(async (request: Request) => {
       const startDate = event.start_date || event.event_date
       
       if (!endDate) {
-        // No date information, treat as current
+        // No date information, treat as current (always show upcoming events without dates)
         currentEvents.push(event)
         return
       }
       
       // If start_date and end_date are the same (or only event_date exists),
-      // treat the event as ending at 23:59:59 of that day for comparison
+      // treat the event as ending at 23:59:59 of that day in Bangkok timezone for comparison
       // This ensures events on the same day are not incorrectly classified as past
       let comparisonTimestamp = endDate
       
@@ -102,14 +111,15 @@ export const GET = withVersioning(async (request: Request) => {
       const hasEventDate = event.event_date != null
       
       if (startDate && endDate === startDate) {
-        // Same start and end date - treat as end of day (23:59:59)
+        // Same start and end date - treat as end of day (23:59:59) in Bangkok timezone
         // Add 86399 seconds (23 hours, 59 minutes, 59 seconds) to the date timestamp
         comparisonTimestamp = endDate + 86399
       } else if (!hasEndDate && !hasStartDate && hasEventDate) {
-        // Only event_date exists - treat as end of day
+        // Only event_date exists - treat as end of day in Bangkok timezone
         comparisonTimestamp = event.event_date + 86399
       }
       
+      // Compare using Bangkok timezone (UTC timestamps representing Bangkok time)
       if (comparisonTimestamp < now) {
         pastEvents.push(event)
       } else {
