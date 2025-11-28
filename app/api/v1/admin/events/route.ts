@@ -16,7 +16,7 @@ import { createRequestLogger } from "@/lib/logger"
 import { withErrorHandling, successResponse, errorResponse, unauthorizedResponse, forbiddenResponse, ErrorCodes } from "@/lib/api-response"
 import { getRequestPath } from "@/lib/api-versioning"
 import { withVersioning } from "@/lib/api-version-wrapper"
-import { createBangkokTimestamp } from "@/lib/timezone"
+import { createBangkokTimestamp, getBangkokTime } from "@/lib/timezone"
 
 /**
  * Admin Events CRUD API
@@ -90,7 +90,8 @@ export const POST = withVersioning(async (request: Request) => {
 
     const db = getTursoClient()
     const eventId = randomUUID()
-    const now = Math.floor(Date.now() / 1000)
+    // CRITICAL: Use Bangkok timezone for all timestamps
+    const now = getBangkokTime()
 
     // Convert dates to Unix timestamps
     // CRITICAL: Use createBangkokTimestamp for date strings (YYYY-MM-DD) to handle Bangkok timezone
@@ -259,7 +260,8 @@ export const GET = withVersioning(async (request: Request) => {
     const args: any[] = []
 
     if (upcoming) {
-      const now = Math.floor(Date.now() / 1000)
+      // CRITICAL: Use Bangkok timezone for all date comparisons
+      const now = getBangkokTime()
       // Current/upcoming events: check if any date field indicates future
       // Uses idx_events_end_date, idx_events_event_date, idx_events_start_date
       // SQLite can use multiple indexes with OR conditions

@@ -22,7 +22,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select"
-import { Upload, Edit, Loader2, Image as ImageIcon, ChevronDown, ChevronUp, Globe, Image as ImageIcon2, Trash2, GripVertical, Check, X } from "lucide-react"
+import { Upload, Edit, Loader2, Image as ImageIcon, ChevronDown, ChevronUp, Globe, Image as ImageIcon2, Trash2, GripVertical, Check, X, Plus } from "lucide-react"
 import { toast } from "sonner"
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible"
 import { useAdminData } from "@/hooks/useAdminData"
@@ -146,12 +146,13 @@ function SortableImageItem({
       }`}
     >
       <div className="aspect-video bg-gray-100 relative">
-        <img
-          src={image.blob_url || ''}
-          alt={image.title || "Image"}
-          className="w-full h-full object-cover"
-          style={{ imageOrientation: 'none' }}
-          onError={(e) => {
+        {image.blob_url ? (
+          <img
+            src={image.blob_url}
+            alt={image.title || "Image"}
+            className="w-full h-full object-cover"
+            style={{ imageOrientation: 'none' }}
+            onError={(e) => {
             console.error("Image failed to load:", {
               id: image.id,
               blob_url: image.blob_url,
@@ -181,6 +182,11 @@ function SortableImageItem({
             }
           }}
         />
+        ) : (
+          <div className="w-full h-full flex items-center justify-center text-gray-400">
+            <ImageIcon className="w-12 h-12" />
+          </div>
+        )}
         {/* Drag handle */}
         <div
           {...attributes}
@@ -267,8 +273,12 @@ function SortableImageItem({
 export default function ImagesPage() {
   const { data: session, status } = useSession()
   const [uploading, setUploading] = useState(false)
+  const [processingImages, setProcessingImages] = useState(false)
   const [reordering, setReordering] = useState(false)
   const [togglingAI, setTogglingAI] = useState<string | null>(null) // Track which image is being toggled
+  const [selectedFiles, setSelectedFiles] = useState<File[]>([])
+  const [filePreviews, setFilePreviews] = useState<Array<{ file: File; preview: string }>>([])
+  const [uploadProgress, setUploadProgress] = useState<{ processed: number; uploaded: number; total: number }>({ processed: 0, uploaded: 0, total: 0 })
   
   // Initialize drag and drop sensors
   const sensors = useSensors(
@@ -345,57 +355,165 @@ export default function ImagesPage() {
 
   // No need for useEffect - useAdminData handles initial fetch
 
-  // Handle image upload
+  // Handle image upload (supports multiple files)
   const handleUpload = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault()
     const formData = new FormData(e.currentTarget)
-    const file = formData.get("file") as File
+    const files = selectedFiles.length > 0 ? selectedFiles : [formData.get("file") as File].filter(Boolean) as File[]
 
-    if (!file) {
-      toast.error("Please select a file")
+    if (files.length === 0) {
+      toast.error("Please select at least one file")
       return
     }
 
+    const category = formData.get("category") as string
+    const title = formData.get("title") as string || ""
+
     setUploading(true)
+    setProcessingImages(true)
+    setUploadProgress({ processed: 0, uploaded: 0, total: files.length })
+
+    const uploadedImages: Image[] = []
+    const errors: string[] = []
+
     try {
-      const uploadFormData = new FormData()
-      uploadFormData.append("file", file)
-      uploadFormData.append("title", formData.get("title") as string || "")
-      uploadFormData.append("event_info", formData.get("event_info") as string || "")
-      const category = formData.get("category") as string
-      if (category) {
-        uploadFormData.append("category", category)
-      }
-
-      const response = await fetch(API_PATHS.adminImages, {
-        method: "POST",
-        body: uploadFormData,
-      })
-
-      const json = await response.json()
-      if (json.success) {
-        const newImage = json.data?.image || json.image
-        // Optimistically add to list (instant UI update)
-        if (newImage) {
-          addItem(newImage)
+      // Step 1: Process images on client-side (resize, normalize, strip EXIF)
+      const { processMultipleImages } = await import("@/lib/client-image-processor")
+      toast.info("Processing images...")
+      
+      // Get processing settings from environment variables (with defaults)
+      const maxWidth = parseInt(process.env.NEXT_PUBLIC_MAX_IMAGE_WIDTH || '1920', 10)
+      const maxHeight = parseInt(process.env.NEXT_PUBLIC_MAX_IMAGE_HEIGHT || '1920', 10)
+      const quality = parseFloat(process.env.NEXT_PUBLIC_IMAGE_QUALITY || '0.85')
+      const format = (process.env.NEXT_PUBLIC_IMAGE_FORMAT || 'webp') as 'webp' | 'jpeg' | 'png'
+      
+      const processedImages = await processMultipleImages(
+        files,
+        {
+          maxWidth,
+          maxHeight,
+          quality,
+          format,
+        },
+        (processed, total) => {
+          setUploadProgress(prev => ({ ...prev, processed, total }))
         }
-        toast.success("Image uploaded successfully")
-        // Reset form before closing dialog (e.currentTarget may be null after dialog closes)
-        if (uploadFormRef.current) {
-          uploadFormRef.current.reset()
-        } else if (e.currentTarget) {
-          e.currentTarget.reset()
+      )
+
+      setProcessingImages(false)
+      toast.success(`Processed ${processedImages.length} image${processedImages.length !== 1 ? 's' : ''}, uploading...`)
+
+      // Step 2: Upload processed images with intelligent batch splitting
+      const { splitIntoBatches, uploadBatch, uploadSingle } = await import("@/lib/batch-upload-helper")
+      
+      if (processedImages.length === 1) {
+        // Single file upload (use original endpoint)
+        const processed = processedImages[0]
+        try {
+          const result = await uploadSingle(processed, API_PATHS.adminImages, {
+            title: title || processed.file.name.replace(/\.[^/.]+$/, ""),
+            category: category || null,
+          })
+          
+          if (result.success && result.image) {
+            // Map API response to match Image interface (url -> blob_url, ensure all required fields)
+            const mappedImage: Image = {
+              ...result.image,
+              blob_url: result.image.url || result.image.blob_url || '',
+              original_filename: result.image.original_filename || processed.file.name,
+              updated_at: result.image.updated_at || result.image.created_at || Math.floor(Date.now() / 1000),
+            }
+            uploadedImages.push(mappedImage)
+            addItem(mappedImage)
+            setUploadProgress(prev => ({ ...prev, uploaded: 1 }))
+          } else {
+            const errorMessage = result.error || `Failed to upload ${processed.file.name}`
+            errors.push(errorMessage)
+          }
+        } catch (error) {
+          errors.push(`Failed to upload ${processed.file.name}: ${error instanceof Error ? error.message : String(error)}`)
         }
-        setUploadDialogOpen(false)
       } else {
-        const errorMessage = json.error?.message || json.error || "Failed to upload image"
-        toast.error(errorMessage)
+        // Multiple files - split into batches and upload sequentially
+        const batches = splitIntoBatches(processedImages, {
+          category: category || null,
+          titlePrefix: title || null,
+        })
+        
+        let totalUploaded = 0
+        
+        for (let i = 0; i < batches.length; i++) {
+          const batch = batches[i]
+          const isLastBatch = i === batches.length - 1
+          
+          try {
+            // Show progress for current batch
+            if (batches.length > 1) {
+              toast.info(`Uploading batch ${i + 1} of ${batches.length} (${batch.length} image${batch.length !== 1 ? 's' : ''})...`)
+            }
+            
+            const result = await uploadBatch(batch, API_PATHS.adminImagesBatch, {
+              category: category || null,
+              titlePrefix: title || null,
+            })
+            
+            if (result.success && result.images) {
+              result.images.forEach((newImage: any, index: number) => {
+                // Map API response to match Image interface (url -> blob_url, ensure all required fields)
+                // Find corresponding processed image for original filename
+                const processedImage = batch[index]
+                const mappedImage: Image = {
+                  ...newImage,
+                  blob_url: newImage.url || newImage.blob_url || '',
+                  original_filename: newImage.original_filename || processedImage?.file?.name || 'image',
+                  updated_at: newImage.updated_at || newImage.created_at || Math.floor(Date.now() / 1000),
+                }
+                uploadedImages.push(mappedImage)
+                addItem(mappedImage)
+              })
+              totalUploaded += result.images.length
+              setUploadProgress(prev => ({ ...prev, uploaded: totalUploaded }))
+              
+              if (result.errors && result.errors.length > 0) {
+                errors.push(...result.errors)
+              }
+              
+              if (result.message) {
+                toast.warning(result.message)
+              }
+            } else {
+              const errorMessage = result.errors?.join(', ') || "Failed to upload batch"
+              errors.push(`Batch ${i + 1}: ${errorMessage}`)
+            }
+          } catch (error) {
+            errors.push(`Batch ${i + 1} failed: ${error instanceof Error ? error.message : String(error)}`)
+          }
+        }
       }
+
+      // Show results
+      if (uploadedImages.length > 0) {
+        toast.success(`Successfully uploaded ${uploadedImages.length} image${uploadedImages.length !== 1 ? 's' : ''}`)
+      }
+      if (errors.length > 0) {
+        toast.error(`${errors.length} upload${errors.length !== 1 ? 's' : ''} failed: ${errors.join(', ')}`)
+      }
+
+      // Reset form and close dialog
+      if (uploadFormRef.current) {
+        uploadFormRef.current.reset()
+      }
+      setSelectedFiles([])
+      setFilePreviews([])
+      setUploadProgress({ processed: 0, uploaded: 0, total: 0 })
+      setUploadDialogOpen(false)
     } catch (error) {
-      toast.error("Failed to upload image")
-      console.error(error)
+      const errorMessage = error instanceof Error ? error.message : String(error)
+      toast.error(`Failed to process images: ${errorMessage}`)
+      errors.push(errorMessage)
     } finally {
       setUploading(false)
+      setProcessingImages(false)
     }
   }
 
@@ -555,12 +673,10 @@ export default function ImagesPage() {
     const updates: any = {}
 
     const title = formData.get("title") as string
-    const eventInfo = formData.get("event_info") as string
     const category = formData.get("category") as string
     const displayOrder = formData.get("display_order") as string
 
     if (title !== editingImage.title) updates.title = title || null
-    if (eventInfo !== editingImage.event_info) updates.event_info = eventInfo || null
     if (category !== editingImage.category) updates.category = category || null
     if (displayOrder !== String(editingImage.display_order)) {
       updates.display_order = parseInt(displayOrder) || 0
@@ -617,6 +733,9 @@ export default function ImagesPage() {
 
     try {
       setDeleting(true)
+      
+      const deletedCategory = imageToDelete.category
+      
       // Optimistically remove from list
       removeItem(imageToDelete.id)
       
@@ -627,6 +746,43 @@ export default function ImagesPage() {
 
       if (json.success) {
         toast.success("Image deleted successfully")
+        
+        // Reorder remaining images in the same category to have sequential display_order
+        if (deletedCategory) {
+          // Get all remaining images in the same category
+          const remainingImages = images
+            .filter((img) => img.id !== imageToDelete.id && img.category === deletedCategory)
+            .sort((a, b) => a.display_order - b.display_order)
+          
+          // Reorder to have sequential display_order (0, 1, 2, ...)
+          const reorderedImages = remainingImages.map((img, index) => ({
+            ...img,
+            display_order: index,
+          }))
+          
+          // Update display_order in database for all remaining images
+          try {
+            const updatePromises = reorderedImages.map((img, index) =>
+              fetch(API_PATHS.adminImage(img.id), {
+                method: "PATCH",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ display_order: index }),
+              })
+            )
+            
+            await Promise.all(updatePromises)
+            
+            // Update local state with reordered images
+            reorderedImages.forEach((img) => {
+              replaceItem(img.id, img)
+            })
+          } catch (updateError) {
+            console.error("Failed to update image order after deletion:", updateError)
+            // If order update fails, refresh from server
+            fetchImages()
+          }
+        }
+        
         setDeleteDialogOpen(false)
         setImageToDelete(null)
       } else {
@@ -752,16 +908,112 @@ export default function ImagesPage() {
             </DialogHeader>
             <form ref={uploadFormRef} onSubmit={handleUpload} className="space-y-4">
               <div>
-                <Label htmlFor="file">Image File *</Label>
+                <Label htmlFor="file">Image File{selectedFiles.length > 1 ? 's' : ''} *</Label>
                 <Input
                   id="file"
                   name="file"
                   type="file"
                   accept="image/*"
+                  multiple
                   required
-                  disabled={uploading}
+                  disabled={uploading || processingImages}
+                  onChange={(e) => {
+                    const files = Array.from(e.target.files || [])
+                    setSelectedFiles(files)
+                    
+                    if (files.length === 0) {
+                      setFilePreviews([])
+                      return
+                    }
+                    
+                    // Create previews asynchronously
+                    const previewPromises = files.map((file) => {
+                      return new Promise<{ file: File; preview: string }>((resolve) => {
+                        const reader = new FileReader()
+                        reader.onloadend = () => {
+                          resolve({ file, preview: reader.result as string })
+                        }
+                        reader.readAsDataURL(file)
+                      })
+                    })
+                    
+                    Promise.all(previewPromises).then((previews) => {
+                      setFilePreviews(previews)
+                    })
+                  }}
                 />
+                <p className="text-sm text-gray-500 mt-1">
+                  You can select multiple images at once. All selected images will be processed and uploaded.
+                </p>
               </div>
+
+              {filePreviews.length > 0 && (
+                <div className="space-y-2">
+                  <Label>Selected Images ({filePreviews.length})</Label>
+                  <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 sm:gap-4 max-h-[300px] overflow-y-auto border border-gray-200 rounded-lg p-4">
+                    {filePreviews.map((preview, index) => (
+                      <div key={index} className="relative group">
+                        <div className="aspect-square bg-gray-100 rounded-lg overflow-hidden">
+                          <img
+                            src={preview.preview}
+                            alt={`Preview ${index + 1}`}
+                            className="w-full h-full object-cover"
+                          />
+                        </div>
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant="destructive"
+                          className="absolute top-1 right-1 opacity-0 group-hover:opacity-100 transition-opacity"
+                          onClick={() => {
+                            const newFiles = selectedFiles.filter((_, i) => i !== index)
+                            const newPreviews = filePreviews.filter((_, i) => i !== index)
+                            setSelectedFiles(newFiles)
+                            setFilePreviews(newPreviews)
+                            // Reset file input
+                            const input = document.getElementById("file") as HTMLInputElement
+                            if (input) {
+                              const dataTransfer = new DataTransfer()
+                              newFiles.forEach(file => dataTransfer.items.add(file))
+                              input.files = dataTransfer.files
+                            }
+                          }}
+                          disabled={uploading || processingImages}
+                        >
+                          <X className="w-3 h-3" />
+                        </Button>
+                        <div className="text-xs text-gray-500 mt-1 truncate">
+                          {preview.file.name}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {(processingImages || uploading) && (
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between text-sm">
+                    <span>
+                      {processingImages ? 'Processing images...' : 'Uploading images...'}
+                    </span>
+                    <span>
+                      {processingImages 
+                        ? `${uploadProgress.processed} / ${uploadProgress.total}`
+                        : `${uploadProgress.uploaded} / ${uploadProgress.total}`
+                      }
+                    </span>
+                  </div>
+                  <div className="w-full bg-gray-200 rounded-full h-2">
+                    <div
+                      className="bg-blue-600 h-2 rounded-full transition-all duration-300"
+                      style={{ 
+                        width: `${((processingImages ? uploadProgress.processed : uploadProgress.uploaded) / uploadProgress.total) * 100}%` 
+                      }}
+                    />
+                  </div>
+                </div>
+              )}
               <div>
                 <Label htmlFor="title">Title</Label>
                 <Input
@@ -769,12 +1021,12 @@ export default function ImagesPage() {
                   name="title"
                   type="text"
                   placeholder="Image title"
-                  disabled={uploading}
+                  disabled={uploading || processingImages}
                 />
               </div>
               <div>
                 <Label htmlFor="category">Category</Label>
-                <Select name="category" disabled={uploading} defaultValue="">
+                <Select name="category" disabled={uploading || processingImages} defaultValue="">
                   <SelectTrigger>
                     <SelectValue placeholder="Select category (optional)" />
                   </SelectTrigger>
@@ -786,30 +1038,25 @@ export default function ImagesPage() {
                   </SelectContent>
                 </Select>
               </div>
-              <div>
-                <Label htmlFor="event_info">Event Information</Label>
-                <Textarea
-                  id="event_info"
-                  name="event_info"
-                  placeholder="Additional event information"
-                  disabled={uploading}
-                  rows={3}
-                />
-              </div>
               <div className="flex justify-end gap-2">
                 <Button
                   type="button"
                   variant="outline"
-                  onClick={() => setUploadDialogOpen(false)}
-                  disabled={uploading}
+                  onClick={() => {
+                    setUploadDialogOpen(false)
+                    setSelectedFiles([])
+                    setFilePreviews([])
+                    setUploadProgress({ processed: 0, uploaded: 0, total: 0 })
+                  }}
+                  disabled={uploading || processingImages}
                 >
                   Cancel
                 </Button>
-                <Button type="submit" disabled={uploading}>
-                  {uploading ? (
+                <Button type="submit" disabled={uploading || processingImages || selectedFiles.length === 0}>
+                  {(uploading || processingImages) ? (
                     <>
                       <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                      Uploading...
+                      {processingImages ? 'Processing...' : 'Uploading...'}
                     </>
                   ) : (
                     "Upload"
@@ -991,7 +1238,7 @@ export default function ImagesPage() {
                                   </span>
                                 </div>
                                     <DndContext
-                                      sensors={reordering ? [] : sensors}
+                                      sensors={sensors}
                                       collisionDetection={closestCenter}
                                       onDragEnd={(e) => handleDragEnd(e, subCat.category)}
                                     >
@@ -1024,7 +1271,7 @@ export default function ImagesPage() {
                       ) : (
                         /* Default: show all images in grid */
                         <DndContext
-                          sensors={reordering ? [] : sensors}
+                          sensors={sensors}
                           collisionDetection={closestCenter}
                           onDragEnd={(e) => {
                             // Get the category from the first image (all images in section should have same category)
@@ -1208,15 +1455,6 @@ export default function ImagesPage() {
                   name="display_order"
                   type="number"
                   defaultValue={editingImage.display_order}
-                />
-              </div>
-              <div>
-                <Label htmlFor="edit-event_info">Event Information</Label>
-                <Textarea
-                  id="edit-event_info"
-                  name="event_info"
-                  defaultValue={editingImage.event_info || ""}
-                  rows={3}
                 />
               </div>
               <div className="flex justify-end gap-2">

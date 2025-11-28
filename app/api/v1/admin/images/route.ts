@@ -31,6 +31,9 @@ import { withVersioning } from "@/lib/api-version-wrapper"
  * - event_info: Optional event information (string)
  */
 
+// Increase timeout for image processing
+export const maxDuration = 60 // 60 seconds for image processing
+
 export const POST = withVersioning(async (request: Request) => {
   return withErrorHandling(async () => {
     const requestId = crypto.randomUUID()

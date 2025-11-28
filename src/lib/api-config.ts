@@ -80,6 +80,7 @@ export const API_PATHS = {
   
   // Admin Image APIs
   adminImages: getApiPath('admin/images'),
+  adminImagesBatch: getApiPath('admin/images/batch'),
   adminImage: (id: string) => getApiPath(`admin/images/${id}`),
   adminImageToggleAISelection: getApiPath('admin/images/toggle-ai-selection'),
   
