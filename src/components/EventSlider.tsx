@@ -155,7 +155,7 @@ export function EventSlider({ events }: EventSliderProps) {
                     : 'opacity-0 z-0 pointer-events-none absolute inset-0'
                 }`}
               >
-                <div className="flex flex-col justify-start 4xl:justify-center 5xl:justify-center items-center px-3 sm:px-4 min-[769px]:px-6 lg:px-8 xl:px-12 3xl:px-16 4xl:px-20 5xl:px-28 h-full pt-[clamp(5rem,10vh,7rem)] sm:pt-[clamp(6rem,12vh,8rem)] lg:pt-[clamp(7rem,14vh,9rem)] 4xl:pt-0 pb-[clamp(2rem,4vh,3rem)] sm:pb-[clamp(3rem,6vh,4rem)] lg:pb-[clamp(4rem,8vh,6rem)] 4xl:pb-0 overflow-y-auto">
+                <div className="flex flex-col justify-center items-center px-3 sm:px-4 min-[769px]:px-6 lg:px-8 xl:px-12 3xl:px-16 4xl:px-20 5xl:px-28 h-full pt-[clamp(5rem,10vh,7rem)] sm:pt-[clamp(6rem,12vh,8rem)] lg:pt-[clamp(7rem,14vh,9rem)] pb-[clamp(2rem,4vh,3rem)] sm:pb-[clamp(3rem,6vh,4rem)] lg:pb-[clamp(4rem,8vh,6rem)] overflow-y-auto">
                   <div className="flex flex-col items-center justify-center w-full max-w-[90vw] sm:max-w-[480px] min-[769px]:max-w-[540px] lg:max-w-[600px] 3xl:max-w-[680px] 4xl:max-w-[760px] 5xl:max-w-[840px]">
                     {/* Event Poster Image - Clickable */}
                     <button
