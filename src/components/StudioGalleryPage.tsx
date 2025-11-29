@@ -418,7 +418,7 @@ export function StudioGalleryPage() {
             </div>
           </div>
 
-          <div className="grid grid-cols-3 gap-1 sm:gap-2 md:gap-3 lg:gap-4 mt-3 sm:mt-4 md:mt-4 w-full mx-auto lg:max-w-[min(100%,calc((var(--stripe-h)-var(--block-h)-var(--cta-h,56px)-32px)*1.7778))]">
+          <div className="grid grid-cols-3 gap-1 sm:gap-2 md:gap-3 lg:gap-4 mt-3 sm:mt-4 md:mt-4 w-full mx-auto lg:max-w-[max(90%,min(100%,calc((var(--stripe-h)-var(--block-h)-var(--cta-h,56px)-32px)*1.7778)))]">
             {artworkImages.length > 0 && buildingImages.length > 0 ? (
               <>
                 {renderTile(
@@ -626,7 +626,7 @@ export function StudioGalleryPage() {
             </div>
           </div>
 
-          <div className="grid grid-cols-3 gap-1 sm:gap-2 md:gap-3 lg:gap-4 mt-3 sm:mt-4 md:mt-4 w-full mx-auto lg:max-w-[min(100%,calc((var(--stripe-h)-var(--block-h)-var(--cta-h,56px)-32px)*1.7778))]">
+          <div className="grid grid-cols-3 gap-1 sm:gap-2 md:gap-3 lg:gap-4 mt-3 sm:mt-4 md:mt-4 w-full mx-auto lg:max-w-[max(90%,min(100%,calc((var(--stripe-h)-var(--block-h)-var(--cta-h,56px)-32px)*1.7778)))]">
             {galleryImages.length > 0 ? (
               <>
                 {renderGallerySlice("gallery-1", 0, 0)}
