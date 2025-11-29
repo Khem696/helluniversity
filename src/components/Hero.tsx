@@ -72,33 +72,33 @@ export function Hero() {
   }
 
   return (
-    <section className="relative min-h-vp lg:h-[100dvh] overflow-visible no-horiz-overflow">
-      <div className="flex flex-col lg:flex-row lg:items-stretch h-full">
+    <section className="relative min-h-vp lg:h-screen lg:max-h-screen lg:overflow-hidden no-horiz-overflow">
+      <div className="flex flex-col lg:flex-row lg:items-stretch h-full lg:max-h-screen">
         {/* Left Side - Blue */}
-        <div className="w-full lg:w-1/2 min-w-0 bg-[#3e82bb] flex flex-col justify-start 4xl:justify-center 5xl:justify-center pl-6 sm:pl-6 min-[769px]:pl-8 lg:pl-10 xl:pl-16 2xl:pl-24 3xl:pl-32 4xl:pl-48 5xl:pl-64 pt-[calc(var(--header-h)+1rem)] lg:pt-[calc(var(--header-h)+3rem)] 4xl:pt-0 pb-[clamp(2rem,8vh,5rem)] lg:pb-[clamp(3rem,10vh,6rem)] 4xl:pb-0 relative lg:h-full overflow-x-hidden">
-          <div className="pl-0 pr-3 sm:pr-4 min-[769px]:pr-6 lg:pr-8 xl:pr-4 2xl:pr-8 3xl:pr-0 w-full max-w-[44rem] 2xl:max-w-[48rem] 3xl:max-w-[52rem] 4xl:max-w-[56rem] 5xl:max-w-[62rem] lg:max-h-[min(65vh,85%)]">
+        <div className="w-full lg:w-1/2 min-w-0 bg-[#3e82bb] flex flex-col justify-start lg:justify-center pl-4 sm:pl-5 min-[769px]:pl-6 lg:pl-8 xl:pl-12 2xl:pl-16 3xl:pl-20 4xl:pl-32 5xl:pl-40 pt-[calc(var(--header-h)+0.5rem)] lg:pt-0 pb-[clamp(1.5rem,6vh,4rem)] lg:pb-0 relative lg:h-full lg:max-h-full lg:overflow-hidden overflow-x-hidden">
+          <div className="pl-0 pr-2 sm:pr-3 min-[769px]:pr-4 lg:pr-6 xl:pr-4 2xl:pr-6 3xl:pr-0 w-full max-w-[44rem] 2xl:max-w-[48rem] 3xl:max-w-[52rem] 4xl:max-w-[56rem] 5xl:max-w-[62rem] lg:max-h-[min(65vh,85%)] mx-auto">
             {/* Main Title */}
-            <h1 className="mb-8 md:mb-10 lg:mb-12 font-acumin text-[clamp(48px,7.5vw,132px)] lg:text-[clamp(44px,5vw,96px)] font-black leading-[0.9] text-[#42210b] break-words">
+            <h1 className="mb-4 md:mb-5 lg:mb-6 font-acumin text-[clamp(43px,6.7vw,119px)] lg:text-[clamp(40px,4.5vw,86px)] 2xl:text-[clamp(45px,5vw,100px)] 3xl:text-[clamp(50px,5.5vw,110px)] 4xl:text-[clamp(55px,6vw,120px)] 5xl:text-[clamp(60px,6.5vw,130px)] font-black leading-[0.9] text-[#42210b] break-words">
               Hell<br />University
             </h1>
 
             {/* Culture House */}
-            <h2 className="text-white mb-10 sm:mb-12 lg:mb-16 font-urbanist text-[clamp(30px,5.5vw,72px)] lg:text-[clamp(28px,4vw,56px)] font-extrabold leading-[1.2] break-words">
+            <h2 className="text-white mb-6 sm:mb-7 lg:mb-8 font-urbanist text-[clamp(27px,4.9vw,65px)] lg:text-[clamp(25px,3.6vw,50px)] 2xl:text-[clamp(28px,4vw,58px)] 3xl:text-[clamp(32px,4.5vw,65px)] 4xl:text-[clamp(36px,5vw,72px)] 5xl:text-[clamp(40px,5.5vw,80px)] font-extrabold leading-[1.2] break-words">
               Culture Hub
             </h2>
 
             {/* Studio Section */}
-            <div className="mb-8 lg:mb-12">
-              <h3 className="text-white mb-4 font-comfortaa text-[clamp(28px,4.5vw,48px)] lg:text-[clamp(24px,3vw,36px)] font-normal break-words">
+            <div className="mb-5 lg:mb-6">
+              <h3 className="text-white mb-2 font-comfortaa text-[clamp(25px,4vw,43px)] lg:text-[clamp(22px,2.7vw,32px)] 2xl:text-[clamp(24px,3vw,36px)] 3xl:text-[clamp(26px,3.3vw,40px)] 4xl:text-[clamp(28px,3.6vw,44px)] 5xl:text-[clamp(30px,4vw,48px)] font-normal break-words">
                 Studio
               </h3>
-              <p className="text-white/90 font-comfortaa text-[clamp(14px,1.5vw,18px)] font-light leading-[1.6] break-words">
+              <p className="text-white/90 font-comfortaa text-[clamp(13px,1.3vw,16px)] 2xl:text-[clamp(14px,1.4vw,18px)] 3xl:text-[clamp(15px,1.5vw,20px)] 4xl:text-[clamp(16px,1.6vw,22px)] 5xl:text-[clamp(17px,1.7vw,24px)] font-light leading-[1.6] break-words">
                 Hongsee Culture House is a creative hub<br />
                 for cultural events and the artistic community.
               </p>
               <Link 
                 href="/studio-gallery" 
-                className="inline-block mt-3 text-[#D4AF37] hover:text-[#F5D76E] font-comfortaa text-[clamp(13px,1.3vw,16px)] font-light underline transition-colors"
+                className="inline-block mt-2 text-[#D4AF37] hover:text-[#F5D76E] font-comfortaa text-[clamp(12px,1.1vw,14px)] 2xl:text-[clamp(13px,1.2vw,16px)] 3xl:text-[clamp(14px,1.3vw,18px)] 4xl:text-[clamp(15px,1.4vw,20px)] 5xl:text-[clamp(16px,1.5vw,22px)] font-light underline transition-colors"
                 onClick={() => trackInternalLinkClick('Explore Studio & Gallery', '/studio-gallery', 'hero')}
               >
                 Explore Studio & Gallery →
@@ -107,16 +107,16 @@ export function Hero() {
 
             {/* Gallery Section */}
             <div>
-              <h3 className="text-white mb-4 font-comfortaa text-[clamp(28px,4.5vw,48px)] lg:text-[clamp(24px,3vw,36px)] font-normal break-words">
+              <h3 className="text-white mb-2 font-comfortaa text-[clamp(25px,4vw,43px)] lg:text-[clamp(22px,2.7vw,32px)] 2xl:text-[clamp(24px,3vw,36px)] 3xl:text-[clamp(26px,3.3vw,40px)] 4xl:text-[clamp(28px,3.6vw,44px)] 5xl:text-[clamp(30px,4vw,48px)] font-normal break-words">
                 Gallery
               </h3>
-              <p className="text-white/90 font-comfortaa text-[clamp(14px,1.5vw,18px)] font-light leading-[1.6] break-words">
+              <p className="text-white/90 font-comfortaa text-[clamp(13px,1.3vw,16px)] 2xl:text-[clamp(14px,1.4vw,18px)] 3xl:text-[clamp(15px,1.5vw,20px)] 4xl:text-[clamp(16px,1.6vw,22px)] 5xl:text-[clamp(17px,1.7vw,24px)] font-light leading-[1.6] break-words">
                 An archive and gallery<br />
                 dedicated to research and education.
               </p>
               <Link 
                 href="/about" 
-                className="inline-block mt-3 text-[#D4AF37] hover:text-[#F5D76E] font-comfortaa text-[clamp(13px,1.3vw,16px)] font-light underline transition-colors"
+                className="inline-block mt-2 text-[#D4AF37] hover:text-[#F5D76E] font-comfortaa text-[clamp(12px,1.1vw,14px)] 2xl:text-[clamp(13px,1.2vw,16px)] 3xl:text-[clamp(14px,1.3vw,18px)] 4xl:text-[clamp(15px,1.4vw,20px)] 5xl:text-[clamp(16px,1.5vw,22px)] font-light underline transition-colors"
                 onClick={() => trackInternalLinkClick('Learn Our Story', '/about', 'hero')}
               >
                 Learn Our Story →
@@ -126,7 +126,7 @@ export function Hero() {
         </div>
 
         {/* Right Side - Textured Red/Brown with Image */}
-        <div className="w-full lg:w-1/2 min-w-0 relative overflow-visible lg:overflow-hidden lg:h-full">
+        <div className="w-full lg:w-1/2 min-w-0 relative overflow-visible lg:overflow-hidden lg:h-full lg:max-h-full flex lg:items-center lg:justify-start">
           {/* Texture Overlay */}
           <div 
             className="absolute inset-0 opacity-100"
@@ -140,8 +140,8 @@ export function Hero() {
           />
 
           {/* Portrait Image */}
-          <div className="flex items-stretch 4xl:items-center 5xl:items-center justify-start px-4 sm:px-6 min-[769px]:px-8 lg:pl-0 lg:pr-12 3xl:pr-20 4xl:pr-28 5xl:pr-36 pt-[calc(var(--header-h)+1rem)] lg:pt-[calc(var(--header-h)+3rem)] 4xl:pt-0 pb-[clamp(2rem,8vh,5rem)] lg:pb-[clamp(3rem,10vh,6rem)] 4xl:pb-0 relative lg:h-full">
-            <div className="relative self-start 4xl:self-center 5xl:self-center w-full lg:w-fit overflow-hidden h-auto max-w-[560px] min-[769px]:max-w-[620px] lg:max-w-[700px] 3xl:max-w-[780px] 4xl:max-w-[880px] 5xl:max-w-[980px]">
+          <div className="flex items-center justify-center px-4 sm:px-6 min-[769px]:px-8 lg:pl-0 lg:pr-12 3xl:pr-20 4xl:pr-28 5xl:pr-36 pt-[calc(var(--header-h)+1rem)] lg:pt-0 pb-[clamp(2rem,8vh,5rem)] lg:pb-0 relative z-10 w-full lg:w-auto">
+            <div className="relative w-full lg:w-fit overflow-hidden h-auto max-w-[560px] min-[769px]:max-w-[620px] lg:max-w-[700px] 3xl:max-w-[780px] 4xl:max-w-[880px] 5xl:max-w-[980px]">
               <Image
                 src={withBasePath('/assets/portrait/portrait_kade.png')}
                 alt="Kade Javanalikikorn - Founder of Hell University cultural hub in Mae Taeng, Chiang Mai, Thailand"

@@ -16,7 +16,7 @@ import { createRequestLogger } from "@/lib/logger"
 import { withErrorHandling, successResponse, errorResponse, notFoundResponse, unauthorizedResponse, forbiddenResponse, ErrorCodes } from "@/lib/api-response"
 import { getRequestPath } from "@/lib/api-versioning"
 import { withVersioning } from "@/lib/api-version-wrapper"
-import { createBangkokTimestamp } from "@/lib/timezone"
+import { createBangkokTimestamp, getBangkokTime } from "@/lib/timezone"
 
 /**
  * Admin Event Management API
@@ -215,7 +215,8 @@ export const PATCH = withVersioning(async (
     }
 
     const db = getTursoClient()
-    const now = Math.floor(Date.now() / 1000)
+    // CRITICAL: Use Bangkok timezone for all timestamps
+    const now = getBangkokTime()
 
     // Build update query dynamically
     const updates: string[] = []

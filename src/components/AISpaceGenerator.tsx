@@ -245,25 +245,49 @@ function isBFLDeliveryUrl(url: string): boolean {
 
 export function AISpaceGenerator() {
   const [selectedEventType, setSelectedEventType] = useState<string>("")
+  const [selectedSubType, setSelectedSubType] = useState<string>("")
   const [isLoading, setIsLoading] = useState(false)
   const [results, setResults] = useState<string[]>([])
   const [error, setError] = useState<string>("")
   const [recaptchaToken, setRecaptchaToken] = useState<string | null>(null)
   const [isRecaptchaVerified, setIsRecaptchaVerified] = useState(false)
+  const [showRecaptcha, setShowRecaptcha] = useState(false)
   const [resultsModalOpen, setResultsModalOpen] = useState(false)
   const [carouselApi, setCarouselApi] = useState<CarouselApi>()
   const [currentImageIndex, setCurrentImageIndex] = useState(0)
   const [loadingProgress, setLoadingProgress] = useState(0)
   const [imageLoadErrors, setImageLoadErrors] = useState<Set<number>>(new Set())
   const recaptchaKeyRef = useRef(0) // Force reCAPTCHA re-render
+  const recaptchaShownAtRef = useRef<number | null>(null) // Track when reCAPTCHA overlay was shown
 
-  // Event types available for selection (excluding "Other")
+  // Event types available for selection
   const eventTypes = [
     { value: "Arts & Design Coaching Space", label: "Arts & Design Coaching Space" },
     { value: "Meeting, Seminar, Workshop", label: "Meeting, Seminar, Workshop" },
     { value: "Family & Friends Gathering", label: "Family & Friends Gathering" },
     { value: "Holiday Festive", label: "Holiday Festive" },
   ]
+
+  // Sub-types for Family & Friends Gathering
+  const familyGatheringSubTypes = [
+    { value: "Wedding", label: "Wedding" },
+    { value: "Pre-Wedding", label: "Pre-Wedding" },
+    { value: "Engagement", label: "Engagement" },
+    { value: "Reunion", label: "Reunion" },
+    { value: "Baby Shower", label: "Baby Shower" },
+    { value: "Private Dining", label: "Private Dining" },
+  ]
+
+  // Sub-types for Holiday Festive
+  const holidayFestiveSubTypes = [
+    { value: "Christmas", label: "Christmas" },
+    { value: "New Year", label: "New Year" },
+    { value: "Easter", label: "Easter" },
+    { value: "Thanksgiving", label: "Thanksgiving" },
+  ]
+
+  // Check if selected event type requires a sub-type
+  const requiresSubType = selectedEventType === "Family & Friends Gathering" || selectedEventType === "Holiday Festive"
 
   // Load generated images from localStorage on component mount
   useEffect(() => {
@@ -277,7 +301,16 @@ export function AISpaceGenerator() {
           if (hoursSinceSave < 24 && parsed.images && parsed.images.length > 0) {
             setResults(parsed.images)
             if (parsed.eventType) {
-              setSelectedEventType(parsed.eventType)
+              // Parse event type - could be "Base Type - Sub Type" format
+              const parts = parsed.eventType.split(" - ")
+              if (parts.length === 2) {
+                const [baseType, subType] = parts
+                setSelectedEventType(baseType)
+                setSelectedSubType(subType)
+              } else {
+                // Legacy format - just base type
+                setSelectedEventType(parsed.eventType)
+              }
             }
           } else {
             // Clear old data
@@ -294,17 +327,37 @@ export function AISpaceGenerator() {
   function handleRecaptchaVerify(token: string) {
     setRecaptchaToken(token)
     setIsRecaptchaVerified(true)
+    setError("") // Clear any previous errors
+    // Automatically generate when verified
+    onGenerateWithToken(token).catch((error) => {
+      console.error("AI generation error in handleRecaptchaVerify:", error)
+    })
   }
 
   function handleRecaptchaError() {
+    // Don't show error if form is submitting or modal is closing
+    if (isLoading) {
+      return
+    }
+    
+    // Prevent error from firing too quickly after showing reCAPTCHA (during initialization)
+    // Give the widget at least 1 second to initialize before showing errors
+    if (recaptchaShownAtRef.current && Date.now() - recaptchaShownAtRef.current < 1000) {
+      console.warn("reCAPTCHA error occurred during initialization, ignoring")
+      return
+    }
+    
     setRecaptchaToken(null)
     setIsRecaptchaVerified(false)
+    setShowRecaptcha(false)
     setError("CAPTCHA verification failed. Please try again.")
   }
 
   function handleRecaptchaExpire() {
     setRecaptchaToken(null)
     setIsRecaptchaVerified(false)
+    setShowRecaptcha(false)
+    setError("CAPTCHA verification expired. Please verify again to continue.")
   }
 
   // Handle modal open/close - prevent closing while loading
@@ -325,12 +378,15 @@ export function AISpaceGenerator() {
     // Reset CAPTCHA verification
     setRecaptchaToken(null)
     setIsRecaptchaVerified(false)
+    setShowRecaptcha(false)
     setError("")
     // Force reCAPTCHA to re-render by incrementing key
     recaptchaKeyRef.current += 1
+    recaptchaShownAtRef.current = null
     // Clear previous results
     setResults([])
     setSelectedEventType("")
+    setSelectedSubType("")
     setImageLoadErrors(new Set())
     setCurrentImageIndex(0)
     // Clear localStorage
@@ -339,16 +395,48 @@ export function AISpaceGenerator() {
     }
   }
 
-  async function onGenerate() {
-    if (!isRecaptchaVerified || !recaptchaToken) {
-      setError("Please complete the CAPTCHA verification first.")
-      return
-    }
-
+  // Handle Generate button click - show reCAPTCHA overlay
+  function handleGenerateClick() {
     if (!selectedEventType) {
       setError("Please select an event type.")
       return
     }
+
+    if (requiresSubType && !selectedSubType) {
+      setError("Please select a sub-type.")
+      return
+    }
+
+    setError("")
+    // Show reCAPTCHA overlay
+    setShowRecaptcha(true)
+    recaptchaShownAtRef.current = Date.now()
+  }
+
+  // Generate with token (called after reCAPTCHA verification)
+  async function onGenerateWithToken(token: string) {
+    if (!selectedEventType) {
+      setError("Please select an event type.")
+      setShowRecaptcha(false)
+      return
+    }
+
+    if (requiresSubType && !selectedSubType) {
+      setError("Please select a sub-type.")
+      setShowRecaptcha(false)
+      return
+    }
+
+    setError("")
+    setIsLoading(true)
+    setLoadingProgress(0)
+    setResults([])
+    setShowRecaptcha(false) // Hide overlay while generating
+    
+    // Build the final event type string
+    const finalEventType = requiresSubType 
+      ? `${selectedEventType} - ${selectedSubType}`
+      : selectedEventType
 
     setError("")
     setIsLoading(true)
@@ -359,7 +447,7 @@ export function AISpaceGenerator() {
     const abortController = new AbortController()
     const timeoutId = setTimeout(() => {
       abortController.abort()
-    }, 300000) // 5 minutes timeout (generation can take a while)
+    }, 360000) // 6 minutes timeout (allows time for multiple images + network latency)
     
     try {
       const response = await fetch(API_PATHS.aiSpace, {
@@ -368,8 +456,8 @@ export function AISpaceGenerator() {
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
-          token: recaptchaToken,
-          eventType: selectedEventType,
+          token: token,
+          eventType: finalEventType,
         }),
         signal: abortController.signal,
         // Prevent browser extensions from interfering
@@ -463,7 +551,7 @@ export function AISpaceGenerator() {
             const dataToSave: StoredGeneratedImages = {
               images: generatedImages,
               timestamp: Date.now(),
-              eventType: selectedEventType,
+              eventType: finalEventType,
             }
             localStorage.setItem(STORAGE_KEY, JSON.stringify(dataToSave))
           } catch (e) {
@@ -480,7 +568,9 @@ export function AISpaceGenerator() {
       // Reset CAPTCHA after successful generation (user needs to verify again to generate more)
       setRecaptchaToken(null)
       setIsRecaptchaVerified(false)
+      setShowRecaptcha(false)
       recaptchaKeyRef.current += 1
+      recaptchaShownAtRef.current = null
       
       // Open modal if there are results
       if (generatedImages.length > 0) {
@@ -488,6 +578,7 @@ export function AISpaceGenerator() {
       }
     } catch (e) {
       setResults([])
+      setShowRecaptcha(false)
       
       // Handle specific error types
       if (e instanceof Error) {
@@ -497,6 +588,16 @@ export function AISpaceGenerator() {
           setError("Network error. Please check your connection and try again. If the problem persists, it may be caused by a browser extension.")
         } else {
           setError(e.message || "Unknown error occurred")
+        }
+        
+        // If error is related to captcha, reset captcha state
+        const errorMsg = e.message || String(e) || ""
+        if (errorMsg.toLowerCase().includes('captcha') || 
+            errorMsg.toLowerCase().includes('recaptcha') ||
+            errorMsg.toLowerCase().includes('verification')) {
+          setRecaptchaToken(null)
+          setIsRecaptchaVerified(false)
+          recaptchaKeyRef.current += 1
         }
       } else {
         setError("Unknown error occurred")
@@ -551,44 +652,33 @@ export function AISpaceGenerator() {
     }
   }, [isLoading])
 
+  // Reset sub-type when event type changes
+  useEffect(() => {
+    if (!requiresSubType) {
+      setSelectedSubType("")
+    }
+  }, [selectedEventType, requiresSubType])
+
   return (
     <div className="flex flex-col" style={{ gap: 'clamp(0.75rem, 0.9vw, 1rem)' }}>
-      {/* reCAPTCHA v2 - Must be verified before using the form */}
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 'clamp(0.375rem, 0.5vw, 0.5rem)' }}>
-        <p className="text-[#5a3a2a]/70 font-comfortaa" style={{ fontSize: 'clamp(0.625rem, 0.7vw, 0.75rem)' }}>
-          Please verify you're human before proceeding:
-        </p>
-        <div className="lg:scale-75 xl:scale-90 origin-left">
-          <Recaptcha
-            key={recaptchaKeyRef.current}
-            onVerify={handleRecaptchaVerify}
-            onError={handleRecaptchaError}
-            onExpire={handleRecaptchaExpire}
-            size="compact"
-          />
-        </div>
-        {!isRecaptchaVerified && (
-          <p className="text-[#5a3a2a]/60 font-comfortaa italic" style={{ fontSize: 'clamp(0.625rem, 0.7vw, 0.75rem)' }}>
-            Complete verification to enable form fields
-          </p>
-        )}
-      </div>
-
       <div style={{ display: 'flex', flexDirection: 'column', gap: 'clamp(0.25rem, 0.3vw, 0.375rem)' }}>
         <label htmlFor="event-type-select" className="text-[#5a3a2a]/70 font-comfortaa" style={{ fontSize: 'clamp(0.625rem, 0.7vw, 0.75rem)' }}>
           Select event type to generate AI space design
         </label>
         <Select 
           value={selectedEventType} 
-          onValueChange={setSelectedEventType}
-          disabled={!isRecaptchaVerified}
+          onValueChange={(value) => {
+            setSelectedEventType(value)
+            setSelectedSubType("") // Reset sub-type when event type changes
+          }}
+          disabled={isLoading || results.length > 0}
         >
           <SelectTrigger 
             id="event-type-select"
-            className={`font-comfortaa ${!isRecaptchaVerified ? "opacity-50 cursor-not-allowed" : ""}`}
+            className="font-comfortaa"
             style={{ fontSize: 'clamp(0.75rem, 0.8vw, 0.875rem)', height: 'clamp(2.5rem, 3vw, 3rem)' }}
           >
-            <SelectValue placeholder={isRecaptchaVerified ? "Select event type..." : "Please complete CAPTCHA verification first..."} />
+            <SelectValue placeholder="Select event type..." />
           </SelectTrigger>
           <SelectContent>
             {eventTypes.map((eventType) => (
@@ -600,11 +690,69 @@ export function AISpaceGenerator() {
         </Select>
       </div>
 
+      {/* Sub-type dropdown for Family & Friends Gathering */}
+      {selectedEventType === "Family & Friends Gathering" && (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 'clamp(0.25rem, 0.3vw, 0.375rem)' }}>
+          <label htmlFor="sub-type-select" className="text-[#5a3a2a]/70 font-comfortaa" style={{ fontSize: 'clamp(0.625rem, 0.7vw, 0.75rem)' }}>
+            Select sub-type
+          </label>
+          <Select 
+            value={selectedSubType} 
+            onValueChange={setSelectedSubType}
+            disabled={isLoading || results.length > 0}
+          >
+            <SelectTrigger 
+              id="sub-type-select"
+              className="font-comfortaa"
+              style={{ fontSize: 'clamp(0.75rem, 0.8vw, 0.875rem)', height: 'clamp(2.5rem, 3vw, 3rem)' }}
+            >
+              <SelectValue placeholder="Select sub-type..." />
+            </SelectTrigger>
+            <SelectContent>
+              {familyGatheringSubTypes.map((subType) => (
+                <SelectItem key={subType.value} value={subType.value}>
+                  {subType.label}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+      )}
+
+      {/* Sub-type dropdown for Holiday Festive */}
+      {selectedEventType === "Holiday Festive" && (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 'clamp(0.25rem, 0.3vw, 0.375rem)' }}>
+          <label htmlFor="sub-type-select" className="text-[#5a3a2a]/70 font-comfortaa" style={{ fontSize: 'clamp(0.625rem, 0.7vw, 0.75rem)' }}>
+            Select sub-type
+          </label>
+          <Select 
+            value={selectedSubType} 
+            onValueChange={setSelectedSubType}
+            disabled={isLoading || results.length > 0}
+          >
+            <SelectTrigger 
+              id="sub-type-select"
+              className="font-comfortaa"
+              style={{ fontSize: 'clamp(0.75rem, 0.8vw, 0.875rem)', height: 'clamp(2.5rem, 3vw, 3rem)' }}
+            >
+              <SelectValue placeholder="Select sub-type..." />
+            </SelectTrigger>
+            <SelectContent>
+              {holidayFestiveSubTypes.map((subType) => (
+                <SelectItem key={subType.value} value={subType.value}>
+                  {subType.label}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+      )}
+
       <div className="flex items-center" style={{ gap: 'clamp(0.5rem, 0.6vw, 0.75rem)' }}>
         <button
           type="button"
-          onClick={onGenerate}
-          disabled={isLoading || !selectedEventType || !isRecaptchaVerified || results.length > 0}
+          onClick={handleGenerateClick}
+          disabled={isLoading || !selectedEventType || (requiresSubType && !selectedSubType) || results.length > 0}
           className="rounded bg-black text-white disabled:opacity-50 disabled:cursor-not-allowed"
           style={{ 
             padding: 'clamp(0.5rem, 0.6vw, 0.75rem) clamp(0.75rem, 0.9vw, 1rem)',
@@ -781,6 +929,74 @@ export function AISpaceGenerator() {
           </div>
         </DialogContent>
       </Dialog>
+
+      {/* reCAPTCHA Overlay - shown when user clicks Generate */}
+      {showRecaptcha && process.env.NEXT_PUBLIC_USE_STATIC_IMAGES !== '1' && (
+        <div 
+          className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/60 backdrop-blur-sm"
+          onClick={(e) => {
+            // Only close if clicking the backdrop, not the content
+            if (e.target === e.currentTarget && !isLoading) {
+              setShowRecaptcha(false)
+              setRecaptchaToken(null)
+              setIsRecaptchaVerified(false)
+              recaptchaShownAtRef.current = null
+              recaptchaKeyRef.current += 1
+            }
+          }}
+        >
+          <div 
+            className="bg-white rounded-lg shadow-2xl p-6 sm:p-8 max-w-md w-full mx-4"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex flex-col items-center gap-4">
+              <h3 className="text-[#5a3a2a] font-comfortaa font-bold text-lg sm:text-xl text-center">
+                Verify You're Human
+              </h3>
+              <p className="text-[#5a3a2a]/70 font-comfortaa text-sm text-center">
+                Please complete the verification to generate AI space design.
+              </p>
+              <div 
+                className="flex justify-center w-full"
+                style={{
+                  position: 'relative',
+                  zIndex: 10000,
+                  pointerEvents: 'auto',
+                }}
+              >
+                <Recaptcha
+                  key={recaptchaKeyRef.current}
+                  onVerify={handleRecaptchaVerify}
+                  onError={handleRecaptchaError}
+                  onExpire={handleRecaptchaExpire}
+                  size="normal"
+                />
+              </div>
+              {!isLoading && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowRecaptcha(false)
+                    setRecaptchaToken(null)
+                    setIsRecaptchaVerified(false)
+                    recaptchaShownAtRef.current = null
+                    recaptchaKeyRef.current += 1
+                  }}
+                  className="font-comfortaa mt-2 px-4 py-2 rounded border border-gray-300 hover:bg-gray-50 transition-colors"
+                >
+                  Cancel
+                </button>
+              )}
+              {isLoading && (
+                <div className="flex items-center gap-2 mt-2">
+                  <div className="w-4 h-4 border-2 border-[#5a3a2a] border-t-transparent rounded-full animate-spin"></div>
+                  <span className="font-comfortaa text-sm text-[#5a3a2a]">Generating...</span>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

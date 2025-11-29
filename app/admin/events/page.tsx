@@ -136,14 +136,16 @@ function SortablePhotoItem({
           alt={photo.title || "Event photo"}
           className="w-full h-full object-cover"
         />
-        {/* Drag handle */}
-        <div
-          {...attributes}
-          {...listeners}
-          className="absolute top-2 left-2 bg-black/50 hover:bg-black/70 text-white p-1 rounded cursor-grab active:cursor-grabbing opacity-0 group-hover:opacity-100 transition-opacity"
-        >
-          <GripVertical className="w-4 h-4" />
-        </div>
+        {/* Drag handle - only show when not saving/removing */}
+        {!saving && !removing && (
+          <div
+            {...attributes}
+            {...listeners}
+            className="absolute top-2 left-2 bg-black/50 hover:bg-black/70 text-white p-1 rounded cursor-grab active:cursor-grabbing opacity-0 group-hover:opacity-100 transition-opacity"
+          >
+            <GripVertical className="w-4 h-4" />
+          </div>
+        )}
       </div>
       <Button
         type="button"
@@ -173,7 +175,7 @@ export default function EventsPage() {
   const [reorderingPhotos, setReorderingPhotos] = useState(false)
   const [removingPhoto, setRemovingPhoto] = useState<string | null>(null) // Track which photo is being removed
   
-  // Initialize drag and drop sensors
+  // Initialize drag and drop sensors - must be called at top level (hooks rule)
   const sensors = useSensors(
     useSensor(PointerSensor),
     useSensor(KeyboardSensor, {
@@ -315,30 +317,109 @@ export default function EventsPage() {
     const uploadedImageIds: string[] = []
     const errors: string[] = []
 
-    // Upload each image file
-    for (let i = 0; i < inEventPhotoFiles.length; i++) {
-      const file = inEventPhotoFiles[i]
-      try {
-        const uploadFormData = new FormData()
-        uploadFormData.append("file", file)
-        uploadFormData.append("title", editingEvent?.title ? `${editingEvent.title} - Photo ${i + 1}` : `Event Photo ${i + 1}`)
-
-        const uploadResponse = await fetch(API_PATHS.adminImages, {
-          method: "POST",
-          body: uploadFormData,
-        })
-
-        const uploadJson = await uploadResponse.json()
-        if (uploadJson.success && uploadJson.data?.image?.id) {
-          uploadedImageIds.push(uploadJson.data.image.id)
-          setUploadProgress({ uploaded: i + 1, total: inEventPhotoFiles.length })
-        } else {
-          const errorMessage = uploadJson.error?.message || uploadJson.error || `Failed to upload ${file.name}`
-          errors.push(errorMessage)
+    try {
+      // Step 1: Process images on client-side (resize, normalize, strip EXIF)
+      const { processMultipleImages } = await import("@/lib/client-image-processor")
+      toast.info("Processing images...")
+      
+      // Get processing settings from environment variables (with defaults)
+      const maxWidth = parseInt(process.env.NEXT_PUBLIC_MAX_IMAGE_WIDTH || '1920', 10)
+      const maxHeight = parseInt(process.env.NEXT_PUBLIC_MAX_IMAGE_HEIGHT || '1920', 10)
+      const quality = parseFloat(process.env.NEXT_PUBLIC_IMAGE_QUALITY || '0.85')
+      const format = (process.env.NEXT_PUBLIC_IMAGE_FORMAT || 'webp') as 'webp' | 'jpeg' | 'png'
+      
+      const processedImages = await processMultipleImages(
+        inEventPhotoFiles,
+        {
+          maxWidth,
+          maxHeight,
+          quality,
+          format,
+        },
+        (processed, total) => {
+          // Update progress during processing
+          setUploadProgress({ uploaded: 0, total }) // Reset for upload phase
         }
-      } catch (error) {
-        errors.push(`Failed to upload ${file.name}: ${error instanceof Error ? error.message : String(error)}`)
+      )
+
+      toast.success(`Processed ${processedImages.length} image${processedImages.length !== 1 ? 's' : ''}, uploading...`)
+      setUploadProgress({ uploaded: 0, total: processedImages.length })
+
+      // Step 2: Upload processed images with intelligent batch splitting
+      const { splitIntoBatches, uploadBatch, uploadSingle } = await import("@/lib/batch-upload-helper")
+      
+      if (processedImages.length === 1) {
+        // Single file upload
+        const processed = processedImages[0]
+        try {
+          const result = await uploadSingle(processed, API_PATHS.adminImages, {
+            title: editingEvent?.title ? `${editingEvent.title} - Photo 1` : `Event Photo 1`,
+            eventInfo: editingEvent?.description || null,
+          })
+          
+          if (result.success && result.image?.id) {
+            uploadedImageIds.push(result.image.id)
+            setUploadProgress({ uploaded: 1, total: 1 })
+          } else {
+            const errorMessage = result.error || `Failed to upload ${processed.file.name}`
+            errors.push(errorMessage)
+          }
+        } catch (error) {
+          errors.push(`Failed to upload ${processed.file.name}: ${error instanceof Error ? error.message : String(error)}`)
+        }
+      } else {
+        // Multiple files - split into batches and upload sequentially
+        const titlePrefix = editingEvent?.title || "Event Photo"
+        const batches = splitIntoBatches(processedImages, {
+          titlePrefix,
+          eventInfo: editingEvent?.description || null,
+        })
+        
+        let totalUploaded = 0
+        
+        for (let i = 0; i < batches.length; i++) {
+          const batch = batches[i]
+          
+          try {
+            // Show progress for current batch
+            if (batches.length > 1) {
+              toast.info(`Uploading batch ${i + 1} of ${batches.length} (${batch.length} image${batch.length !== 1 ? 's' : ''})...`)
+            }
+            
+            const result = await uploadBatch(batch, API_PATHS.adminImagesBatch, {
+              titlePrefix,
+              eventInfo: editingEvent?.description || null,
+            })
+            
+            if (result.success && result.images) {
+              result.images.forEach((image: any) => {
+                if (image?.id) {
+                  uploadedImageIds.push(image.id)
+                }
+              })
+              totalUploaded += result.images.length
+              setUploadProgress({ uploaded: totalUploaded, total: processedImages.length })
+              
+              if (result.errors && result.errors.length > 0) {
+                errors.push(...result.errors)
+              }
+              
+              if (result.message) {
+                toast.warning(result.message)
+              }
+            } else {
+              const errorMessage = result.errors?.join(', ') || "Failed to upload batch"
+              errors.push(`Batch ${i + 1}: ${errorMessage}`)
+            }
+          } catch (error) {
+            errors.push(`Batch ${i + 1} failed: ${error instanceof Error ? error.message : String(error)}`)
+          }
+        }
       }
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error)
+      toast.error(`Failed to process images: ${errorMessage}`)
+      errors.push(errorMessage)
     }
 
     // Add all uploaded images to the event
@@ -395,6 +476,7 @@ export default function EventsPage() {
 
   // Handle drag end for photo reordering
   const handleDragEnd = async (event: DragEndEvent) => {
+    // Prevent drag during reordering or if no event
     if (!editingEvent || reorderingPhotos) return
 
     const { active, over } = event
@@ -500,12 +582,55 @@ export default function EventsPage() {
       const json = await response.json()
       if (json.success) {
         toast.success("Photo removed successfully")
-        // Refresh event details
-        if (editingEvent) {
+        
+        // Optimistically update UI by removing the photo and reordering remaining photos
+        if (editingEvent && editingEvent.in_event_photos) {
+          // Remove the deleted photo from the list
+          const remainingPhotos = editingEvent.in_event_photos.filter(
+            (p) => p.id !== eventImageId
+          )
+          
+          // Reorder remaining photos to have sequential display_order (0, 1, 2, ...)
+          const reorderedPhotos = remainingPhotos
+            .sort((a, b) => a.display_order - b.display_order)
+            .map((photo, index) => ({
+              ...photo,
+              display_order: index,
+            }))
+          
+          // Update display_order in database for all remaining photos
+          try {
+            const updatePromises = reorderedPhotos.map((photo, index) =>
+              fetch(API_PATHS.adminEventImage(eventId, photo.id), {
+                method: "PATCH",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ display_order: index }),
+              })
+            )
+            
+            await Promise.all(updatePromises)
+            
+            // Update local state with reordered photos
+            const updatedEvent = {
+              ...editingEvent,
+              in_event_photos: reorderedPhotos,
+            }
+            setEditingEvent(updatedEvent)
+            replaceItem(eventId, updatedEvent)
+          } catch (updateError) {
+            console.error("Failed to update photo order after deletion:", updateError)
+            // If order update fails, still refresh from server
+            const updated = await fetchEventDetails(eventId)
+            if (updated) {
+              setEditingEvent(updated)
+              replaceItem(eventId, updated)
+            }
+          }
+        } else {
+          // Fallback: refresh event details from server
           const updated = await fetchEventDetails(eventId)
           if (updated) {
             setEditingEvent(updated)
-            // Update the event in the list with updated photo data
             replaceItem(eventId, updated)
           }
         }
@@ -1571,7 +1696,7 @@ export default function EventsPage() {
                 </div>
                 {editingEvent.in_event_photos && editingEvent.in_event_photos.length > 0 ? (
                   <DndContext
-                    sensors={reorderingPhotos ? [] : sensors}
+                    sensors={sensors}
                     collisionDetection={closestCenter}
                     onDragEnd={handleDragEnd}
                   >

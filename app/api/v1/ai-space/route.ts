@@ -5,7 +5,12 @@
  * Maintains backward compatibility with /api/ai-space
  * 
  * POST /api/v1/ai-space - Generate AI space
+ * 
+ * Note: This route requires extended timeout for image generation (up to 5 minutes)
+ * Configured in vercel.json with maxDuration: 300
  */
+
+export const maxDuration = 300 // 5 minutes - required for multiple image generation
 
 import { NextResponse } from "next/server"
 import { createRequestLogger } from "@/lib/logger"
@@ -166,7 +171,7 @@ async function pollForResult(
   pollingUrl: string,
   apiKey: string,
   batchNumber: number,
-  maxAttempts: number = 120, // Increased to 60 seconds max (0.5s intervals) for image generation
+  maxAttempts: number = 600, // Increased to 5 minutes max (0.5s intervals) for image generation - allows time for multiple images
   pollInterval: number = 500 // 500ms between polls
 ): Promise<{ success: boolean; data?: any; error?: string; status?: number }> {
   for (let attempt = 0; attempt < maxAttempts; attempt++) {
@@ -243,11 +248,49 @@ async function pollForResult(
 // IMPORTANT: Before processing, review the scaling and structure of each picture to ensure it remains intact.
 // Realize the scale of objects in the image to decorate correctly and maintain proper proportions.
 // Add humans in the picture based on the event type to make the scene more realistic and contextual.
-const EVENT_TYPE_PROMPTS: Record<string, string> = {
+// Base prompts for event types
+const BASE_EVENT_PROMPTS: Record<string, string> = {
   "Arts & Design Coaching Space": "IMPORTANT: Review the scaling and structure of the picture to ensure it remains intact. Realize the scale of objects to decorate correctly. Preserve the original image structure and layout completely. Add decorative elements on top of the existing space for an Arts & Design Coaching Space: artistic wall decorations, creative design posters, color palette displays, inspirational art pieces, and design tools arranged as decorative accents on furniture and table. Maintain all original architectural features, furniture positions, and room structure. Only overlay event-themed decorations that complement the existing space without altering the base image. Add humans in the picture appropriate for an Arts & Design Coaching Space: instructors demonstrating techniques, students working on projects, people engaged in creative activities, maintaining realistic human proportions relative to the space.",
   "Meeting, Seminar, Workshop": "IMPORTANT: Review the scaling and structure of the picture to ensure it remains intact. Realize the scale of objects to decorate correctly. Preserve the original image structure and layout completely. Add decorative elements on top of the existing space for a Meeting, Seminar, Workshop: professional presentation materials, workshop banners, educational posters, seminar signage, and organized learning materials as decorative accents. Maintain all original architectural features, furniture positions, and room structure. Only overlay event-themed decorations that complement the existing space without altering the base image. Add humans in the picture appropriate for a Meeting, Seminar, Workshop: presenters at podiums, attendees seated or taking notes, workshop participants engaged in activities, maintaining realistic human proportions relative to the space.",
   "Family & Friends Gathering": "IMPORTANT: Review the scaling and structure of the picture to ensure it remains intact. Realize the scale of objects to decorate correctly. Preserve the original image structure and layout completely. Add decorative elements on top of the existing space for a Family & Friends Gathering: warm family photos, cozy decorative pillows, festive table settings, family celebration banners, and welcoming home decorations. Maintain all original architectural features, furniture positions, and room structure. Only overlay event-themed decorations that complement the existing space without altering the base image. Add humans in the picture appropriate for a Family & Friends Gathering: family members and friends of different ages interacting, people gathered around tables, children playing, adults socializing, maintaining realistic human proportions relative to the space.",
   "Holiday Festive": "IMPORTANT: Review the scaling and structure of the picture to ensure it remains intact. Realize the scale of objects to decorate correctly. Preserve the original image structure and layout completely. Add decorative elements on top of the existing space for a Holiday Festive event: holiday-themed decorations, festive garlands, seasonal ornaments, holiday lighting accents, and celebratory banners. Maintain all original architectural features, furniture positions, and room structure. Only overlay event-themed decorations that complement the existing space without altering the base image. Add humans in the picture appropriate for a Holiday Festive event: people celebrating together, guests mingling, festive activities, maintaining realistic human proportions relative to the space.",
+}
+
+// Sub-type specific prompts
+const SUB_TYPE_PROMPTS: Record<string, string> = {
+  "Wedding": "with elegant wedding decorations, bridal party arrangements, wedding cake displays, floral centerpieces, and romantic lighting. Include wedding guests in formal attire, bride and groom, wedding party members.",
+  "Pre-Wedding": "with pre-wedding celebration decorations, engagement photo displays, romantic settings, and casual celebration elements. Include couples, close friends and family in casual celebration attire.",
+  "Engagement": "with engagement party decorations, ring displays, romantic lighting, and celebration banners. Include engaged couples, family members, and friends celebrating together.",
+  "Reunion": "with reunion-themed decorations, family photo displays, nostalgic elements, and welcoming arrangements. Include family members of all ages reconnecting and celebrating together.",
+  "Baby Shower": "with baby shower decorations, baby-themed centerpieces, pastel colors, baby gifts displays, and celebration banners. Include expectant parents, family members, and friends celebrating the upcoming arrival.",
+  "Private Dining": "with elegant dining arrangements, fine table settings, intimate lighting, and sophisticated decorations. Include small groups of diners enjoying a private dining experience.",
+  "Christmas": "with Christmas decorations, Christmas tree, holiday lights, festive garlands, and Christmas-themed ornaments. Include people celebrating Christmas together, exchanging gifts, and enjoying holiday festivities.",
+  "New Year": "with New Year decorations, party favors, festive countdown displays, celebratory banners, and New Year themed elements. Include people celebrating New Year, wearing party hats, and enjoying the celebration.",
+  "Easter": "with Easter decorations, Easter eggs, spring flowers, pastel colors, and Easter-themed arrangements. Include people celebrating Easter, children hunting for eggs, and family gatherings.",
+  "Thanksgiving": "with Thanksgiving decorations, autumn colors, harvest displays, Thanksgiving centerpieces, and warm seasonal elements. Include families gathered around for Thanksgiving dinner, sharing meals together.",
+}
+
+// Helper function to get prompt for event type (handles both base types and sub-types)
+function getEventTypePrompt(eventType: string): string | null {
+  // Check if it's a base event type
+  if (BASE_EVENT_PROMPTS[eventType]) {
+    return BASE_EVENT_PROMPTS[eventType]
+  }
+  
+  // Check if it's a sub-type format: "Base Type - Sub Type"
+  const parts = eventType.split(" - ")
+  if (parts.length === 2) {
+    const [baseType, subType] = parts
+    const basePrompt = BASE_EVENT_PROMPTS[baseType]
+    const subPrompt = SUB_TYPE_PROMPTS[subType]
+    
+    if (basePrompt && subPrompt) {
+      // Combine base prompt with sub-type specific details
+      return `${basePrompt} Specifically for ${subType}: ${subPrompt}`
+    }
+  }
+  
+  return null
 }
 
 export const POST = withVersioning(async (request: Request) => {
@@ -304,7 +347,8 @@ export const POST = withVersioning(async (request: Request) => {
     }
 
     // Validate event type
-    if (!EVENT_TYPE_PROMPTS[eventType]) {
+    const eventPrompt = getEventTypePrompt(eventType)
+    if (!eventPrompt) {
       await logger.warn('AI space generation rejected: invalid event type', { eventType })
       return errorResponse(
         ErrorCodes.VALIDATION_ERROR,
@@ -471,7 +515,7 @@ export const POST = withVersioning(async (request: Request) => {
     const db = getTursoClient()
 
     // Get custom prompt for the event type
-    const prompt = EVENT_TYPE_PROMPTS[eventType]
+    const prompt = eventPrompt
 
     // Get studio images (aispace_studio category) for generation
     // Admin controls which images are used by selecting them (ai_selected = 1)
