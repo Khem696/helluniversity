@@ -35,6 +35,11 @@ export const metadata = generateSEOMetadata({
   type: 'website',
 })
 
+// Force dynamic rendering to prevent caching of events
+// This ensures deleted events are immediately removed from the page
+export const dynamic = 'force-dynamic'
+export const revalidate = 0
+
 export default async function Home() {
   // Fetch events server-side for instant display
   let pastEvents, currentEvents

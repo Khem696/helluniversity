@@ -131,14 +131,21 @@ export function EventSlidersServer({ pastEvents: initialPastEvents, currentEvent
       }
     }
 
-    // Set up polling to refetch events every 30 seconds
-    // This ensures newly created events appear on the home page without manual refresh
+    // Trigger immediate fetch on mount (after initial render)
+    // This ensures deleted events are removed quickly after page load
+    const immediateFetchTimeout = setTimeout(() => {
+      fetchEvents()
+    }, 1000) // Wait 1 second after mount to avoid blocking initial render
+
+    // Set up polling to refetch events every 10 seconds
+    // This ensures newly created/deleted events appear/disappear on the home page quickly
     pollInterval = setInterval(() => {
       fetchEvents()
-    }, 30000) // 30 seconds
+    }, 10000) // 10 seconds - reduced from 30 for faster updates
 
-    // Cleanup interval on unmount
+    // Cleanup interval and timeout on unmount
     return () => {
+      clearTimeout(immediateFetchTimeout)
       if (pollInterval) {
         clearInterval(pollInterval)
       }
