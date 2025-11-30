@@ -15,10 +15,14 @@
 import { NextResponse } from "next/server"
 import { getTursoClient } from "@/lib/turso"
 import { createRequestLogger } from "@/lib/logger"
-import { withErrorHandling, successResponse, ErrorCodes } from "@/lib/api-response"
+import { withErrorHandling, successResponse, ErrorCodes, type ApiResponse } from "@/lib/api-response"
 import { withVersioning } from "@/lib/api-version-wrapper"
 import { getRequestPath } from "@/lib/api-versioning"
 import { getBangkokTime } from "@/lib/timezone"
+
+// Prevent caching of events API to ensure deleted events are immediately removed
+export const dynamic = 'force-dynamic'
+export const revalidate = 0
 
 export const GET = withVersioning(async (request: Request) => {
   return withErrorHandling(async () => {
@@ -134,6 +138,15 @@ export const GET = withVersioning(async (request: Request) => {
       return dateB - dateA
     })
 
+    // Helper function to add cache control headers
+    // Generic type preserves the ApiResponse type from successResponse
+    const addCacheHeaders = <T>(response: NextResponse<ApiResponse<T>>): NextResponse<ApiResponse<T>> => {
+      response.headers.set('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate')
+      response.headers.set('Pragma', 'no-cache')
+      response.headers.set('Expires', '0')
+      return response
+    }
+
     // If filtering, return only the requested category
     if (pastOnly) {
       await logger.info('Events retrieved (past only)', {
@@ -141,7 +154,7 @@ export const GET = withVersioning(async (request: Request) => {
         total: events.length
       })
       
-      return successResponse(
+      const response = successResponse(
         {
           pastEvents,
           currentEvents: [],
@@ -153,13 +166,14 @@ export const GET = withVersioning(async (request: Request) => {
         },
         { requestId }
       )
+      return addCacheHeaders(response)
     } else if (currentOnly) {
       await logger.info('Events retrieved (current only)', {
         currentCount: currentEvents.length,
         total: events.length
       })
       
-      return successResponse(
+      const response = successResponse(
         {
           pastEvents: [],
           currentEvents,
@@ -171,6 +185,7 @@ export const GET = withVersioning(async (request: Request) => {
         },
         { requestId }
       )
+      return addCacheHeaders(response)
     }
 
     // Return both past and current events
@@ -180,7 +195,7 @@ export const GET = withVersioning(async (request: Request) => {
       total: events.length
     })
     
-    return successResponse(
+    const response = successResponse(
       {
         pastEvents,
         currentEvents,
@@ -192,6 +207,7 @@ export const GET = withVersioning(async (request: Request) => {
       },
       { requestId }
     )
+    return addCacheHeaders(response)
   }, { endpoint: getRequestPath(request) })
 })
 
