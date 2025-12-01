@@ -176,19 +176,42 @@ export const DELETE = withVersioning(async (
 
     if (!isStillUsed) {
       // Image is orphaned - delete it and its blob
-      await logger.info('Image is orphaned, deleting image record and blob', { imageId: linkedImageId })
+      // CRITICAL: Use atomic check-and-delete pattern to prevent race conditions
+      await logger.info('Image is orphaned, attempting to delete image record and blob', { imageId: linkedImageId })
       
       try {
-        // Get blob URL before deleting
+        // CRITICAL: Get blob URL BEFORE attempting to delete (atomic operation)
         const imageResult = await db.execute({
           sql: "SELECT blob_url FROM images WHERE id = ?",
           args: [linkedImageId],
         })
 
+        let blobUrl: string | null = null
         if (imageResult.rows.length > 0) {
-          const blobUrl = (imageResult.rows[0] as any).blob_url
-          
-          // Delete blob from storage
+          blobUrl = (imageResult.rows[0] as any).blob_url || null
+        }
+
+        // CRITICAL: Atomic delete with orphan check in WHERE clause
+        // This ensures the image is only deleted if it's STILL orphaned at the moment of deletion
+        // Prevents race condition where another process adds a reference between check and delete
+        // Only one process will succeed (rowsAffected > 0) if image is still orphaned
+        // If another process already deleted it or it's no longer orphaned, rowsAffected will be 0
+        const deleteResult = await db.execute({
+          sql: `
+            DELETE FROM images 
+            WHERE id = ? 
+            AND (SELECT COUNT(*) FROM events WHERE image_id = ?) = 0 
+            AND (SELECT COUNT(*) FROM event_images WHERE image_id = ?) = 0
+          `,
+          args: [linkedImageId, linkedImageId, linkedImageId],
+        })
+
+        const wasDeleted = (deleteResult.rowsAffected || 0) > 0
+
+        if (wasDeleted) {
+          // We successfully deleted the image record - now delete the blob
+          await logger.info('Deleted orphaned image record', { imageId: linkedImageId })
+
           if (blobUrl) {
             try {
               const { deleteImage } = await import("@/lib/blob")
@@ -199,18 +222,15 @@ export const DELETE = withVersioning(async (
                 blobError instanceof Error ? blobError : new Error(String(blobError)),
                 { imageId: linkedImageId, blobUrl }
               )
-              // Continue with database deletion even if blob deletion fails
+              // Image record is already deleted, blob deletion failure is logged but doesn't fail request
             }
+          } else {
+            await logger.info('Image record deleted but no blob_url to delete', { imageId: linkedImageId })
           }
+        } else {
+          // Another process already deleted the image record - this is OK
+          await logger.info('Image record already deleted by another process', { imageId: linkedImageId })
         }
-
-        // Delete image record
-        await db.execute({
-          sql: "DELETE FROM images WHERE id = ?",
-          args: [linkedImageId],
-        })
-        
-        await logger.info('Deleted orphaned image record', { imageId: linkedImageId })
       } catch (deleteError) {
         await logger.error('Failed to delete orphaned image', 
           deleteError instanceof Error ? deleteError : new Error(String(deleteError)),

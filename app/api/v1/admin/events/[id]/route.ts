@@ -351,19 +351,42 @@ export const PATCH = withVersioning(async (
 
       if (!isStillUsed) {
         // Old image is orphaned - delete it and its blob
-        await logger.info('Old poster image is orphaned, deleting image record and blob', { imageId: oldImageId })
+        // CRITICAL: Use atomic check-and-delete pattern to prevent race conditions
+        await logger.info('Old poster image is orphaned, attempting to delete image record and blob', { imageId: oldImageId })
         
         try {
-          // Get blob URL before deleting
+          // CRITICAL: Get blob URL BEFORE attempting to delete (atomic operation)
           const imageResult = await db.execute({
             sql: "SELECT blob_url FROM images WHERE id = ?",
             args: [oldImageId],
           })
 
+          let blobUrl: string | null = null
           if (imageResult.rows.length > 0) {
-            const blobUrl = (imageResult.rows[0] as any).blob_url
+            blobUrl = (imageResult.rows[0] as any).blob_url || null
+          }
+
+          // CRITICAL: Atomic delete with orphan check in WHERE clause
+          // This ensures the image is only deleted if it's STILL orphaned at the moment of deletion
+          // Prevents race condition where another process adds a reference between check and delete
+          // Only one process will succeed (rowsAffected > 0) if image is still orphaned
+          // If another process already deleted it or it's no longer orphaned, rowsAffected will be 0
+          const deleteResult = await db.execute({
+            sql: `
+              DELETE FROM images 
+              WHERE id = ? 
+              AND (SELECT COUNT(*) FROM events WHERE image_id = ?) = 0 
+              AND (SELECT COUNT(*) FROM event_images WHERE image_id = ?) = 0
+            `,
+            args: [oldImageId, oldImageId, oldImageId],
+          })
+          
+          const wasDeleted = (deleteResult.rowsAffected || 0) > 0
+          
+          if (wasDeleted) {
+            // We successfully deleted the image record - now delete the blob
+            await logger.info('Deleted orphaned poster image record', { imageId: oldImageId })
             
-            // Delete blob from storage
             if (blobUrl) {
               try {
                 const { deleteImage } = await import("@/lib/blob")
@@ -374,18 +397,15 @@ export const PATCH = withVersioning(async (
                   blobError instanceof Error ? blobError : new Error(String(blobError)),
                   { imageId: oldImageId, blobUrl }
                 )
-                // Continue with database deletion even if blob deletion fails
+                // Image record is already deleted, blob deletion failure is logged but doesn't fail request
               }
+            } else {
+              await logger.info('Poster image record deleted but no blob_url to delete', { imageId: oldImageId })
             }
+          } else {
+            // Another process already deleted the image record - this is OK
+            await logger.info('Poster image record already deleted by another process', { imageId: oldImageId })
           }
-
-          // Delete image record
-          await db.execute({
-            sql: "DELETE FROM images WHERE id = ?",
-            args: [oldImageId],
-          })
-          
-          await logger.info('Deleted orphaned poster image record', { imageId: oldImageId })
         } catch (deleteError) {
           await logger.error('Failed to delete orphaned poster image', 
             deleteError instanceof Error ? deleteError : new Error(String(deleteError)),
@@ -527,6 +547,48 @@ export const DELETE = withVersioning(async (
 
     const db = getTursoClient()
 
+    // CRITICAL: Verify event still exists after acquiring lock (may have been deleted concurrently)
+    const eventCheck = await db.execute({
+      sql: "SELECT id, image_id FROM events WHERE id = ?",
+      args: [id],
+    })
+
+    if (eventCheck.rows.length === 0) {
+      await releaseLock()
+      await logger.warn('Event not found (may have been deleted concurrently)', { eventId: id })
+      return notFoundResponse('Event', { requestId })
+    }
+
+    // CRITICAL: Get event data before deletion for cleanup
+    // Get poster image_id and all event_images before deleting the event
+    const posterImageId = (eventCheck.rows[0] as any).image_id || null
+
+    // Get all event_images before deletion (they will be CASCADE deleted)
+    // This includes both in_event photos and any poster-type event_images
+    const eventImagesResult = await db.execute({
+      sql: "SELECT id, image_id FROM event_images WHERE event_id = ?",
+      args: [id],
+    })
+
+    const eventImages = eventImagesResult.rows.map((row: any) => ({
+      eventImageId: row.id as string,
+      imageId: row.image_id as string,
+    }))
+
+    // CRITICAL: Check if poster image is also in event_images to avoid duplicate cleanup
+    // If poster image is the same as one of the event_images, we'll queue a job for it
+    // and don't need to check it separately
+    const posterImageInEventImages = posterImageId 
+      ? eventImages.some(ei => ei.imageId === posterImageId)
+      : false
+
+    await logger.info('Preparing event deletion with cleanup', {
+      eventId: id,
+      posterImageId,
+      eventImagesCount: eventImages.length,
+      posterImageInEventImages, // Log if poster is also in event_images
+    })
+
     try {
       await db.execute({
         sql: "DELETE FROM events WHERE id = ?",
@@ -540,6 +602,180 @@ export const DELETE = withVersioning(async (
     }
     
     await releaseLock()
+
+    // CRITICAL: Queue cleanup jobs for all event_images (non-blocking)
+    // The event_images records are already deleted by CASCADE, but we need to check if images are orphaned
+    // This includes both in_event photos and any poster-type event_images
+    const { enqueueJob } = await import('@/lib/job-queue')
+    const backgroundOperations: Promise<void>[] = []
+
+    for (const eventImage of eventImages) {
+      backgroundOperations.push(
+        (async () => {
+          try {
+            // Queue deletion job for each event_image
+            // Note: eventImageId is already deleted, but the job handler will handle gracefully
+            await enqueueJob(
+              'delete-event-image',
+              {
+                eventId: id, // Event is deleted, but job handler checks existence
+                eventImageId: eventImage.eventImageId,
+                imageId: eventImage.imageId,
+              },
+              {
+                priority: 5,
+                maxRetries: 3,
+              }
+            )
+            await logger.info('Queued event image deletion job', {
+              eventId: id,
+              eventImageId: eventImage.eventImageId,
+              imageId: eventImage.imageId,
+            })
+          } catch (queueError) {
+            await logger.error(
+              'Failed to queue event image deletion job',
+              queueError instanceof Error ? queueError : new Error(String(queueError)),
+              {
+                eventId: id,
+                eventImageId: eventImage.eventImageId,
+                imageId: eventImage.imageId,
+              }
+            )
+            // Don't fail the request - event is already deleted
+          }
+        })()
+      )
+    }
+
+    // CRITICAL: Check if poster image is orphaned and delete it (non-blocking)
+    // Skip if poster image is also in event_images (already handled by queued jobs)
+    if (posterImageId && !posterImageInEventImages) {
+      backgroundOperations.push(
+        (async () => {
+          try {
+            // Check if poster image is still used elsewhere
+            const usageCheck = await db.execute({
+              sql: `
+                SELECT 
+                  (SELECT COUNT(*) FROM events WHERE image_id = ?) as event_count,
+                  (SELECT COUNT(*) FROM event_images WHERE image_id = ?) as event_image_count
+              `,
+              args: [posterImageId, posterImageId],
+            })
+
+            const usage = usageCheck.rows[0] as any
+            const isStillUsed = (usage.event_count > 0) || (usage.event_image_count > 0)
+
+            if (!isStillUsed) {
+              // Poster image is orphaned - delete it and its blob
+              // CRITICAL: Use atomic check-and-delete pattern to prevent race conditions
+              await logger.info('Poster image is orphaned after event deletion, attempting to delete image record and blob', {
+                eventId: id,
+                imageId: posterImageId,
+              })
+
+              // CRITICAL: Get blob URL BEFORE attempting to delete (atomic operation)
+              const imageResult = await db.execute({
+                sql: "SELECT blob_url FROM images WHERE id = ?",
+                args: [posterImageId],
+              })
+
+              let blobUrl: string | null = null
+              if (imageResult.rows.length > 0) {
+                blobUrl = (imageResult.rows[0] as any).blob_url || null
+              }
+
+              // CRITICAL: Atomic delete with orphan check in WHERE clause
+              // This ensures the image is only deleted if it's STILL orphaned at the moment of deletion
+              // Prevents race condition where another process adds a reference between check and delete
+              // Only one process will succeed (rowsAffected > 0) if image is still orphaned
+              // If another process already deleted it or it's no longer orphaned, rowsAffected will be 0
+              const deleteResult = await db.execute({
+                sql: `
+                  DELETE FROM images 
+                  WHERE id = ? 
+                  AND (SELECT COUNT(*) FROM events WHERE image_id = ?) = 0 
+                  AND (SELECT COUNT(*) FROM event_images WHERE image_id = ?) = 0
+                `,
+                args: [posterImageId, posterImageId, posterImageId],
+              })
+
+              const wasDeleted = (deleteResult.rowsAffected || 0) > 0
+
+              if (wasDeleted) {
+                // We successfully deleted the image record - now delete the blob
+                await logger.info('Deleted orphaned poster image record', {
+                  eventId: id,
+                  imageId: posterImageId,
+                })
+
+                if (blobUrl) {
+                  try {
+                    const { deleteImage } = await import("@/lib/blob")
+                    await deleteImage(blobUrl)
+                    await logger.info('Deleted orphaned poster image blob', {
+                      eventId: id,
+                      imageId: posterImageId,
+                      blobUrl,
+                    })
+                  } catch (blobError) {
+                    await logger.error(
+                      'Failed to delete orphaned poster image blob',
+                      blobError instanceof Error ? blobError : new Error(String(blobError)),
+                      {
+                        eventId: id,
+                        imageId: posterImageId,
+                        blobUrl,
+                      }
+                    )
+                    // Image record is already deleted, blob deletion failure is logged but doesn't fail request
+                  }
+                } else {
+                  await logger.info('Poster image record deleted but no blob_url to delete', {
+                    eventId: id,
+                    imageId: posterImageId,
+                  })
+                }
+              } else {
+                // Another process already deleted the image record - this is OK
+                await logger.info('Poster image record already deleted by another process', {
+                  eventId: id,
+                  imageId: posterImageId,
+                })
+              }
+            } else {
+              await logger.info('Poster image is still in use, keeping image record', {
+                eventId: id,
+                imageId: posterImageId,
+                eventCount: usage.event_count,
+                eventImageCount: usage.event_image_count,
+              })
+            }
+          } catch (cleanupError) {
+            await logger.error(
+              'Failed to cleanup poster image after event deletion',
+              cleanupError instanceof Error ? cleanupError : new Error(String(cleanupError)),
+              {
+                eventId: id,
+                imageId: posterImageId,
+              }
+            )
+            // Don't fail the request - event is already deleted
+          }
+        })()
+      )
+    }
+
+    // Don't await background operations - return immediately
+    // They will run in the background
+    Promise.all(backgroundOperations).catch(async (error) => {
+      await logger.error(
+        'Some background cleanup operations failed after event deletion',
+        error instanceof Error ? error : new Error(String(error)),
+        { eventId: id }
+      )
+    })
 
     return successResponse(
       {

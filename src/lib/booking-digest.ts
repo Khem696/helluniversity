@@ -9,6 +9,41 @@ import { getTransporter } from "./email"
 import { getBangkokDateString, createBangkokTimestamp } from "./timezone"
 
 /**
+ * Sanitize HTML content to prevent XSS attacks
+ * Basic sanitization for email templates
+ */
+function sanitizeHTML(html: string | null | undefined): string {
+  try {
+    if (!html || typeof html !== 'string') return ''
+    const str = String(html)
+    if (!str || typeof str !== 'string') return ''
+    
+    // Use character-by-character replacement to escape HTML
+    let result = ''
+    for (let i = 0; i < str.length; i++) {
+      const char = str[i]
+      if (char === '&') {
+        result += '&amp;'
+      } else if (char === '<') {
+        result += '&lt;'
+      } else if (char === '>') {
+        result += '&gt;'
+      } else if (char === '"') {
+        result += '&quot;'
+      } else if (char === "'") {
+        result += '&#039;'
+      } else {
+        result += char
+      }
+    }
+    return result
+  } catch (error) {
+    console.error('sanitizeHTML error:', error, 'Input:', html)
+    return ''
+  }
+}
+
+/**
  * Send daily digest email to admin with booking statistics
  */
 export async function sendDailyBookingDigest(): Promise<void> {
@@ -45,7 +80,7 @@ export async function sendDailyBookingDigest(): Promise<void> {
   // Optimized: Uses idx_bookings_created_at index for filtering and ordering
   const recentBookings = await db.execute({
     sql: `
-      SELECT id, name, email, event_type, status, created_at
+      SELECT id, name, email, event_type, status, created_at, reference_number
       FROM bookings
       WHERE created_at >= ?
       ORDER BY created_at DESC
@@ -126,14 +161,16 @@ export async function sendDailyBookingDigest(): Promise<void> {
               <h3 style="margin: 30px 0 10px 0; color: #1f2937; font-size: 16px;">Recent Bookings (Last 24 Hours)</h3>
               <table width="100%" cellpadding="10" cellspacing="0" style="border-collapse: collapse; margin-bottom: 20px;">
                 <tr style="background-color: #f9fafb; font-weight: bold;">
+                  <td style="border: 1px solid #e5e7eb;">Reference</td>
                   <td style="border: 1px solid #e5e7eb;">Name</td>
                   <td style="border: 1px solid #e5e7eb;">Event Type</td>
                   <td style="border: 1px solid #e5e7eb;">Status</td>
                 </tr>
                 ${recentBookings.rows.map((row: any) => `
                   <tr>
-                    <td style="border: 1px solid #e5e7eb;">${row.name}</td>
-                    <td style="border: 1px solid #e5e7eb;">${row.event_type}</td>
+                    <td style="border: 1px solid #e5e7eb; font-family: monospace; font-size: 12px; color: #6b7280;">${sanitizeHTML(row.reference_number) || 'N/A'}</td>
+                    <td style="border: 1px solid #e5e7eb;">${sanitizeHTML(row.name)}</td>
+                    <td style="border: 1px solid #e5e7eb;">${sanitizeHTML(row.event_type)}</td>
                     <td style="border: 1px solid #e5e7eb;">
                       <span style="padding: 4px 8px; border-radius: 4px; font-size: 12px; background-color: ${
                         row.status === 'pending' ? '#fef3c7' :
@@ -192,7 +229,7 @@ New Bookings:
 - Today: ${statsRow.new_today || 0} booking${(statsRow.new_today || 0) !== 1 ? 's' : ''}
 - This Week: ${statsRow.new_week || 0} booking${(statsRow.new_week || 0) !== 1 ? 's' : ''}
 
-${recentBookings.rows.length > 0 ? `Recent Bookings (Last 24 Hours):\n${recentBookings.rows.map((row: any) => `- ${row.name} (${row.event_type}) - ${row.status}`).join('\n')}\n` : ''}
+${recentBookings.rows.length > 0 ? `Recent Bookings (Last 24 Hours):\n${recentBookings.rows.map((row: any) => `- ${row.reference_number || 'N/A'}: ${row.name} (${row.event_type}) - ${row.status}`).join('\n')}\n` : ''}
 
 This is an automated daily digest of your booking system.
 
@@ -345,9 +382,9 @@ export async function sendWeeklyBookingDigest(): Promise<void> {
                 </tr>
                 ${recentBookings.rows.map((row: any) => `
                   <tr>
-                    <td style="border: 1px solid #e5e7eb; font-family: monospace; font-size: 12px; color: #6b7280;">${row.reference_number || 'N/A'}</td>
-                    <td style="border: 1px solid #e5e7eb;">${row.name}</td>
-                    <td style="border: 1px solid #e5e7eb;">${row.event_type}</td>
+                    <td style="border: 1px solid #e5e7eb; font-family: monospace; font-size: 12px; color: #6b7280;">${sanitizeHTML(row.reference_number) || 'N/A'}</td>
+                    <td style="border: 1px solid #e5e7eb;">${sanitizeHTML(row.name)}</td>
+                    <td style="border: 1px solid #e5e7eb;">${sanitizeHTML(row.event_type)}</td>
                     <td style="border: 1px solid #e5e7eb;">
                       <span style="padding: 4px 8px; border-radius: 4px; font-size: 12px; background-color: ${
                         row.status === 'pending' ? '#fef3c7' :
