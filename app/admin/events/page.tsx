@@ -1696,15 +1696,16 @@ export default function EventsPage() {
                   setSaving(false)
                   return
                 }
-                const errorMessage = `Failed to queue deletions: ${deleteResponse.status} ${deleteResponse.statusText}`
+                const errorMessage = `Failed to delete photos: ${deleteResponse.status} ${deleteResponse.statusText}`
                 toast.error(errorMessage)
                 deletionQueued = false
               } else if (deleteJson && deleteJson.success) {
                 // IMPROVED: Handle new response format with immediate deletion
-                // API now returns: deleted, requested, attempted, failed, cleanupJobsQueued, cleanupJobsFailed
+                // API returns: deleted, requested, attempted, cleanupJobsQueued, cleanupJobsFailed, jobIds, warnings
                 const requestedCount = validPendingDeletions.length
                 
                 // Extract counts from response, with validation
+                // API returns: deleted, requested, attempted, cleanupJobsQueued, cleanupJobsFailed
                 const deletedCount = typeof deleteJson.data?.deleted === 'number' 
                   ? deleteJson.data.deleted 
                   : 0
@@ -1716,9 +1717,6 @@ export default function EventsPage() {
                 const attemptedCount = typeof deleteJson.data?.attempted === 'number'
                   ? deleteJson.data.attempted
                   : responseRequestedCount // Fallback to requested if attempted not available
-                const failedCount = typeof deleteJson.data?.failed === 'number'
-                  ? deleteJson.data.failed
-                  : 0
                 const cleanupJobsQueued = typeof deleteJson.data?.cleanupJobsQueued === 'number'
                   ? deleteJson.data.cleanupJobsQueued
                   : 0
@@ -1727,21 +1725,21 @@ export default function EventsPage() {
                   : 0
                 
                 // Validate counts are reasonable
-                if (deletedCount < 0 || attemptedCount < 0 || failedCount < 0) {
-                  console.error("Invalid deletion response counts:", { deletedCount, attemptedCount, failedCount })
+                if (deletedCount < 0 || attemptedCount < 0) {
+                  console.error("Invalid deletion response counts:", { deletedCount, attemptedCount })
                   toast.warning("Received invalid response from server. Some deletions may have failed.")
                   deletionQueued = false
                 } else if (deletedCount === 0) {
                   // No photos were deleted at all
                   deletionQueued = false
                   toast.error(`Failed to delete ${attemptedCount} photo${attemptedCount !== 1 ? 's' : ''}. Please try again.`)
-                } else if (deletedCount === attemptedCount && failedCount === 0) {
+                } else if (deletedCount === attemptedCount) {
                   // EDGE CASE FIX: Only update UI after confirming actual deletion count matches
                   // This prevents optimistic updates when deletion actually failed
                   deletionQueued = true
                   
                   // Update UI only after confirming successful deletion
-                  // Since event_images records are deleted immediately in transaction, 
+                  // Since event_images records are deleted immediately (no transaction), 
                   // we can safely update UI now
                   if (isMountedRef.current && currentEditingEvent && Array.isArray(currentEditingEvent.in_event_photos)) {
                     const remainingPhotos = currentEditingEvent.in_event_photos.filter(
@@ -1774,20 +1772,33 @@ export default function EventsPage() {
                   
                   // Build clear warning message
                   // COMPREHENSIVE REVIEW FIX: Use attemptedCount for accurate messaging
+                  // Note: API now uses immediate deletion, so partial success means some photos were already deleted
+                  // Since we don't know which specific photos were deleted, we'll update optimistically
                   let warningMessage = `Deleted ${deletedCount} of ${attemptedCount} photo${attemptedCount !== 1 ? 's' : ''} attempted`
                   if (attemptedCount < responseRequestedCount) {
                     warningMessage += ` (${responseRequestedCount - attemptedCount} were already deleted)`
                   }
-                  if (failedCount > 0) {
-                    warningMessage += `. ${failedCount} failed to delete`
-                  }
                   if (cleanupJobsFailed > 0) {
-                    warningMessage += `. ${cleanupJobsFailed} cleanup job${cleanupJobsFailed !== 1 ? 's' : ''} failed to queue`
+                    warningMessage += `. ${cleanupJobsFailed} cleanup job${cleanupJobsFailed !== 1 ? 's' : ''} failed to queue (photos are deleted, cleanup will retry)`
                   }
-                  warningMessage += ". Please retry failed deletions."
                   
+                  // For partial success, update UI optimistically (remove all pending deletions)
+                  // The API has already deleted what it could, so we update UI to match
+                  if (isMountedRef.current && currentEditingEvent && Array.isArray(currentEditingEvent.in_event_photos)) {
+                    const remainingPhotos = currentEditingEvent.in_event_photos.filter(
+                      p => p && !validPendingDeletions.includes(p.id)
+                    )
+                    setEditingEvent({
+                      ...currentEditingEvent,
+                      in_event_photos: remainingPhotos,
+                    })
+                    // Clear pending deletions since API has processed them
+                    setPendingDeletions(new Set())
+                    setSelectedPhotoIds(new Set())
+                  }
+                  
+                  warningMessage += ". Please refresh if photos don't update correctly."
                   toast.warning(warningMessage)
-                  // Keep pending deletions for failed ones (though we don't know which specific ones failed)
                 }
               } else {
                 // deleteJson exists but success is false
