@@ -138,26 +138,119 @@ export const DELETE = withVersioning(async (
       return authError
     }
 
+    // REMAINING ISSUE FIX: Add action lock to coordinate with batch delete operations
+    // Use same lock scope 'event-images' as batch delete to prevent race conditions
+    let adminEmail: string | undefined
+    let adminName: string | undefined
+    try {
+      const { getAuthSession } = await import('@/lib/auth')
+      const session = await getAuthSession()
+      if (session?.user) {
+        adminEmail = session.user.email || undefined
+        adminName = session.user.name || undefined
+      }
+    } catch (sessionError) {
+      await logger.warn("Could not get session for admin action logging", { 
+        error: sessionError instanceof Error ? sessionError.message : String(sessionError) 
+      })
+    }
+
+    let actionLockId: string | null = null
+    if (adminEmail) {
+      try {
+        const { acquireActionLock, releaseActionLock } = await import('@/lib/action-lock')
+        // Use same lock scope as batch delete to coordinate operations
+        actionLockId = await acquireActionLock('event', eventId, 'event-images', adminEmail, adminName)
+        
+        if (!actionLockId) {
+          await logger.warn('Action lock acquisition failed: another admin is modifying event images', {
+            eventId,
+            imageId,
+            action: 'event-images',
+            adminEmail
+          })
+          return errorResponse(
+            ErrorCodes.CONFLICT,
+            "Another admin is currently modifying photos for this event. Please wait a moment and try again.",
+            undefined,
+            409,
+            { requestId }
+          )
+        }
+        await logger.debug('Action lock acquired', { eventId, imageId, action: 'event-images', lockId: actionLockId })
+      } catch (lockError) {
+        await logger.warn('Failed to acquire action lock, falling back to optimistic locking', {
+          error: lockError instanceof Error ? lockError.message : String(lockError),
+          eventId,
+          imageId
+        })
+      }
+    }
+    
+    // Ensure lock is released even if deletion fails
+    const releaseLock = async () => {
+      if (actionLockId && adminEmail) {
+        try {
+          const { releaseActionLock } = await import('@/lib/action-lock')
+          await releaseActionLock(actionLockId, adminEmail)
+          await logger.debug('Action lock released', { eventId, imageId, lockId: actionLockId })
+        } catch (releaseError) {
+          await logger.warn('Failed to release action lock', {
+            error: releaseError instanceof Error ? releaseError.message : String(releaseError),
+            eventId,
+            imageId,
+            lockId: actionLockId
+          })
+        }
+      }
+    }
+
     const db = getTursoClient()
 
-    // Get the image_id before deleting the event_images record
+    // REMAINING ISSUE FIX: Re-verify image exists after acquiring lock (idempotency check)
+    // This ensures the image wasn't deleted between initial check and lock acquisition
+    // Also provides idempotency - if already deleted, return success (idempotent operation)
     const eventImageResult = await db.execute({
-      sql: "SELECT image_id FROM event_images WHERE id = ?",
-      args: [imageId],
+      sql: "SELECT image_id FROM event_images WHERE id = ? AND event_id = ?",
+      args: [imageId, eventId],
     })
 
     if (eventImageResult.rows.length === 0) {
-      await logger.warn('Event image not found', { eventId, imageId })
-      return notFoundResponse('Event image', { requestId })
+      await releaseLock()
+      // REMAINING ISSUE FIX: Idempotent operation - if already deleted, return success
+      // This makes the operation safe to retry
+      await logger.info('Event image already deleted (idempotent operation)', { eventId, imageId })
+      return successResponse(
+        {
+          message: "Photo was already deleted",
+          alreadyDeleted: true,
+        },
+        { requestId }
+      )
     }
 
     const linkedImageId = (eventImageResult.rows[0] as any).image_id
 
     // Delete the event_images link
-    await db.execute({
-      sql: "DELETE FROM event_images WHERE id = ?",
-      args: [imageId],
+    const deleteResult = await db.execute({
+      sql: "DELETE FROM event_images WHERE id = ? AND event_id = ?",
+      args: [imageId, eventId],
     })
+    
+    // REMAINING ISSUE FIX: Validate deletion actually occurred
+    const rowsAffected = deleteResult.rowsAffected || 0
+    if (rowsAffected === 0) {
+      await releaseLock()
+      // Another process deleted it between lock and delete - idempotent success
+      await logger.info('Event image was deleted by another process (idempotent operation)', { eventId, imageId })
+      return successResponse(
+        {
+          message: "Photo was already deleted",
+          alreadyDeleted: true,
+        },
+        { requestId }
+      )
+    }
     
     await logger.info('Event image link deleted', { eventId, imageId, linkedImageId })
 
@@ -213,16 +306,37 @@ export const DELETE = withVersioning(async (
           await logger.info('Deleted orphaned image record', { imageId: linkedImageId })
 
           if (blobUrl) {
+            // DEEP REVIEW FIX: Use non-blocking blob deletion for consistency with batch delete
+            // Queue blob deletion as separate job instead of blocking
             try {
-              const { deleteImage } = await import("@/lib/blob")
-              await deleteImage(blobUrl)
-              await logger.info('Deleted orphaned image blob', { imageId: linkedImageId, blobUrl })
-            } catch (blobError) {
-              await logger.error('Failed to delete orphaned image blob', 
-                blobError instanceof Error ? blobError : new Error(String(blobError)),
-                { imageId: linkedImageId, blobUrl }
+              const { enqueueJob } = await import('@/lib/job-queue')
+              await enqueueJob(
+                'delete-orphaned-blob',
+                { blobUrl, imageId: linkedImageId },
+                {
+                  priority: 3, // Lower priority than event image deletion
+                  maxRetries: 3,
+                }
               )
-              // Image record is already deleted, blob deletion failure is logged but doesn't fail request
+              await logger.info('Queued orphaned blob deletion job', { imageId: linkedImageId, blobUrl })
+            } catch (queueError) {
+              // Fallback to immediate deletion if queueing fails
+              await logger.warn(
+                'Failed to queue blob deletion job, attempting immediate deletion',
+                { imageId: linkedImageId, blobUrl },
+                queueError instanceof Error ? queueError : new Error(String(queueError))
+              )
+              try {
+                const { deleteImage } = await import("@/lib/blob")
+                await deleteImage(blobUrl)
+                await logger.info('Deleted orphaned image blob (fallback)', { imageId: linkedImageId, blobUrl })
+              } catch (blobError) {
+                await logger.error('Failed to delete orphaned image blob (fallback also failed)', 
+                  blobError instanceof Error ? blobError : new Error(String(blobError)),
+                  { imageId: linkedImageId, blobUrl }
+                )
+                // Image record is already deleted, blob deletion failure is logged but doesn't fail request
+              }
             }
           } else {
             await logger.info('Image record deleted but no blob_url to delete', { imageId: linkedImageId })
@@ -245,6 +359,9 @@ export const DELETE = withVersioning(async (
         eventImageCount: usage.event_image_count
       })
     }
+
+    // Release lock after successful deletion
+    await releaseLock()
 
     return successResponse(
       {

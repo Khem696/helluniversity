@@ -1700,75 +1700,102 @@ export default function EventsPage() {
                 toast.error(errorMessage)
                 deletionQueued = false
               } else if (deleteJson && deleteJson.success) {
-                // CRITICAL: Validate response data structure
-                // Use validPendingDeletions.length as the source of truth for requested count
+                // IMPROVED: Handle new response format with immediate deletion
+                // API now returns: deleted, requested, attempted, failed, cleanupJobsQueued, cleanupJobsFailed
                 const requestedCount = validPendingDeletions.length
-            
+                
                 // Extract counts from response, with validation
-                const queuedCount = typeof deleteJson.data?.queued === 'number' 
-                  ? deleteJson.data.queued 
-                  : (deleteJson.data?.queued === undefined ? 0 : requestedCount) // Default to 0 if not a number
+                const deletedCount = typeof deleteJson.data?.deleted === 'number' 
+                  ? deleteJson.data.deleted 
+                  : 0
                 const responseRequestedCount = typeof deleteJson.data?.requested === 'number'
                   ? deleteJson.data.requested
                   : requestedCount
+                // COMPREHENSIVE REVIEW FIX: Use 'attempted' field if available (what we actually tried to delete)
+                // This is more accurate than 'requested' if some photos were deleted between verification and lock
+                const attemptedCount = typeof deleteJson.data?.attempted === 'number'
+                  ? deleteJson.data.attempted
+                  : responseRequestedCount // Fallback to requested if attempted not available
                 const failedCount = typeof deleteJson.data?.failed === 'number'
                   ? deleteJson.data.failed
                   : 0
+                const cleanupJobsQueued = typeof deleteJson.data?.cleanupJobsQueued === 'number'
+                  ? deleteJson.data.cleanupJobsQueued
+                  : 0
+                const cleanupJobsFailed = typeof deleteJson.data?.cleanupJobsFailed === 'number'
+                  ? deleteJson.data.cleanupJobsFailed
+                  : 0
                 
-                // CRITICAL: Validate response requested count matches what we sent
-                if (responseRequestedCount !== requestedCount) {
-                  console.warn("Response requested count doesn't match sent count", {
-                    sent: requestedCount,
-                    received: responseRequestedCount
-                  })
-                }
-                
-                // CRITICAL: Validate counts are reasonable
-                if (queuedCount < 0 || requestedCount < 0 || failedCount < 0) {
-                  console.error("Invalid deletion response counts:", { queuedCount, requestedCount, failedCount })
-                  toast.warning("Received invalid response from server. Some deletions may not have been queued.")
-                  // Treat as failure if counts are invalid
+                // Validate counts are reasonable
+                if (deletedCount < 0 || attemptedCount < 0 || failedCount < 0) {
+                  console.error("Invalid deletion response counts:", { deletedCount, attemptedCount, failedCount })
+                  toast.warning("Received invalid response from server. Some deletions may have failed.")
                   deletionQueued = false
-                } else if (queuedCount > requestedCount) {
-                  // CRITICAL: queuedCount should never exceed requestedCount
-                  console.error("Invalid deletion response: queuedCount exceeds requestedCount", { 
-                    queuedCount, 
-                    requestedCount 
-                  })
-                  toast.warning("Received invalid response from server. Please retry deletions.")
+                } else if (deletedCount === 0) {
+                  // No photos were deleted at all
                   deletionQueued = false
-                } else if (queuedCount === requestedCount && queuedCount > 0) {
-                  // All deletions queued successfully
+                  toast.error(`Failed to delete ${attemptedCount} photo${attemptedCount !== 1 ? 's' : ''}. Please try again.`)
+                } else if (deletedCount === attemptedCount && failedCount === 0) {
+                  // EDGE CASE FIX: Only update UI after confirming actual deletion count matches
+                  // This prevents optimistic updates when deletion actually failed
                   deletionQueued = true
-                  // CRITICAL: Clear pending deletions only after successful queueing
-                  // This prevents duplicate job queuing if user saves again
+                  
+                  // Update UI only after confirming successful deletion
+                  // Since event_images records are deleted immediately in transaction, 
+                  // we can safely update UI now
+                  if (isMountedRef.current && currentEditingEvent && Array.isArray(currentEditingEvent.in_event_photos)) {
+                    const remainingPhotos = currentEditingEvent.in_event_photos.filter(
+                      p => p && !validPendingDeletions.includes(p.id)
+                    )
+                    setEditingEvent({
+                      ...currentEditingEvent,
+                      in_event_photos: remainingPhotos,
+                    })
+                  }
+                  
+                  // Clear pending deletions after successful deletion
                   if (isMountedRef.current) {
                     setPendingDeletions(new Set())
+                    setSelectedPhotoIds(new Set()) // Also clear selection
                   }
-                  toast.success(`Queued deletion for ${queuedCount} photo${queuedCount !== 1 ? 's' : ''}`)
-                } else if (queuedCount > 0) {
-                  // Partial success - some deletions queued, some failed
-                  // CRITICAL: Don't set deletionQueued = true for partial success
-                  // Keep pendingDeletions so user can retry failed ones
-                  deletionQueued = false
-                  toast.warning(
-                    `Queued deletion for ${queuedCount} of ${requestedCount} photo${requestedCount !== 1 ? 's' : ''}. ${failedCount} failed to queue. Please retry.`
-                  )
-                  // Note: We keep all pending deletions - user can retry failed ones
-                  // The API doesn't return which specific IDs failed, so we can't remove successful ones
+                  
+                  // Show single, clear success message
+                  if (cleanupJobsFailed > 0) {
+                    // Photos deleted, but some cleanup jobs failed (non-critical)
+                    toast.success(
+                      `Successfully deleted ${deletedCount} photo${deletedCount !== 1 ? 's' : ''}. Cleanup will complete in the background.`
+                    )
+                  } else {
+                    toast.success(`Successfully deleted ${deletedCount} photo${deletedCount !== 1 ? 's' : ''}`)
+                  }
                 } else {
-                  // No deletions were queued (all failed)
+                  // Partial success - some deletions failed
                   deletionQueued = false
-                  toast.error(`Failed to queue deletion for ${requestedCount} photo${requestedCount !== 1 ? 's' : ''}. Please try again.`)
-                  // Keep pendingDeletions so user can retry
+                  
+                  // Build clear warning message
+                  // COMPREHENSIVE REVIEW FIX: Use attemptedCount for accurate messaging
+                  let warningMessage = `Deleted ${deletedCount} of ${attemptedCount} photo${attemptedCount !== 1 ? 's' : ''} attempted`
+                  if (attemptedCount < responseRequestedCount) {
+                    warningMessage += ` (${responseRequestedCount - attemptedCount} were already deleted)`
+                  }
+                  if (failedCount > 0) {
+                    warningMessage += `. ${failedCount} failed to delete`
+                  }
+                  if (cleanupJobsFailed > 0) {
+                    warningMessage += `. ${cleanupJobsFailed} cleanup job${cleanupJobsFailed !== 1 ? 's' : ''} failed to queue`
+                  }
+                  warningMessage += ". Please retry failed deletions."
+                  
+                  toast.warning(warningMessage)
+                  // Keep pending deletions for failed ones (though we don't know which specific ones failed)
                 }
-                } else {
-                  // deleteJson exists but success is false
-                  const errorMessage = deleteJson?.error?.message || deleteJson?.error || "Failed to queue photo deletions"
-                  toast.error(errorMessage)
-                  deletionQueued = false
-                  // Don't fail the entire save if deletion queueing fails - continue with other updates
-                }
+              } else {
+                // deleteJson exists but success is false
+                const errorMessage = deleteJson?.data?.message || deleteJson?.error?.message || deleteJson?.error || "Failed to delete photos"
+                toast.error(errorMessage)
+                deletionQueued = false
+                // Don't fail the entire save if deletion fails - continue with other updates
+              }
               }
             }
           }

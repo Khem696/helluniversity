@@ -32,6 +32,30 @@ async function cleanupOrphanedBlob(payload: { blobUrl: string }): Promise<void> 
 }
 
 /**
+ * Delete orphaned blob (from event image deletion)
+ * This is a separate job type for blob deletion to make event image deletion non-blocking
+ */
+async function deleteOrphanedBlob(payload: { blobUrl: string; imageId?: string }): Promise<void> {
+  const { blobUrl, imageId } = payload
+  
+  try {
+    await logInfo('Deleting orphaned blob', { blobUrl, imageId })
+    
+    // Delete the blob
+    await deleteImage(blobUrl)
+    
+    await logInfo('Orphaned blob deleted successfully', { blobUrl, imageId })
+  } catch (error) {
+    await logError(
+      'Failed to delete orphaned blob',
+      { blobUrl, imageId },
+      error instanceof Error ? error : new Error(String(error))
+    )
+    throw error // Will trigger retry
+  }
+}
+
+/**
  * Cleanup multiple orphaned blobs
  */
 async function cleanupOrphanedBlobsBatch(payload: { blobUrls: string[] }): Promise<void> {
@@ -191,21 +215,42 @@ async function deleteEventImage(payload: {
         const wasDeleted = (deleteResult.rowsAffected || 0) > 0
         
         if (wasDeleted) {
-          // We successfully deleted the image record - now delete the blob
+          // We successfully deleted the image record - now queue blob deletion (non-blocking)
           await logInfo('Deleted orphaned image record', { imageId: linkedImageId })
           
           if (blobUrl) {
             try {
-              const { deleteImage } = await import('./blob')
-              await deleteImage(blobUrl)
-              await logInfo('Deleted orphaned image blob', { imageId: linkedImageId, blobUrl })
-            } catch (blobError) {
-              await logError(
-                'Failed to delete orphaned image blob',
-                { imageId: linkedImageId, blobUrl },
-                blobError instanceof Error ? blobError : new Error(String(blobError))
+              // OPTION C: Queue blob deletion as separate job (non-blocking)
+              // This makes the main job much faster (~1-2 seconds instead of 4-6 seconds)
+              const { enqueueJob } = await import('./job-queue')
+              await enqueueJob(
+                'delete-orphaned-blob',
+                { blobUrl, imageId: linkedImageId },
+                {
+                  priority: 3, // Lower priority than event image deletion
+                  maxRetries: 3,
+                }
               )
-              // Image record is already deleted, blob deletion failure is logged but doesn't fail job
+              await logInfo('Queued orphaned blob deletion job', { imageId: linkedImageId, blobUrl })
+            } catch (queueError) {
+              // If we can't queue the job, try to delete immediately as fallback
+              await logError(
+                'Failed to queue blob deletion job, attempting immediate deletion',
+                { imageId: linkedImageId, blobUrl },
+                queueError instanceof Error ? queueError : new Error(String(queueError))
+              )
+              try {
+                const { deleteImage } = await import('./blob')
+                await deleteImage(blobUrl)
+                await logInfo('Deleted orphaned image blob (fallback)', { imageId: linkedImageId, blobUrl })
+              } catch (blobError) {
+                await logError(
+                  'Failed to delete orphaned image blob (fallback also failed)',
+                  { imageId: linkedImageId, blobUrl },
+                  blobError instanceof Error ? blobError : new Error(String(blobError))
+                )
+                // Image record is already deleted, blob deletion failure is logged but doesn't fail job
+              }
             }
           } else {
             await logInfo('Image record deleted but no blob_url to delete', { imageId: linkedImageId })
@@ -242,6 +287,130 @@ async function deleteEventImage(payload: {
 }
 
 /**
+ * Cleanup orphaned image (optimized - skips event_image check since it's already deleted)
+ * Used when event_image was already deleted and we just need to check if image is orphaned
+ */
+async function cleanupOrphanedImage(payload: {
+  imageId: string
+  eventId?: string // For logging context
+}): Promise<void> {
+  const { imageId, eventId } = payload
+  
+  try {
+    await logInfo('Cleaning up orphaned image', { imageId, eventId })
+    
+    const { getTursoClient } = await import('./turso')
+    const db = getTursoClient()
+    
+    // Check if the image is still used elsewhere (other events or event_images)
+    const usageCheck = await db.execute({
+      sql: `
+        SELECT 
+          (SELECT COUNT(*) FROM events WHERE image_id = ?) as event_count,
+          (SELECT COUNT(*) FROM event_images WHERE image_id = ?) as event_image_count
+      `,
+      args: [imageId, imageId],
+    })
+    
+    const usage = usageCheck.rows[0] as any
+    const isStillUsed = (usage.event_count > 0) || (usage.event_image_count > 0)
+    
+    if (!isStillUsed) {
+      // Image is orphaned - delete it and queue blob deletion
+      await logInfo('Image is orphaned, attempting to delete image record', { imageId })
+      
+      try {
+        // Get blob URL BEFORE attempting to delete
+        const imageResult = await db.execute({
+          sql: "SELECT blob_url FROM images WHERE id = ?",
+          args: [imageId],
+        })
+        
+        let blobUrl: string | null = null
+        if (imageResult.rows.length > 0) {
+          blobUrl = (imageResult.rows[0] as any).blob_url || null
+        }
+        
+        // Atomic delete with orphan check in WHERE clause
+        const deleteResult = await db.execute({
+          sql: `
+            DELETE FROM images 
+            WHERE id = ? 
+            AND (SELECT COUNT(*) FROM events WHERE image_id = ?) = 0 
+            AND (SELECT COUNT(*) FROM event_images WHERE image_id = ?) = 0
+          `,
+          args: [imageId, imageId, imageId],
+        })
+        
+        const wasDeleted = (deleteResult.rowsAffected || 0) > 0
+        
+        if (wasDeleted) {
+          await logInfo('Deleted orphaned image record', { imageId })
+          
+          if (blobUrl) {
+            try {
+              // Queue blob deletion as separate job (non-blocking)
+              const { enqueueJob } = await import('./job-queue')
+              await enqueueJob(
+                'delete-orphaned-blob',
+                { blobUrl, imageId },
+                {
+                  priority: 3,
+                  maxRetries: 3,
+                }
+              )
+              await logInfo('Queued orphaned blob deletion job', { imageId, blobUrl })
+            } catch (queueError) {
+              // Fallback to immediate deletion if queueing fails
+              await logError(
+                'Failed to queue blob deletion job, attempting immediate deletion',
+                { imageId, blobUrl },
+                queueError instanceof Error ? queueError : new Error(String(queueError))
+              )
+              try {
+                const { deleteImage } = await import('./blob')
+                await deleteImage(blobUrl)
+                await logInfo('Deleted orphaned image blob (fallback)', { imageId, blobUrl })
+              } catch (blobError) {
+                await logError(
+                  'Failed to delete orphaned image blob (fallback also failed)',
+                  { imageId, blobUrl },
+                  blobError instanceof Error ? blobError : new Error(String(blobError))
+                )
+              }
+            }
+          }
+        } else {
+          await logInfo('Image record already deleted by another job or no longer orphaned', { imageId })
+        }
+      } catch (deleteError) {
+        await logError(
+          'Failed to delete orphaned image',
+          { imageId },
+          deleteError instanceof Error ? deleteError : new Error(String(deleteError))
+        )
+        throw deleteError
+      }
+    } else {
+      await logInfo('Image is still in use, keeping image record', {
+        imageId,
+        eventCount: usage.event_count,
+        eventImageCount: usage.event_image_count,
+      })
+    }
+    
+    await logInfo('Orphaned image cleanup completed', { imageId, eventId })
+  } catch (error) {
+    await logError(
+      'Failed to cleanup orphaned image',
+      { imageId, eventId },
+      error instanceof Error ? error : new Error(String(error))
+    )
+    throw error
+  }
+}
+
+/**
  * Register all job handlers
  * Call this function during application startup or in the job queue processing endpoint
  */
@@ -250,6 +419,8 @@ export function registerAllJobHandlers(): void {
   registerJobHandler('cleanup-orphaned-blobs-batch', cleanupOrphanedBlobsBatch)
   registerJobHandler('send-booking-reminder', sendBookingReminder)
   registerJobHandler('delete-event-image', deleteEventImage)
+  registerJobHandler('delete-orphaned-blob', deleteOrphanedBlob)
+  registerJobHandler('cleanup-orphaned-image', cleanupOrphanedImage) // New optimized handler
   
   console.log('✓ All job handlers registered')
 }

@@ -100,9 +100,13 @@ export const CRON_TIMEOUT_MS = 25000
 
 /**
  * Default limits for cron jobs
+ * 
+ * OPTION A: Reduced JOB_QUEUE from 10 to 5 to prevent timeout issues
+ * Combined with Option C (non-blocking blob deletion), this allows processing
+ * 5 jobs × ~1.5 seconds = ~7.5 seconds per run (well within 25s timeout)
  */
 export const CRON_LIMITS = {
-  JOB_QUEUE: 10,
+  JOB_QUEUE: 5, // Reduced from 10 to prevent timeout with bulk operations
   EMAIL_QUEUE: 20,
   AUTO_UPDATE_BATCH: 50,
 } as const
