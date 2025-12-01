@@ -74,6 +74,8 @@ export const API_PATHS = {
   adminEventImages: (id: string) => getApiPath(`admin/events/${id}/images`),
   adminEventImage: (eventId: string, imageId: string) => 
     getApiPath(`admin/events/${eventId}/images/${imageId}`),
+  adminEventImagesBatchDelete: (id: string) => 
+    getApiPath(`admin/events/${id}/images/batch-delete`),
   
   // Admin Image APIs
   adminImages: getApiPath('admin/images'),
