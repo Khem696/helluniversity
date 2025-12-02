@@ -167,12 +167,13 @@ function SortablePhotoItem({
             )}
           </button>
         )}
-        {/* Drag handle - only show when not saving/removing and not in selection mode */}
-        {!saving && !removing && !showCheckbox && (
+        {/* Drag handle - show when not saving/removing
+            Position: top-right when checkboxes are shown, top-left when checkboxes are hidden */}
+        {!saving && !removing && (
           <div
             {...attributes}
             {...listeners}
-            className="absolute top-2 left-2 bg-black/50 hover:bg-black/70 text-white p-1 rounded cursor-grab active:cursor-grabbing opacity-0 group-hover:opacity-100 transition-opacity"
+            className={`absolute ${showCheckbox ? 'top-2 right-2' : 'top-2 left-2'} bg-black/50 hover:bg-black/70 text-white p-1 rounded cursor-grab active:cursor-grabbing opacity-0 group-hover:opacity-100 transition-opacity z-10`}
           >
             <GripVertical className="w-4 h-4" />
           </div>
