@@ -61,6 +61,20 @@ function getMaxFilesPerBatch(): number {
 /**
  * Estimate FormData overhead per request
  * Includes boundaries, headers, and metadata fields
+ * 
+ * Optimized to maximize batch size while staying under 4.5MB Vercel limit.
+ * Uses a conservative overhead calculation to ensure reliable uploads.
+ * 
+ * The calculation accounts for:
+ * - Base overhead: ~2KB for FormData structure and initial boundary
+ * - Per-file overhead: ~1KB per file (boundary + field name + headers + Content-Type)
+ * - Metadata fields: ~200 bytes each (field name + value + boundary)
+ * - Safety margin: 500KB to ensure we stay well under the 4.5MB limit
+ * 
+ * Goal: Pack as many processed images as possible into each batch, up to 4MB of images.
+ * Total per batch: 4MB images + 500KB overhead = 4.5MB total.
+ * This allows batches to be as large as possible (can be more or less than any specific number)
+ * while ensuring all images upload successfully.
  */
 function estimateFormDataOverhead(
   fileCount: number,
@@ -68,19 +82,21 @@ function estimateFormDataOverhead(
   hasTitle: boolean,
   hasEventInfo: boolean
 ): number {
-  // Base overhead: ~2KB for FormData structure
+  // Base overhead: ~2KB for FormData structure and initial boundary
   let overhead = 2048
   
-  // Per-file overhead: ~1KB (boundary + field name + headers)
+  // Per-file overhead: ~1KB (boundary + field name + headers + Content-Type)
   overhead += fileCount * 1024
   
-  // Metadata fields overhead: ~200 bytes each
+  // Metadata fields overhead: ~200 bytes each (field name + value + boundary)
   if (hasCategory) overhead += 200
   if (hasTitle) overhead += 200
   if (hasEventInfo) overhead += 200
   
-  // Safety margin: ~50KB
-  overhead += 51200
+  // Safety margin: 500KB (ensures max image size per batch is 4MB)
+  // Max image size per batch: 4MB (4.5MB total - 500KB overhead = 4MB)
+  // This provides a large safety buffer to ensure we stay under the 4.5MB limit
+  overhead += 512000 // 500KB safety margin
   
   return overhead
 }
@@ -88,11 +104,17 @@ function estimateFormDataOverhead(
 /**
  * Split processed images into batches based on size limits
  * 
+ * Algorithm optimizes to pack as many images as possible into each batch
+ * while staying under the 4.5MB Vercel limit (including overhead).
+ * 
  * Algorithm:
  * 1. Calculate max request size (4.5MB for Vercel, or from env)
- * 2. Account for FormData overhead (~150KB)
- * 3. Group images to maximize batch efficiency
+ * 2. Account for FormData overhead (500KB safety margin)
+ * 3. Group images to maximize batch efficiency - pack up to 4MB of images per batch
  * 4. Respect MAX_FILES_PER_BATCH limit
+ * 
+ * The goal is to maximize batch size (can be more or less than any specific number)
+ * while ensuring all images upload successfully by staying under 4MB of images + 500KB overhead = 4.5MB total.
  */
 export function splitIntoBatches(
   processedImages: ProcessedImage[],
@@ -123,6 +145,7 @@ export function splitIntoBatches(
     const fileSize = image.file.size
     
     // Estimate overhead for current batch + new image
+    // This dynamically calculates overhead based on the number of files
     const estimatedOverhead = estimateFormDataOverhead(
       currentBatch.length + 1,
       hasCategory,
@@ -130,6 +153,7 @@ export function splitIntoBatches(
       hasEventInfo
     )
     
+    // Calculate total size if we add this image
     const totalSizeWithNewImage = currentBatchSize + fileSize + estimatedOverhead
     
     // Check if adding this image would exceed limits
@@ -138,26 +162,29 @@ export function splitIntoBatches(
     
     // If current batch is full (by size or count), start a new batch
     if (wouldExceedSize || wouldExceedFileCount) {
+      // Save current batch if it has images
       if (currentBatch.length > 0) {
         batches.push([...currentBatch])
         currentBatch = []
         currentBatchSize = 0
       }
       
-      // If single image exceeds size limit, it must go in its own batch
-      // (will likely fail, but we'll try)
-      if (fileSize + estimateFormDataOverhead(1, hasCategory, hasTitle, hasEventInfo) > maxRequestSize) {
+      // If single image exceeds size limit (even with minimal overhead),
+      // it must go in its own batch (will likely fail, but we'll try)
+      const singleImageOverhead = estimateFormDataOverhead(1, hasCategory, hasTitle, hasEventInfo)
+      if (fileSize + singleImageOverhead > maxRequestSize) {
         batches.push([image])
         continue
       }
     }
     
     // Add image to current batch
+    // This maximizes batch size by packing as many images as possible
     currentBatch.push(image)
     currentBatchSize += fileSize
   }
   
-  // Add remaining batch
+  // Add remaining batch (if any images remain)
   if (currentBatch.length > 0) {
     batches.push(currentBatch)
   }
@@ -199,12 +226,76 @@ export async function uploadBatch(
     formData.append("event_info", options.eventInfo)
   }
   
-  const response = await fetch(endpoint, {
-    method: "POST",
-    body: formData,
-  })
+  // Add timeout for large batch uploads (5 minutes for batch uploads)
+  const timeoutMs = 300000 // 5 minutes
+  const controller = new AbortController()
+  const timeoutId = setTimeout(() => controller.abort(), timeoutMs)
   
-  const json = await response.json()
+  let response: Response
+  try {
+    response = await fetch(endpoint, {
+      method: "POST",
+      body: formData,
+      signal: controller.signal,
+    })
+    clearTimeout(timeoutId)
+  } catch (error) {
+    clearTimeout(timeoutId)
+    // Network error, timeout, or connection issue
+    if (error instanceof Error && error.name === 'AbortError') {
+      return {
+        success: false,
+        errors: [`Upload timed out after ${timeoutMs / 1000} seconds. The batch may be too large or the server is slow. Try uploading fewer images at once.`],
+      }
+    }
+    return {
+      success: false,
+      errors: [`Network error: ${error instanceof Error ? error.message : String(error)}`],
+    }
+  }
+  
+  // Check if response is OK before parsing
+  if (!response.ok) {
+    // Try to get error message from response
+    let errorMessage = `Upload failed with status ${response.status}`
+    try {
+      const contentType = response.headers.get("content-type")
+      if (contentType && contentType.includes("application/json")) {
+        const json = await response.json()
+        errorMessage = json.error?.message || json.error || errorMessage
+      } else {
+        // Non-JSON response (HTML error page, plain text, etc.)
+        const text = await response.text()
+        // Try to extract meaningful error from HTML/text
+        if (text.length < 500) {
+          errorMessage = text.substring(0, 200)
+        } else {
+          errorMessage = `Server returned ${response.status} ${response.statusText}`
+        }
+      }
+    } catch (parseError) {
+      // Failed to parse error response
+      errorMessage = `Server returned ${response.status} ${response.statusText} (unable to parse error message)`
+    }
+    
+    return {
+      success: false,
+      errors: [errorMessage],
+    }
+  }
+  
+  // Parse JSON response
+  let json: any
+  try {
+    json = await response.json()
+  } catch (parseError) {
+    // Response is not valid JSON
+    const contentType = response.headers.get("content-type") || "unknown"
+    return {
+      success: false,
+      errors: [`Server returned invalid response (expected JSON, got ${contentType}). Status: ${response.status}`],
+    }
+  }
   
   if (json.success) {
     return {
@@ -246,12 +337,76 @@ export async function uploadSingle(
     formData.append("event_info", options.eventInfo)
   }
   
-  const response = await fetch(endpoint, {
-    method: "POST",
-    body: formData,
-  })
+  // Add timeout for single uploads (2 minutes)
+  const timeoutMs = 120000 // 2 minutes
+  const controller = new AbortController()
+  const timeoutId = setTimeout(() => controller.abort(), timeoutMs)
   
-  const json = await response.json()
+  let response: Response
+  try {
+    response = await fetch(endpoint, {
+      method: "POST",
+      body: formData,
+      signal: controller.signal,
+    })
+    clearTimeout(timeoutId)
+  } catch (error) {
+    clearTimeout(timeoutId)
+    // Network error, timeout, or connection issue
+    if (error instanceof Error && error.name === 'AbortError') {
+      return {
+        success: false,
+        error: `Upload timed out after ${timeoutMs / 1000} seconds. The file may be too large or the server is slow.`,
+      }
+    }
+    return {
+      success: false,
+      error: `Network error: ${error instanceof Error ? error.message : String(error)}`,
+    }
+  }
+  
+  // Check if response is OK before parsing
+  if (!response.ok) {
+    // Try to get error message from response
+    let errorMessage = `Upload failed with status ${response.status}`
+    try {
+      const contentType = response.headers.get("content-type")
+      if (contentType && contentType.includes("application/json")) {
+        const json = await response.json()
+        errorMessage = json.error?.message || json.error || errorMessage
+      } else {
+        // Non-JSON response (HTML error page, plain text, etc.)
+        const text = await response.text()
+        // Try to extract meaningful error from HTML/text
+        if (text.length < 500) {
+          errorMessage = text.substring(0, 200)
+        } else {
+          errorMessage = `Server returned ${response.status} ${response.statusText}`
+        }
+      }
+    } catch (parseError) {
+      // Failed to parse error response
+      errorMessage = `Server returned ${response.status} ${response.statusText} (unable to parse error message)`
+    }
+    
+    return {
+      success: false,
+      error: errorMessage,
+    }
+  }
+  
+  // Parse JSON response
+  let json: any
+  try {
+    json = await response.json()
+  } catch (parseError) {
+    // Response is not valid JSON
+    const contentType = response.headers.get("content-type") || "unknown"
+    return {
+      success: false,
+      error: `Server returned invalid response (expected JSON, got ${contentType}). Status: ${response.status}`,
+    }
+  }
   
   if (json.success) {
     return {

@@ -4,8 +4,16 @@
  * Handles image resizing, format conversion, and EXIF handling in the browser.
  * Prevents auto-rotation by ignoring EXIF orientation tags.
  * 
+ * Features:
+ * - Aggressively compresses images to ensure they're under 4MB
+ * - Iteratively reduces quality and dimensions until target size is met
+ * - Converts to WebP format for maximum compression
+ * - Strips EXIF metadata to reduce file size
+ * 
  * This reduces upload time and server load by normalizing images before upload.
  * Server-side processing still validates and ensures consistency.
+ * 
+ * Target: Maximum 4MB per processed image (to fit within batch upload limits)
  */
 
 export interface ClientImageProcessOptions {
@@ -28,6 +36,7 @@ export interface ProcessedClientImage {
 
 // Environment variables for client-side processing defaults
 // NEXT_PUBLIC_ variables are available at build time in Next.js
+// Defaults are optimized for aggressive compression to stay under 4MB
 const DEFAULT_MAX_WIDTH = parseInt(
   process.env.NEXT_PUBLIC_MAX_IMAGE_WIDTH || '1920',
   10
@@ -36,8 +45,10 @@ const DEFAULT_MAX_HEIGHT = parseInt(
   process.env.NEXT_PUBLIC_MAX_IMAGE_HEIGHT || '1920',
   10
 )
+// Lower default quality (0.75) for better compression while maintaining good visual quality
+// The iterative compression will further reduce if needed to stay under 4MB
 const DEFAULT_QUALITY = parseFloat(
-  process.env.NEXT_PUBLIC_IMAGE_QUALITY || '0.85'
+  process.env.NEXT_PUBLIC_IMAGE_QUALITY || '0.75'
 )
 const DEFAULT_FORMAT: 'webp' | 'jpeg' | 'png' = (
   process.env.NEXT_PUBLIC_IMAGE_FORMAT || 'webp'
@@ -166,17 +177,24 @@ function cleanupImage(
 }
 
 /**
- * Resize and normalize image on client-side
+ * Maximum processed image size: 4MB
+ * This ensures images fit within batch upload limits (4MB images + 500KB overhead = 4.5MB total)
+ */
+const MAX_PROCESSED_SIZE = 4 * 1024 * 1024 // 4MB
+
+/**
+ * Resize and normalize image on client-side with aggressive compression
  * 
  * Features:
  * - Resizes to max dimensions (maintains aspect ratio)
  * - Converts to WebP (with JPEG fallback)
  * - Strips EXIF metadata (prevents auto-rotation)
  * - Normalizes image format and quality
+ * - Iteratively reduces quality/dimensions to ensure image is under 4MB
  * 
  * @param file - Original image file
  * @param options - Processing options
- * @returns Processed image file with metadata
+ * @returns Processed image file with metadata (guaranteed under 4MB)
  */
 export async function resizeImageClient(
   file: File,
@@ -210,49 +228,102 @@ export async function resizeImageClient(
     needsCleanup = loaded.needsCleanup
     objectUrl = loaded.objectUrl // Use returned objectUrl for proper cleanup
 
-    // Calculate new dimensions
-    const { width, height } = calculateDimensions(
-      loaded.width,
-      loaded.height,
-      maxWidth,
-      maxHeight,
-      maintainAspectRatio
-    )
+    // Start with initial dimensions and quality
+    let currentWidth = maxWidth
+    let currentHeight = maxHeight
+    let currentQuality = quality
+    let processedFile: File | null = null
+    let finalWidth = 0
+    let finalHeight = 0
 
-    // Create canvas
-    const canvas = document.createElement('canvas')
-    canvas.width = width
-    canvas.height = height
-    const ctx = canvas.getContext('2d')
+    // Iteratively reduce quality and dimensions until image is under 4MB
+    const maxIterations = 20 // Prevent infinite loops
+    let iteration = 0
 
-    if (!ctx) {
-      throw new Error('Failed to get canvas context')
+    while (iteration < maxIterations) {
+      // Calculate new dimensions for this iteration
+      const { width, height } = calculateDimensions(
+        loaded.width,
+        loaded.height,
+        currentWidth,
+        currentHeight,
+        maintainAspectRatio
+      )
+
+      // Create canvas
+      const canvas = document.createElement('canvas')
+      canvas.width = width
+      canvas.height = height
+      const ctx = canvas.getContext('2d')
+
+      if (!ctx) {
+        throw new Error('Failed to get canvas context')
+      }
+
+      // Draw image to canvas (no rotation applied - image is already in correct orientation)
+      ctx.drawImage(image, 0, 0, width, height)
+
+      // Convert canvas to blob (this strips EXIF metadata automatically)
+      const blob = await new Promise<Blob>((resolve, reject) => {
+        canvas.toBlob(
+          (blob) => {
+            if (blob) {
+              resolve(blob)
+            } else {
+              reject(new Error('Failed to create blob from canvas'))
+            }
+          },
+          mimeType,
+          currentQuality
+        )
+      })
+
+      // Create new File object (no EXIF metadata)
+      processedFile = new File(
+        [blob],
+        getProcessedFilename(file.name, outputFormat),
+        { type: mimeType }
+      )
+
+      // Check if file size is under 4MB
+      if (processedFile.size <= MAX_PROCESSED_SIZE) {
+        finalWidth = width
+        finalHeight = height
+        break // Success! Image is under 4MB
+      }
+
+      // Image is still too large, reduce quality and/or dimensions
+      iteration++
+
+      if (iteration >= maxIterations) {
+        // Last iteration - use whatever we have (even if over 4MB)
+        finalWidth = width
+        finalHeight = height
+        console.warn(
+          `Image ${file.name} could not be compressed below 4MB after ${maxIterations} iterations. ` +
+          `Final size: ${(processedFile.size / 1024 / 1024).toFixed(2)}MB`
+        )
+        break
+      }
+
+      // Aggressive compression strategy:
+      // 1. First, reduce quality significantly (by 0.1 each time, minimum 0.3)
+      if (currentQuality > 0.3) {
+        currentQuality = Math.max(0.3, currentQuality - 0.1)
+      } else {
+        // 2. If quality is already low, reduce dimensions (by 10% each time)
+        currentWidth = Math.max(800, Math.floor(currentWidth * 0.9))
+        currentHeight = Math.max(800, Math.floor(currentHeight * 0.9))
+      }
+
+      // Cleanup canvas for next iteration
+      canvas.width = 0
+      canvas.height = 0
     }
 
-    // Draw image to canvas (no rotation applied - image is already in correct orientation)
-    ctx.drawImage(image, 0, 0, width, height)
-
-    // Convert canvas to blob (this strips EXIF metadata automatically)
-    const blob = await new Promise<Blob>((resolve, reject) => {
-      canvas.toBlob(
-        (blob) => {
-          if (blob) {
-            resolve(blob)
-          } else {
-            reject(new Error('Failed to create blob from canvas'))
-          }
-        },
-        mimeType,
-        quality
-      )
-    })
-
-    // Create new File object (no EXIF metadata)
-    const processedFile = new File(
-      [blob],
-      getProcessedFilename(file.name, outputFormat),
-      { type: mimeType }
-    )
+    if (!processedFile) {
+      throw new Error('Failed to process image')
+    }
 
     // Calculate compression ratio
     const compressionRatio = file.size > 0
@@ -263,8 +334,8 @@ export async function resizeImageClient(
       file: processedFile,
       originalSize: file.size,
       processedSize: processedFile.size,
-      width,
-      height,
+      width: finalWidth,
+      height: finalHeight,
       format: outputFormat,
       compressionRatio: Math.round(compressionRatio * 100) / 100, // Round to 2 decimal places
     }

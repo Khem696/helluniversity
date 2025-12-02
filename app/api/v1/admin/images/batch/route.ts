@@ -39,7 +39,8 @@ import { withVersioning } from "@/lib/api-version-wrapper"
  */
 
 // Increase timeout for batch operations
-export const maxDuration = 60 // 60 seconds for batch uploads
+// For large batches (50 images), processing can take 2-3 minutes
+export const maxDuration = 300 // 5 minutes for batch uploads (allows time for processing many images)
 
 // Maximum files per batch request
 const MAX_FILES_PER_BATCH = parseInt(
