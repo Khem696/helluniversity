@@ -1591,6 +1591,7 @@ export default function EventsPage() {
     const hadDeletionsAtStart = initialPendingDeletionsSize > 0
     
     let deletionQueued = false
+    let deletionSucceeded = false // Track if deletion actually succeeded (not just queued)
     if (hadDeletionsAtStart) {
       try {
         // CRITICAL: Validate that all pending deletion IDs still exist in the event
@@ -1737,6 +1738,7 @@ export default function EventsPage() {
                   // EDGE CASE FIX: Only update UI after confirming actual deletion count matches
                   // This prevents optimistic updates when deletion actually failed
                   deletionQueued = true
+                  deletionSucceeded = true // Mark deletion as successful
                   
                   // Update UI only after confirming successful deletion
                   // Since event_images records are deleted immediately (no transaction), 
@@ -1758,14 +1760,9 @@ export default function EventsPage() {
                   }
                   
                   // Show single, clear success message
-                  if (cleanupJobsFailed > 0) {
-                    // Photos deleted, but some cleanup jobs failed (non-critical)
-                    toast.success(
-                      `Successfully deleted ${deletedCount} photo${deletedCount !== 1 ? 's' : ''}. Cleanup will complete in the background.`
-                    )
-                  } else {
-                    toast.success(`Successfully deleted ${deletedCount} photo${deletedCount !== 1 ? 's' : ''}`)
-                  }
+                  // Note: Don't show toast here if cleanup jobs failed - that's non-critical
+                  // The success message is sufficient
+                  toast.success(`Successfully deleted ${deletedCount} photo${deletedCount !== 1 ? 's' : ''}`)
                 } else {
                   // Partial success - some deletions failed
                   deletionQueued = false
@@ -1977,35 +1974,26 @@ export default function EventsPage() {
 
       if (updateSuccess) {
         // CRITICAL: Check deletion status
-        // deletionQueued = true means ALL deletions were successfully queued
-        // pendingDeletions.size === 0 means no deletions pending (either all queued or none to begin with)
-        // CRITICAL: Use hadDeletionsAtStart to know if we attempted deletions
-        // pendingDeletions.size might be stale due to async state updates
-        const currentPendingDeletionsSize = pendingDeletions.size
-        const allDeletionsQueued = deletionQueued && currentPendingDeletionsSize === 0
+        // Use deletionSucceeded flag instead of checking pendingDeletions.size
+        // because state updates are async and might be stale
         const noDeletionsRequested = !hadDeletionsAtStart
         
-        // CRITICAL: Defensive check for inconsistent state
-        if (deletionQueued && currentPendingDeletionsSize > 0) {
-          // This shouldn't happen - if deletionQueued is true, pendingDeletions should be cleared
-          // But handle it defensively - clear pendingDeletions to fix inconsistent state
-          console.warn("Inconsistent state detected: deletionQueued is true but pendingDeletions.size > 0. Clearing pendingDeletions.")
-          if (isMountedRef.current) {
-            setPendingDeletions(new Set())
-          }
-        }
-        
-        if (hadDeletionsAtStart && !allDeletionsQueued) {
-          // Some or all deletions failed to queue
-          toast.warning("Event updated, but photo deletions failed to queue. Please try deleting photos again.")
+        // Only show warning if deletions were requested but didn't succeed
+        if (hadDeletionsAtStart && !deletionSucceeded) {
+          // Deletions were requested but failed
+          toast.warning("Event updated, but photo deletions failed. Please try deleting photos again.")
         }
         
         // Only clear snapshot and close dialog if everything succeeded
-        // (event update succeeded AND all deletions queued OR no deletions were requested)
-        if (allDeletionsQueued || noDeletionsRequested) {
+        // (event update succeeded AND deletions succeeded OR no deletions were requested)
+        if (deletionSucceeded || noDeletionsRequested) {
           setEventSnapshot(null)
           setFormKey(0) // Reset form key
-          toast.success("Event updated successfully")
+          // Only show "Event updated successfully" if there were actual event updates
+          // If only deletions happened, the deletion success message is sufficient
+          if (Object.keys(updates).length > 0) {
+            toast.success("Event updated successfully")
+          }
           setEditDialogOpen(false)
           setEditingEvent(null)
           setEditPosterFile(null)
