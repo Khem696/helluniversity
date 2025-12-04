@@ -14,8 +14,7 @@ import {
   type ExportStatusHistoryRow,
   type ExportFeeHistoryRow,
 } from "@/lib/booking-export"
-// @ts-ignore - xlsx types may not be available
-import * as XLSX from "xlsx"
+import ExcelJS from "exceljs"
 
 /**
  * Admin Bookings Export API (v1)
@@ -65,15 +64,16 @@ function generateCSV(headers: string[], rows: any[][]): string {
 /**
  * Generate Excel workbook from data
  */
-function generateExcel(
+async function generateExcel(
   bookings: ReturnType<typeof transformBookingToExportRow>[],
   statusHistory: ExportStatusHistoryRow[],
   feeHistory: ExportFeeHistoryRow[],
   selectedFields: string[]
-): XLSX.WorkBook {
-  const workbook = XLSX.utils.book_new()
+): Promise<ExcelJS.Workbook> {
+  const workbook = new ExcelJS.Workbook()
 
   // Sheet 1: Bookings
+  const bookingSheet = workbook.addWorksheet("Bookings")
   const bookingHeaders = selectedFields.map(field => {
     const fieldDef = EXPORT_FIELDS.find(f => f.key === field)
     return fieldDef ? fieldDef.label : field
@@ -81,23 +81,26 @@ function generateExcel(
   const bookingRows = bookings.map(booking =>
     selectedFields.map(field => (booking as any)[field] || "")
   )
-  const bookingSheet = XLSX.utils.aoa_to_sheet([bookingHeaders, ...bookingRows])
+  
+  // Add headers
+  bookingSheet.addRow(bookingHeaders)
+  
+  // Add rows
+  bookingRows.forEach(row => bookingSheet.addRow(row))
   
   // Set column widths (auto-size)
-  const maxWidths = bookingHeaders.map((_, colIndex) => {
+  bookingSheet.columns = bookingHeaders.map((_, colIndex) => {
     const column = bookingRows.map(row => String(row[colIndex] || ""))
     const maxLength = Math.max(
       bookingHeaders[colIndex].length,
       ...column.map(cell => cell.length)
     )
-    return { wch: Math.min(Math.max(maxLength + 2, 10), 50) }
+    return { width: Math.min(Math.max(maxLength + 2, 10), 50) }
   })
-  bookingSheet["!cols"] = maxWidths
-  
-  XLSX.utils.book_append_sheet(workbook, bookingSheet, "Bookings")
 
   // Sheet 2: Status History (if any)
   if (statusHistory.length > 0) {
+    const statusSheet = workbook.addWorksheet("Status History")
     const statusHeaders = [
       "Reference Number",
       "Booking ID",
@@ -116,24 +119,27 @@ function generateExcel(
       history.changeReason,
       history.changeDate,
     ])
-    const statusSheet = XLSX.utils.aoa_to_sheet([statusHeaders, ...statusRows])
+    
+    // Add headers
+    statusSheet.addRow(statusHeaders)
+    
+    // Add rows
+    statusRows.forEach(row => statusSheet.addRow(row))
     
     // Set column widths
-    const statusMaxWidths = statusHeaders.map((_, colIndex) => {
+    statusSheet.columns = statusHeaders.map((_, colIndex) => {
       const column = statusRows.map(row => String(row[colIndex] || ""))
       const maxLength = Math.max(
         statusHeaders[colIndex].length,
         ...column.map(cell => cell.length)
       )
-      return { wch: Math.min(Math.max(maxLength + 2, 10), 50) }
+      return { width: Math.min(Math.max(maxLength + 2, 10), 50) }
     })
-    statusSheet["!cols"] = statusMaxWidths
-    
-    XLSX.utils.book_append_sheet(workbook, statusSheet, "Status History")
   }
 
   // Sheet 3: Fee History (if any)
   if (feeHistory.length > 0) {
+    const feeSheet = workbook.addWorksheet("Fee History")
     const feeHeaders = [
       "Reference Number",
       "Booking ID",
@@ -168,20 +174,22 @@ function generateExcel(
       history.statusAtChange,
       history.isRestorationChange,
     ])
-    const feeSheet = XLSX.utils.aoa_to_sheet([feeHeaders, ...feeRows])
+    
+    // Add headers
+    feeSheet.addRow(feeHeaders)
+    
+    // Add rows
+    feeRows.forEach(row => feeSheet.addRow(row))
     
     // Set column widths
-    const feeMaxWidths = feeHeaders.map((_, colIndex) => {
+    feeSheet.columns = feeHeaders.map((_, colIndex) => {
       const column = feeRows.map(row => String(row[colIndex] || ""))
       const maxLength = Math.max(
         feeHeaders[colIndex].length,
         ...column.map(cell => cell.length)
       )
-      return { wch: Math.min(Math.max(maxLength + 2, 10), 50) }
+      return { width: Math.min(Math.max(maxLength + 2, 10), 50) }
     })
-    feeSheet["!cols"] = feeMaxWidths
-    
-    XLSX.utils.book_append_sheet(workbook, feeSheet, "Fee History")
   }
 
   return workbook
@@ -364,10 +372,10 @@ export const GET = withVersioning(async (request: Request) => {
       }
 
       // Generate Excel workbook
-      const workbook = generateExcel(exportBookings, statusHistoryRows, feeHistoryRows, selectedFields)
+      const workbook = await generateExcel(exportBookings, statusHistoryRows, feeHistoryRows, selectedFields)
 
       // Convert to buffer
-      const excelBuffer = XLSX.write(workbook, { type: "buffer", bookType: "xlsx" })
+      const excelBuffer = await workbook.xlsx.writeBuffer()
 
       return new NextResponse(excelBuffer, {
         headers: {
