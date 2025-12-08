@@ -277,8 +277,10 @@ export default function ImagesPage() {
   const [reordering, setReordering] = useState(false)
   const [togglingAI, setTogglingAI] = useState<string | null>(null) // Track which image is being toggled
   const [selectedFiles, setSelectedFiles] = useState<File[]>([])
-  const [filePreviews, setFilePreviews] = useState<Array<{ file: File; preview: string }>>([])
+  const [filePreviews, setFilePreviews] = useState<Array<{ file: File; preview: string; originalSelectionIndex: number }>>([])
   const [uploadProgress, setUploadProgress] = useState<{ processed: number; uploaded: number; total: number }>({ processed: 0, uploaded: 0, total: 0 })
+  const [selectedCategory, setSelectedCategory] = useState<string>("") // Controlled state for category selection
+  const [categoryError, setCategoryError] = useState<string>("") // Error state for category validation
   
   // Initialize drag and drop sensors
   const sensors = useSensors(
@@ -366,8 +368,17 @@ export default function ImagesPage() {
       return
     }
 
-    const category = formData.get("category") as string
-    const title = formData.get("title") as string || ""
+    const category = selectedCategory || (formData.get("category") as string)
+
+    // Validate category is selected
+    if (!category || category.trim() === "") {
+      setCategoryError("Please select a category before uploading")
+      toast.error("Please select a category before uploading")
+      return
+    }
+    
+    // Clear any previous errors
+    setCategoryError("")
 
     setUploading(true)
     setProcessingImages(true)
@@ -411,8 +422,8 @@ export default function ImagesPage() {
         const processed = processedImages[0]
         try {
           const result = await uploadSingle(processed, API_PATHS.adminImages, {
-            title: title || processed.file.name.replace(/\.[^/.]+$/, ""),
-            category: category || null,
+            title: null,
+            category: category,
           })
           
           if (result.success && result.image) {
@@ -436,8 +447,8 @@ export default function ImagesPage() {
       } else {
         // Multiple files - split into batches and upload sequentially
         const batches = splitIntoBatches(processedImages, {
-          category: category || null,
-          titlePrefix: title || null,
+          category: category,
+          titlePrefix: null,
         })
         
         let totalUploaded = 0
@@ -453,8 +464,8 @@ export default function ImagesPage() {
             }
             
             const result = await uploadBatch(batch, API_PATHS.adminImagesBatch, {
-              category: category || null,
-              titlePrefix: title || null,
+              category: category,
+              titlePrefix: null,
             })
             
             if (result.success && result.images) {
@@ -505,15 +516,20 @@ export default function ImagesPage() {
       }
       setSelectedFiles([])
       setFilePreviews([])
-      setUploadProgress({ processed: 0, uploaded: 0, total: 0 })
+      setSelectedCategory("") // Reset category selection
+      setCategoryError("") // Clear any errors
       setUploadDialogOpen(false)
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error)
       toast.error(`Failed to process images: ${errorMessage}`)
       errors.push(errorMessage)
     } finally {
+      // CRITICAL: Reset uploading states first, then reset progress
+      // This ensures the progress bar doesn't reset while the button is still showing spinner
       setUploading(false)
       setProcessingImages(false)
+      // Reset progress after states are cleared to prevent progress bar from showing 0% while button is still spinning
+      setUploadProgress({ processed: 0, uploaded: 0, total: 0 })
     }
   }
 
@@ -636,7 +652,21 @@ export default function ImagesPage() {
         }),
       })
 
-      const json = await response.json()
+      // Check if response is OK before parsing JSON
+      if (!response.ok) {
+        const errorText = await response.text().catch(() => `HTTP ${response.status} ${response.statusText}`)
+        toast.error(`Failed to update image selection: ${errorText}`)
+        return
+      }
+
+      let json: any
+      try {
+        json = await response.json()
+      } catch (parseError) {
+        toast.error(`Failed to parse response: ${parseError instanceof Error ? parseError.message : String(parseError)}`)
+        return
+      }
+
       if (json.success) {
         // API returns { success: true, data: { image: {...}, totalSelected: ... } }
         const updatedImage = json.data?.image || json.image
@@ -697,7 +727,25 @@ export default function ImagesPage() {
         body: JSON.stringify(updates),
       })
 
-      const json = await response.json()
+      // Check if response is OK before parsing JSON
+      if (!response.ok) {
+        // Rollback optimistic update
+        fetchImages()
+        const errorText = await response.text().catch(() => `HTTP ${response.status} ${response.statusText}`)
+        toast.error(`Failed to update image: ${errorText}`)
+        return
+      }
+
+      let json: any
+      try {
+        json = await response.json()
+      } catch (parseError) {
+        // Rollback optimistic update
+        fetchImages()
+        toast.error(`Failed to parse response: ${parseError instanceof Error ? parseError.message : String(parseError)}`)
+        return
+      }
+
       if (json.success) {
         const updatedImage = json.data?.image || json.image
         // Replace with server response (ensures sync)
@@ -742,7 +790,25 @@ export default function ImagesPage() {
       const response = await fetch(API_PATHS.adminImage(imageToDelete.id), {
         method: "DELETE",
       })
-      const json = await response.json()
+
+      // Check if response is OK before parsing JSON
+      if (!response.ok) {
+        // Rollback optimistic update
+        fetchImages()
+        const errorText = await response.text().catch(() => `HTTP ${response.status} ${response.statusText}`)
+        toast.error(`Failed to delete image: ${errorText}`)
+        return
+      }
+
+      let json: any
+      try {
+        json = await response.json()
+      } catch (parseError) {
+        // Rollback optimistic update
+        fetchImages()
+        toast.error(`Failed to parse response: ${parseError instanceof Error ? parseError.message : String(parseError)}`)
+        return
+      }
 
       if (json.success) {
         toast.success("Image deleted successfully")
@@ -918,6 +984,8 @@ export default function ImagesPage() {
                   required
                   disabled={uploading || processingImages}
                   onChange={(e) => {
+                    // CRITICAL: Preserve FileList order (user selection order) by using Array.from
+                    // FileList maintains the order files were selected by the user
                     const files = Array.from(e.target.files || [])
                     setSelectedFiles(files)
                     
@@ -926,12 +994,14 @@ export default function ImagesPage() {
                       return
                     }
                     
+                    // CRITICAL: Track original selection index to preserve user's file selection order
                     // Create previews asynchronously
-                    const previewPromises = files.map((file) => {
-                      return new Promise<{ file: File; preview: string }>((resolve) => {
+                    const previewPromises = files.map((file, originalSelectionIndex) => {
+                      return new Promise<{ file: File; preview: string; originalSelectionIndex: number }>((resolve) => {
                         const reader = new FileReader()
                         reader.onloadend = () => {
-                          resolve({ file, preview: reader.result as string })
+                          // CRITICAL: Include originalSelectionIndex to preserve user's selection order
+                          resolve({ file, preview: reader.result as string, originalSelectionIndex })
                         }
                         reader.readAsDataURL(file)
                       })
@@ -1008,27 +1078,25 @@ export default function ImagesPage() {
                     <div
                       className="bg-blue-600 h-2 rounded-full transition-all duration-300"
                       style={{ 
-                        width: `${((processingImages ? uploadProgress.processed : uploadProgress.uploaded) / uploadProgress.total) * 100}%` 
+                        width: `${uploadProgress.total > 0 ? ((processingImages ? uploadProgress.processed : uploadProgress.uploaded) / uploadProgress.total) * 100 : 0}%` 
                       }}
                     />
                   </div>
                 </div>
               )}
               <div>
-                <Label htmlFor="title">Title</Label>
-                <Input
-                  id="title"
-                  name="title"
-                  type="text"
-                  placeholder="Image title"
-                  disabled={uploading || processingImages}
-                />
-              </div>
-              <div>
-                <Label htmlFor="category">Category</Label>
-                <Select name="category" disabled={uploading || processingImages} defaultValue="">
-                  <SelectTrigger>
-                    <SelectValue placeholder="Select category (optional)" />
+                <Label htmlFor="category">Category *</Label>
+                <Select 
+                  name="category" 
+                  disabled={uploading || processingImages} 
+                  value={selectedCategory}
+                  onValueChange={(value) => {
+                    setSelectedCategory(value)
+                    setCategoryError("") // Clear error when category is selected
+                  }}
+                >
+                  <SelectTrigger className={categoryError ? "border-red-500" : ""}>
+                    <SelectValue placeholder="Select category (required)" />
                   </SelectTrigger>
                   <SelectContent>
                     <SelectItem value="artwork_studio">Artwork Studio</SelectItem>
@@ -1037,6 +1105,16 @@ export default function ImagesPage() {
                     <SelectItem value="aispace_studio">AI Space Studio</SelectItem>
                   </SelectContent>
                 </Select>
+                {categoryError && (
+                  <p className="text-sm text-red-500 mt-1">
+                    {categoryError}
+                  </p>
+                )}
+                {!categoryError && (
+                  <p className="text-sm text-gray-500 mt-1">
+                    Category is required for image upload.
+                  </p>
+                )}
               </div>
               <div className="flex justify-end gap-2">
                 <Button
@@ -1047,6 +1125,8 @@ export default function ImagesPage() {
                     setSelectedFiles([])
                     setFilePreviews([])
                     setUploadProgress({ processed: 0, uploaded: 0, total: 0 })
+                    setSelectedCategory("") // Reset category selection
+                    setCategoryError("") // Clear any errors
                   }}
                   disabled={uploading || processingImages}
                 >
