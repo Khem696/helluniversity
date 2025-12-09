@@ -1,8 +1,6 @@
 import { redirect } from "next/navigation"
 import { auth } from "@/lib/auth-config"
 import { SignOutButton } from "@/components/SignOutButton"
-import { BookingToggle } from "./components/BookingToggle"
-import { DevModeToggle } from "./components/DevModeToggle"
 import { DashboardClient } from "./components/DashboardClient"
 import { DevToolsSection } from "./components/DevToolsSection"
 
@@ -30,16 +28,6 @@ export default async function AdminDashboard() {
         <p className="text-sm sm:text-base text-gray-600">
           Welcome, {session.user.name || session.user.email}
         </p>
-      </div>
-
-      {/* Booking Toggle - Moved to top */}
-      <div className="mb-6">
-        <BookingToggle />
-      </div>
-
-      {/* Dev Mode Toggle */}
-      <div className="mb-6">
-        <DevModeToggle />
       </div>
 
       <DashboardClient />

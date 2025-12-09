@@ -1,6 +1,6 @@
 "use client"
 
-import { AlertCircle, Clock, Calendar, CheckCircle2, XCircle } from "lucide-react"
+import { AlertCircle, Clock, Calendar, CheckCircle2, XCircle, Lock } from "lucide-react"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Badge } from "@/components/ui/badge"
 import { willAutoUpdate } from "@/lib/booking-action-validation"
@@ -9,6 +9,7 @@ import { getBangkokTime } from "@/lib/timezone-client"
 import { format } from "date-fns"
 import type { BookingStatus } from "@/lib/booking-state-machine"
 import { API_PATHS } from "@/lib/api-config"
+import Link from "next/link"
 
 interface Booking {
   id: string
@@ -29,11 +30,21 @@ interface Booking {
   fee_conversion_rate?: number | null
 }
 
-interface BookingStateInfoProps {
-  booking: Booking
+interface BookingHold {
+  id: string
+  startDate: number
+  endDate: number | null
+  reason: string | null
+  createdBy: string
+  createdAt: number
 }
 
-export function BookingStateInfo({ booking }: BookingStateInfoProps) {
+interface BookingStateInfoProps {
+  booking: Booking
+  overlappingHolds?: BookingHold[]
+}
+
+export function BookingStateInfo({ booking, overlappingHolds = [] }: BookingStateInfoProps) {
   const autoUpdateInfo = willAutoUpdate(booking)
   // CRITICAL: Use Bangkok time for all date comparisons to match server-side logic
   const now = getBangkokTime()
@@ -55,6 +66,24 @@ export function BookingStateInfo({ booking }: BookingStateInfoProps) {
   
   const formatDate = (timestamp: number) => {
     return format(new Date(timestamp * 1000), "MMM dd, yyyy")
+  }
+  
+  // Determine alert variant and styling based on booking status
+  const getHoldAlertVariant = (): "destructive" | "default" => {
+    if (booking.status === "confirmed" || booking.status === "paid_deposit") {
+      return "destructive"
+    }
+    return "default"
+  }
+  
+  const getHoldAlertClassName = (): string => {
+    if (booking.status === "confirmed" || booking.status === "paid_deposit") {
+      return "bg-red-50 border-red-200 text-red-800"
+    } else if (booking.status === "pending_deposit") {
+      return "bg-orange-50 border-orange-200 text-orange-800"
+    } else {
+      return "bg-blue-50 border-blue-200 text-blue-800"
+    }
   }
 
   return (
@@ -146,6 +175,61 @@ export function BookingStateInfo({ booking }: BookingStateInfoProps) {
           <AlertTitle>Deposit Required</AlertTitle>
           <AlertDescription>
             Booking has been accepted. Waiting for user to upload deposit evidence.
+          </AlertDescription>
+        </Alert>
+      )}
+
+      {/* Booking Hold Warning - Show for all statuses except cancelled and finished */}
+      {overlappingHolds.length > 0 && booking.status !== "cancelled" && booking.status !== "finished" && (
+        <Alert variant={getHoldAlertVariant()} className={getHoldAlertClassName()}>
+          <Lock className="h-4 w-4" />
+          <AlertTitle>
+            {booking.status === "confirmed" || booking.status === "paid_deposit"
+              ? "⚠️ Booking Date is Held"
+              : "ℹ️ Booking Date Overlaps with Hold"}
+          </AlertTitle>
+          <AlertDescription>
+            <div className="space-y-2">
+              <p className="font-semibold">
+                {booking.status === "confirmed" || booking.status === "paid_deposit"
+                  ? "This booking's date range overlaps with active booking hold(s). The date(s) are currently blocked from new bookings."
+                  : "This booking's date range overlaps with active booking hold(s)."}
+              </p>
+              {booking.status === "confirmed" && (
+                <p className="text-sm font-medium">
+                  Consider changing the booking date to avoid conflicts. Use the "Update Status" button to change the date.
+                </p>
+              )}
+              <div className="mt-2 space-y-1">
+                <p className="text-sm font-medium">Overlapping booking hold(s):</p>
+                <ul className="list-disc list-inside space-y-1 text-sm">
+                  {overlappingHolds.map((hold) => (
+                    <li key={hold.id}>
+                      <span className="font-medium">
+                        {formatDate(hold.startDate)}
+                        {hold.endDate && hold.endDate !== hold.startDate
+                          ? ` - ${formatDate(hold.endDate)}`
+                          : ""}
+                      </span>
+                      {hold.reason && (
+                        <span className="text-xs ml-2">({hold.reason})</span>
+                      )}
+                      <span className="text-xs ml-2 text-gray-600">
+                        (Created: {formatTimestamp(hold.createdAt)})
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+              <div className="mt-2">
+                <Link
+                  href="/admin/booking-holds"
+                  className="text-sm font-medium underline hover:no-underline"
+                >
+                  View all booking holds →
+                </Link>
+              </div>
+            </div>
           </AlertDescription>
         </Alert>
       )}

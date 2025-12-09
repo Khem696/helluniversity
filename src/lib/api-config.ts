@@ -93,6 +93,13 @@ export const API_PATHS = {
   // Admin Action Locks API
   adminActionLocks: getApiPath('admin/action-locks'),
   
+  // Admin Booking Holds APIs
+  adminBookingHolds: getApiPath('admin/booking-holds'),
+  adminBookingHold: (id: string) => getApiPath(`admin/booking-holds/${id}`),
+  
+  // Cron APIs (for reference, typically called by Vercel)
+  cronCleanupExpiredHolds: getApiPath('cron/cleanup-expired-holds'),
+  
   // Admin Stats API
   adminStats: getApiPath('admin/stats'),
   

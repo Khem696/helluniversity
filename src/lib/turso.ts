@@ -387,7 +387,7 @@ export async function initializeDatabase(options?: { cleanupOrphanedImages?: boo
       SELECT name FROM sqlite_master 
       WHERE type='table' AND name IN (
         'images', 'events', 'rate_limits', 'bookings', 
-        'booking_status_history', 'booking_fee_history', 'admin_actions', 'event_images', 'email_queue', 'email_sent_log', 'error_logs', 'job_queue', 'settings'
+        'booking_status_history', 'booking_fee_history', 'booking_holds', 'admin_actions', 'action_locks', 'event_images', 'email_queue', 'email_sent_log', 'error_logs', 'job_queue', 'settings'
       )
     `)
 
@@ -704,6 +704,100 @@ export async function initializeDatabase(options?: { cleanupOrphanedImages?: boo
           // Re-throw if it's a different error
           throw error
         }
+      }
+    }
+
+    // Create booking_holds table for admin-managed date holds
+    if (!existingTables.has("booking_holds")) {
+      await db.execute(`
+        CREATE TABLE booking_holds (
+          id TEXT PRIMARY KEY,
+          start_date INTEGER NOT NULL,
+          end_date INTEGER,
+          reason TEXT,
+          created_by TEXT NOT NULL,
+          modified_by TEXT,
+          created_at INTEGER DEFAULT (unixepoch()),
+          updated_at INTEGER DEFAULT (unixepoch())
+        )
+      `)
+      
+      await db.execute(`
+        CREATE INDEX idx_booking_holds_start_date ON booking_holds(start_date)
+      `)
+      await db.execute(`
+        CREATE INDEX idx_booking_holds_end_date ON booking_holds(end_date)
+      `)
+      await db.execute(`
+        CREATE INDEX idx_booking_holds_date_range ON booking_holds(start_date, end_date)
+      `)
+      await db.execute(`
+        CREATE INDEX idx_booking_holds_created_at ON booking_holds(created_at)
+      `)
+      // Composite index for active holds query (end_date, start_date)
+      await db.execute(`
+        CREATE INDEX idx_booking_holds_active ON booking_holds(end_date, start_date)
+      `)
+      
+      // Create trigger to prevent overlapping date ranges
+      // This enforces the constraint at the database level to prevent race conditions
+      // SQLite trigger syntax: Use SELECT CASE WHEN EXISTS inside BEGIN block for consistency
+      await db.execute(`
+        CREATE TRIGGER prevent_overlapping_holds_insert
+        BEFORE INSERT ON booking_holds
+        FOR EACH ROW
+        BEGIN
+          SELECT CASE
+            WHEN EXISTS (
+              SELECT 1 FROM booking_holds
+              WHERE (
+                -- Overlap detection for date-only holds (blocks entire days)
+                -- start_date: Unix timestamp at start of day (00:00:00) in Bangkok timezone
+                -- end_date: NULL for single-day holds, or start of end day timestamp for multi-day holds
+                -- Two date ranges overlap if: newStart <= existingEnd AND newEnd >= existingStart
+                -- For single-day holds (end_date IS NULL), COALESCE uses start_date (same day)
+                -- For multi-day holds, end_date represents the start of the last day, which is correct
+                -- because the hold blocks the entire last day (from 00:00:00 to 23:59:59)
+                -- Using <= and >= ensures same-day overlaps are caught correctly
+                (NEW.start_date <= COALESCE(booking_holds.end_date, booking_holds.start_date) 
+                 AND COALESCE(NEW.end_date, NEW.start_date) >= booking_holds.start_date)
+              )
+            )
+            THEN RAISE(ABORT, 'This date range overlaps with an existing booking hold. Please choose a different date range.')
+          END;
+        END
+      `)
+      
+      await db.execute(`
+        CREATE TRIGGER prevent_overlapping_holds_update
+        BEFORE UPDATE ON booking_holds
+        FOR EACH ROW
+        BEGIN
+          SELECT CASE
+            WHEN EXISTS (
+              SELECT 1 FROM booking_holds
+              WHERE booking_holds.id != NEW.id
+                AND (
+                  -- Overlap detection for date-only holds (blocks entire days)
+                  -- start_date: Unix timestamp at start of day (00:00:00) in Bangkok timezone
+                  -- end_date: NULL for single-day holds, or start of end day timestamp for multi-day holds
+                  -- Two date ranges overlap if: newStart <= existingEnd AND newEnd >= existingStart
+                  -- For single-day holds (end_date IS NULL), COALESCE uses start_date (same day)
+                  -- For multi-day holds, end_date represents the start of the last day, which is correct
+                  -- because the hold blocks the entire last day (from 00:00:00 to 23:59:59)
+                  -- Using <= and >= ensures same-day overlaps are caught correctly
+                  (NEW.start_date <= COALESCE(booking_holds.end_date, booking_holds.start_date) 
+                   AND COALESCE(NEW.end_date, NEW.start_date) >= booking_holds.start_date)
+                )
+            )
+            THEN RAISE(ABORT, 'This date range overlaps with an existing booking hold. Please choose a different date range.')
+          END;
+        END
+      `)
+      
+      // Log table creation (using console.log is acceptable for initialization)
+      if (process.env.NODE_ENV !== 'production') {
+        console.log("✓ Created booking_holds table with overlap prevention triggers")
       }
     }
 
@@ -2062,6 +2156,238 @@ async function migrateExistingTables(
         CREATE INDEX IF NOT EXISTS idx_error_logs_created_at ON error_logs(created_at)
       `)
       console.log("✓ Added error_logs table")
+    }
+
+    // Migrate booking_holds table: add modified_by column for audit tracking
+    if (existingTables.has("booking_holds")) {
+      const holdColumns = await db.execute(`
+        PRAGMA table_info(booking_holds)
+      `)
+      const columnNames = new Set(
+        holdColumns.rows.map((row: any) => row.name)
+      )
+
+      if (!columnNames.has("modified_by")) {
+        const migrationVersion = "booking_holds_add_modified_by"
+        if (!(await isMigrationApplied(db, migrationVersion))) {
+          await db.execute(`
+            ALTER TABLE booking_holds ADD COLUMN modified_by TEXT
+          `)
+          await recordMigrationVersion(
+            db,
+            migrationVersion,
+            "Add modified_by column to booking_holds table for audit tracking",
+            "-- Rollback: ALTER TABLE booking_holds DROP COLUMN modified_by (SQLite doesn't support DROP COLUMN, manual rollback required)"
+          )
+          console.log("✓ Added modified_by column to booking_holds table")
+        }
+      }
+
+      // Migrate booking_holds table: remove start_time and end_time columns
+      // Since SQLite doesn't support DROP COLUMN, we recreate the table
+      if (columnNames.has("start_time") || columnNames.has("end_time")) {
+        const migrationVersion = "booking_holds_remove_time_columns"
+        if (!(await isMigrationApplied(db, migrationVersion))) {
+          // Check if table has any data
+          const countResult = await db.execute(`
+            SELECT COUNT(*) as count FROM booking_holds
+          `)
+          const count = (countResult.rows[0] as any)?.count || 0
+          
+          if (count > 0) {
+            throw new Error(
+              "Cannot remove time columns: booking_holds table contains data. " +
+              "Please backup and clear the table before running this migration."
+            )
+          }
+
+          // Recreate table without time columns
+          await db.execute(`
+            CREATE TABLE booking_holds_new (
+              id TEXT PRIMARY KEY,
+              start_date INTEGER NOT NULL,
+              end_date INTEGER,
+              reason TEXT,
+              created_by TEXT NOT NULL,
+              modified_by TEXT,
+              created_at INTEGER DEFAULT (unixepoch()),
+              updated_at INTEGER DEFAULT (unixepoch())
+            )
+          `)
+          
+          // Copy data (should be empty, but safe to do)
+          await db.execute(`
+            INSERT INTO booking_holds_new (id, start_date, end_date, reason, created_by, modified_by, created_at, updated_at)
+            SELECT id, start_date, end_date, reason, created_by, modified_by, created_at, updated_at
+            FROM booking_holds
+          `)
+          
+          // Drop old table triggers first to avoid issues during table drop
+          await db.execute(`DROP TRIGGER IF EXISTS prevent_overlapping_holds_insert`)
+          await db.execute(`DROP TRIGGER IF EXISTS prevent_overlapping_holds_update`)
+          
+          // Drop old table and rename new one
+          // CRITICAL: RENAME is atomic in SQLite, but we ensure triggers are dropped first
+          // If RENAME fails, booking_holds_new still exists and can be recovered
+          await db.execute(`DROP TABLE booking_holds`)
+          await db.execute(`ALTER TABLE booking_holds_new RENAME TO booking_holds`)
+          
+          // Recreate indexes
+          await db.execute(`
+            CREATE INDEX idx_booking_holds_start_date ON booking_holds(start_date)
+          `)
+          await db.execute(`
+            CREATE INDEX idx_booking_holds_end_date ON booking_holds(end_date)
+          `)
+          await db.execute(`
+            CREATE INDEX idx_booking_holds_date_range ON booking_holds(start_date, end_date)
+          `)
+          await db.execute(`
+            CREATE INDEX idx_booking_holds_created_at ON booking_holds(created_at)
+          `)
+          await db.execute(`
+            CREATE INDEX idx_booking_holds_active ON booking_holds(end_date, start_date)
+          `)
+          
+          // Create overlap prevention triggers
+          await db.execute(`
+            CREATE TRIGGER prevent_overlapping_holds_insert
+            BEFORE INSERT ON booking_holds
+            FOR EACH ROW
+            BEGIN
+              SELECT CASE
+                WHEN EXISTS (
+                  SELECT 1 FROM booking_holds
+                  WHERE (
+                    -- Overlap detection for date-only holds (blocks entire days)
+                    -- start_date: Unix timestamp at start of day (00:00:00) in Bangkok timezone
+                    -- end_date: NULL for single-day holds, or start of end day timestamp for multi-day holds
+                    -- Two date ranges overlap if: newStart <= existingEnd AND newEnd >= existingStart
+                    -- For single-day holds (end_date IS NULL), COALESCE uses start_date (same day)
+                    -- For multi-day holds, end_date represents the start of the last day, which is correct
+                    -- because the hold blocks the entire last day (from 00:00:00 to 23:59:59)
+                    -- Using <= and >= ensures same-day overlaps are caught correctly
+                    (NEW.start_date <= COALESCE(booking_holds.end_date, booking_holds.start_date) 
+                     AND COALESCE(NEW.end_date, NEW.start_date) >= booking_holds.start_date)
+                  )
+                )
+                THEN RAISE(ABORT, 'This date range overlaps with an existing booking hold. Please choose a different date range.')
+              END;
+            END
+          `)
+          
+          await db.execute(`
+            CREATE TRIGGER prevent_overlapping_holds_update
+            BEFORE UPDATE ON booking_holds
+            FOR EACH ROW
+            BEGIN
+              SELECT CASE
+                WHEN EXISTS (
+                  SELECT 1 FROM booking_holds
+                  WHERE booking_holds.id != NEW.id
+                    AND (
+                      -- Overlap detection for date-only holds (blocks entire days)
+                      -- start_date: Unix timestamp at start of day (00:00:00) in Bangkok timezone
+                      -- end_date: NULL for single-day holds, or start of end day timestamp for multi-day holds
+                      -- Two date ranges overlap if: newStart <= existingEnd AND newEnd >= existingStart
+                      -- For single-day holds (end_date IS NULL), COALESCE uses start_date (same day)
+                      -- For multi-day holds, end_date represents the start of the last day, which is correct
+                      -- because the hold blocks the entire last day (from 00:00:00 to 23:59:59)
+                      -- Using <= and >= ensures same-day overlaps are caught correctly
+                      (NEW.start_date <= COALESCE(booking_holds.end_date, booking_holds.start_date) 
+                       AND COALESCE(NEW.end_date, NEW.start_date) >= booking_holds.start_date)
+                    )
+                )
+                THEN RAISE(ABORT, 'This date range overlaps with an existing booking hold. Please choose a different date range.')
+              END;
+            END
+          `)
+          
+          await recordMigrationVersion(
+            db,
+            migrationVersion,
+            "Remove start_time and end_time columns from booking_holds table and add overlap prevention triggers",
+            "-- Rollback: Recreate table with time columns (manual rollback required)"
+          )
+          console.log("✓ Removed time columns from booking_holds table and added overlap prevention triggers")
+        }
+      } else {
+        // Table exists but doesn't have time columns - ensure triggers exist
+        const triggersResult = await db.execute(`
+          SELECT name FROM sqlite_master 
+          WHERE type = 'trigger' 
+          AND (name = 'prevent_overlapping_holds_insert' OR name = 'prevent_overlapping_holds_update')
+        `)
+        const triggerNames = new Set(
+          triggersResult.rows.map((row: any) => row.name)
+        )
+        
+        if (!triggerNames.has("prevent_overlapping_holds_insert")) {
+          const migrationVersion = "booking_holds_add_overlap_triggers"
+          if (!(await isMigrationApplied(db, migrationVersion))) {
+            await db.execute(`
+              CREATE TRIGGER prevent_overlapping_holds_insert
+              BEFORE INSERT ON booking_holds
+              FOR EACH ROW
+              BEGIN
+                SELECT CASE
+                  WHEN EXISTS (
+                    SELECT 1 FROM booking_holds
+                    WHERE (
+                      -- Overlap detection for date-only holds (blocks entire days)
+                      -- start_date: Unix timestamp at start of day (00:00:00) in Bangkok timezone
+                      -- end_date: NULL for single-day holds, or start of end day timestamp for multi-day holds
+                      -- Two date ranges overlap if: newStart <= existingEnd AND newEnd >= existingStart
+                      -- For single-day holds (end_date IS NULL), COALESCE uses start_date (same day)
+                      -- For multi-day holds, end_date represents the start of the last day, which is correct
+                      -- because the hold blocks the entire last day (from 00:00:00 to 23:59:59)
+                      -- Using <= and >= ensures same-day overlaps are caught correctly
+                      (NEW.start_date <= COALESCE(booking_holds.end_date, booking_holds.start_date) 
+                       AND COALESCE(NEW.end_date, NEW.start_date) >= booking_holds.start_date)
+                    )
+                  )
+                  THEN RAISE(ABORT, 'This date range overlaps with an existing booking hold. Please choose a different date range.')
+                END;
+              END
+            `)
+            
+            await db.execute(`
+              CREATE TRIGGER prevent_overlapping_holds_update
+              BEFORE UPDATE ON booking_holds
+              FOR EACH ROW
+              BEGIN
+                SELECT CASE
+                  WHEN EXISTS (
+                    SELECT 1 FROM booking_holds
+                    WHERE booking_holds.id != NEW.id
+                      AND (
+                        -- Overlap detection for date-only holds (blocks entire days)
+                        -- start_date: Unix timestamp at start of day (00:00:00) in Bangkok timezone
+                        -- end_date: NULL for single-day holds, or start of end day timestamp for multi-day holds
+                        -- Two date ranges overlap if: newStart <= existingEnd AND newEnd >= existingStart
+                        -- For single-day holds (end_date IS NULL), COALESCE uses start_date (same day)
+                        -- For multi-day holds, end_date represents the start of the last day, which is correct
+                        -- because the hold blocks the entire last day (from 00:00:00 to 23:59:59)
+                        -- Using <= and >= ensures same-day overlaps are caught correctly
+                        (NEW.start_date <= COALESCE(booking_holds.end_date, booking_holds.start_date) 
+                         AND COALESCE(NEW.end_date, NEW.start_date) >= booking_holds.start_date)
+                      )
+                  )
+                  THEN RAISE(ABORT, 'This date range overlaps with an existing booking hold. Please choose a different date range.')
+                END;
+              END
+            `)
+            
+            await recordMigrationVersion(
+              db,
+              migrationVersion,
+              "Add overlap prevention triggers to booking_holds table",
+              "-- Rollback: DROP TRIGGER prevent_overlapping_holds_insert; DROP TRIGGER prevent_overlapping_holds_update;"
+            )
+            console.log("✓ Added overlap prevention triggers to booking_holds table")
+          }
+        }
+      }
     }
   } catch (error) {
     console.error("Migration error:", error)

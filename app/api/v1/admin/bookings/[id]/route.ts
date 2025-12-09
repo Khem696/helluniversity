@@ -102,24 +102,106 @@ export const GET = withVersioning(async (
     })
 
     // Find all overlapping bookings for warning display
-    const { findAllOverlappingBookings } = await import('@/lib/booking-validations')
-    const startDate = booking.startDate ? createBangkokTimestamp(booking.startDate) : 0
-    const endDate = booking.endDate ? createBangkokTimestamp(booking.endDate) : null
-    const overlappingBookings = await findAllOverlappingBookings(
-      id,
-      startDate,
-      endDate,
-      booking.startTime || null,
-      booking.endTime || null
-    )
+    // Calculate booking date timestamps with error handling
+    let startDate = 0
+    let endDate: number | null = null
+    let overlappingBookings: Array<{
+      id: string
+      name: string
+      email: string
+      reference_number: string | null
+      start_date: number
+      end_date: number | null
+      start_time: string | null
+      end_time: string | null
+      status: string
+      created_at: number
+    }> = []
+    let hasConfirmedOverlap = false
     
-    // Check if any overlapping booking is confirmed (blocks status changes)
-    const hasConfirmedOverlap = overlappingBookings.some(b => b.status === 'confirmed')
+    try {
+      // Convert booking dates to timestamps
+      // Handle both string (YYYY-MM-DD) and number (timestamp) formats for robustness
+      if (booking.startDate) {
+        startDate = typeof booking.startDate === 'string' 
+          ? createBangkokTimestamp(booking.startDate) 
+          : booking.startDate
+      }
+      if (booking.endDate) {
+        endDate = typeof booking.endDate === 'string'
+          ? createBangkokTimestamp(booking.endDate)
+          : booking.endDate
+      }
+      
+      const { findAllOverlappingBookings } = await import('@/lib/booking-validations')
+      overlappingBookings = await findAllOverlappingBookings(
+        id,
+        startDate,
+        endDate,
+        booking.startTime || null,
+        booking.endTime || null
+      )
+      
+      // Check if any overlapping booking is confirmed (blocks status changes)
+      hasConfirmedOverlap = overlappingBookings.some(b => b.status === 'confirmed')
+    } catch (error) {
+      // If date conversion or overlap check fails, log but continue
+      // This allows the booking to still be viewed even if overlap checking has issues
+      const errorMessage = error instanceof Error ? error.message : String(error)
+      await logger.warn('Failed to check booking overlaps, continuing without overlap warnings', {
+        bookingId: id,
+        startDate: booking.startDate,
+        endDate: booking.endDate,
+        error: errorMessage
+      })
+      // overlappingBookings remains empty array, hasConfirmedOverlap remains false
+    }
+    
+    // Find all overlapping booking holds for warning display
+    // Wrap in try-catch to handle errors gracefully (e.g., invalid dates, calculation errors)
+    let overlappingHolds: Array<{
+      id: string
+      startDate: number
+      endDate: number | null
+      reason: string | null
+      createdBy: string
+      createdAt: number
+    }> = []
+    
+    try {
+      const { findOverlappingBookingHolds } = await import('@/lib/booking-holds')
+      const holds = await findOverlappingBookingHolds(
+        startDate,
+        endDate,
+        booking.startTime || null,
+        booking.endTime || null
+      )
+      overlappingHolds = holds.map(h => ({
+        id: h.id,
+        startDate: h.startDate,
+        endDate: h.endDate,
+        reason: h.reason,
+        createdBy: h.createdBy,
+        createdAt: h.createdAt,
+      }))
+    } catch (error) {
+      // If hold overlap check fails, log but don't fail the entire request
+      // This allows the booking to still be viewed even if hold checking has issues
+      const errorMessage = error instanceof Error ? error.message : String(error)
+      await logger.warn('Failed to check booking hold overlaps, continuing without hold warnings', {
+        bookingId: id,
+        startDate,
+        endDate,
+        error: errorMessage
+      })
+      // overlappingHolds remains empty array
+    }
     
     await logger.debug('Overlap check completed', {
       bookingId: id,
       overlapCount: overlappingBookings.length,
       hasConfirmedOverlap,
+      holdOverlapCount: overlappingHolds.length,
     })
 
     // Transform booking to match frontend interface (convert date strings to Unix timestamps)
@@ -228,6 +310,7 @@ export const GET = withVersioning(async (
           status: b.status,
           created_at: b.created_at,
         })),
+        overlappingHolds, // Already mapped in try-catch block above
         hasConfirmedOverlap,
       },
       { requestId }

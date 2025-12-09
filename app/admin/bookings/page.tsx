@@ -120,6 +120,14 @@ export default function BookingsPage() {
     isRestorationChange: boolean
     createdAt: number
   }>>([])
+  const [overlappingHolds, setOverlappingHolds] = useState<Array<{
+    id: string
+    startDate: number
+    endDate: number | null
+    reason: string | null
+    createdBy: string
+    createdAt: number
+  }>>([])
   const [overlappingBookings, setOverlappingBookings] = useState<Array<{
     id: string
     name: string
@@ -853,6 +861,7 @@ export default function BookingsPage() {
           setStatusHistory(statusHistory)
           // Store overlapping bookings and confirmed overlap status
           setOverlappingBookings(json.data.overlappingBookings || [])
+          setOverlappingHolds(json.data.overlappingHolds || [])
           setHasConfirmedOverlap(json.data.hasConfirmedOverlap || false)
           // Reset postpone mode when opening dialog
           setPostponeMode("user-propose")
@@ -1893,7 +1902,10 @@ export default function BookingsPage() {
               </div>
 
               {/* Booking State Info - Shows warnings and state information */}
-              <BookingStateInfo booking={selectedBooking as any} />
+              <BookingStateInfo 
+                booking={selectedBooking as any} 
+                overlappingHolds={overlappingHolds}
+              />
 
               {/* Overlap Warning - Show if there are overlapping bookings */}
               {overlappingBookings.length > 0 && (

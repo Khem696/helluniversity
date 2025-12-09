@@ -3,6 +3,7 @@
 import { useAdminStats } from "@/hooks/useAdminStats"
 import { DashboardCard } from "./DashboardCard"
 import { DeleteAllBookingsCard } from "./DeleteAllBookingsCard"
+import { DevModeCard } from "./DevModeCard"
 
 /**
  * Client-side dashboard component that uses admin stats hook
@@ -16,6 +17,19 @@ export function DashboardClient() {
 
   return (
     <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+      <DashboardCard
+        href="/admin/booking-holds"
+        icon={
+          <div className="w-12 h-12 bg-red-100 rounded-lg flex items-center justify-center">
+            <svg className="w-6 h-6 text-red-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
+            </svg>
+          </div>
+        }
+        title="Booking Holds"
+        description="Manage unavailable dates"
+      />
+
       <DashboardCard
         href="/admin/bookings"
         icon={
@@ -71,6 +85,8 @@ export function DashboardClient() {
       />
 
       <DeleteAllBookingsCard />
+
+      <DevModeCard />
     </div>
   )
 }
