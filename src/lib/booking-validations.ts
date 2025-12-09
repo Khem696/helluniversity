@@ -847,7 +847,7 @@ export async function findAllOverlappingBookings(
 
 /**
  * Get unavailable dates and time ranges for calendar
- * Returns dates that have confirmed bookings
+ * Returns dates that have confirmed bookings and admin-created booking holds
  * 
  * @param excludeBookingId - Optional booking ID to exclude from unavailable dates
  */
@@ -886,6 +886,11 @@ export async function getUnavailableDates(excludeBookingId?: string | null): Pro
   const result = await db.execute({ sql: query, args })
   
   console.log(`[getUnavailableDates] Query executed, found ${result.rows.length} confirmed bookings blocking calendar`)
+  
+  // Get all active booking holds (future or current holds)
+  const { getActiveBookingHolds } = await import("./booking-holds")
+  const activeHolds = await getActiveBookingHolds()
+  console.log(`[getUnavailableDates] Found ${activeHolds.length} active booking holds blocking calendar`)
 
   const unavailableDates = new Set<string>()
   const unavailableTimeRanges: Array<{
@@ -1018,6 +1023,90 @@ export async function getUnavailableDates(excludeBookingId?: string | null): Pro
       startDate: startTimestamp,
       endDate: endTimestamp,
     })
+  }
+
+  // Process booking holds
+  // Time fields are no longer used - all holds are date-only (block entire days)
+  for (const hold of activeHolds) {
+    try {
+      // Use shared helper from booking-holds to calculate timestamps
+      // This ensures consistency with how holds are stored and validated
+      const { calculateHoldEndTimestamp } = await import("./booking-holds")
+      const startTimestamp = calculateStartTimestamp(hold.startDate, null) // Time is always null now
+      const endTimestamp = await calculateHoldEndTimestamp(
+        hold.startDate,
+        hold.endDate,
+        null // Time is always null now
+      )
+      
+      // Skip past holds - only future/current holds should block the calendar
+      if (endTimestamp < bangkokNow) {
+        continue // Skip this hold - it's in the past
+      }
+
+      // Add all dates in the range to unavailable dates
+      // Convert timestamps to Bangkok timezone dates
+      const startDateBangkok = new TZDate(startTimestamp * 1000, BANGKOK_TIMEZONE)
+      const endDateBangkok = new TZDate(endTimestamp * 1000, BANGKOK_TIMEZONE)
+      
+      // Get date components in Bangkok timezone
+      const startYear = startDateBangkok.getFullYear()
+      const startMonth = startDateBangkok.getMonth()
+      const startDay = startDateBangkok.getDate()
+      
+      const endYear = endDateBangkok.getFullYear()
+      const endMonth = endDateBangkok.getMonth()
+      const endDay = endDateBangkok.getDate()
+      
+      // Create date objects for iteration (in Bangkok timezone)
+      let currentYear = startYear
+      let currentMonth = startMonth
+      let currentDay = startDay
+      
+      // Iterate through all dates in the range (inclusive)
+      while (
+        currentYear < endYear ||
+        (currentYear === endYear && currentMonth < endMonth) ||
+        (currentYear === endYear && currentMonth === endMonth && currentDay <= endDay)
+      ) {
+        // Create TZDate for current date in Bangkok timezone
+        const tzDate = new TZDate(currentYear, currentMonth, currentDay, 0, 0, 0, BANGKOK_TIMEZONE)
+        const dateStr = format(tzDate, 'yyyy-MM-dd')
+        unavailableDates.add(dateStr)
+        
+        // Move to next day
+        currentDay++
+        const daysInMonth = new Date(currentYear, currentMonth + 1, 0).getDate()
+        if (currentDay > daysInMonth) {
+          currentDay = 1
+          currentMonth++
+          if (currentMonth > 11) {
+            currentMonth = 0
+            currentYear++
+          }
+        }
+      }
+
+      // Add time range info with Bangkok timezone date
+      // Note: startTime and endTime are always null for holds (date-only)
+      unavailableTimeRanges.push({
+        date: timestampToBangkokDateString(startTimestamp),
+        startTime: null, // Time fields removed - holds are date-only
+        endTime: null, // Time fields removed - holds are date-only
+        startDate: startTimestamp,
+        endDate: endTimestamp,
+      })
+    } catch (error) {
+      // If we can't calculate timestamps (e.g., corrupted data), log and skip this hold
+      // This prevents one bad hold from breaking the entire calendar availability check
+      console.warn('[getUnavailableDates] Failed to calculate timestamps for hold, skipping', {
+        holdId: hold.id,
+        startDate: hold.startDate,
+        endDate: hold.endDate,
+        error: error instanceof Error ? error.message : String(error)
+      })
+      // Continue with other holds - skip this one
+    }
   }
 
   const sortedDates = Array.from(unavailableDates).sort()

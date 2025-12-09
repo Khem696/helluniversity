@@ -24,6 +24,7 @@ import {
 } from "@/components/ui/select"
 import { Upload, Edit, Loader2, Image as ImageIcon, ChevronDown, ChevronUp, Globe, Image as ImageIcon2, Trash2, GripVertical, Check, X, Plus } from "lucide-react"
 import { toast } from "sonner"
+import { logError, logWarn, logInfo, logDebug } from "@/lib/client-logger"
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible"
 import { useAdminData } from "@/hooks/useAdminData"
 import { API_PATHS, buildApiUrl } from "@/lib/api-config"
@@ -153,7 +154,7 @@ function SortableImageItem({
             className="w-full h-full object-cover"
             style={{ imageOrientation: 'none' }}
             onError={(e) => {
-            console.error("Image failed to load:", {
+            logError("Image failed to load", {
               id: image.id,
               blob_url: image.blob_url,
               title: image.title
@@ -164,12 +165,22 @@ function SortableImageItem({
             if (parent && !parent.querySelector('.image-error')) {
               const errorDiv = document.createElement('div')
               errorDiv.className = 'image-error absolute inset-0 flex items-center justify-center bg-red-50 border-2 border-red-200'
-              errorDiv.innerHTML = `
-                <div class="text-center p-2">
-                  <p class="text-xs text-red-600 font-semibold">Failed to load</p>
-                  <p class="text-xs text-red-500 mt-1 break-all">${image.blob_url ? image.blob_url.substring(0, 30) + '...' : 'No URL'}</p>
-                </div>
-              `
+              // CRITICAL: Create DOM elements directly instead of using innerHTML to prevent XSS
+              const container = document.createElement('div')
+              container.className = 'text-center p-2'
+              
+              const titleParagraph = document.createElement('p')
+              titleParagraph.className = 'text-xs text-red-600 font-semibold'
+              titleParagraph.textContent = 'Failed to load'
+              
+              const urlParagraph = document.createElement('p')
+              urlParagraph.className = 'text-xs text-red-500 mt-1 break-all'
+              const urlText = image.blob_url ? image.blob_url.substring(0, 30) + '...' : 'No URL'
+              urlParagraph.textContent = urlText
+              
+              container.appendChild(titleParagraph)
+              container.appendChild(urlParagraph)
+              errorDiv.appendChild(container)
               parent.appendChild(errorDiv)
             }
           }}
@@ -625,7 +636,7 @@ export default function ImagesPage() {
         fetchImages()
       }
     } catch (error) {
-      console.error("Failed to update image order:", error)
+      logError("Failed to update image order", { function: "handleDragEnd" }, error instanceof Error ? error : new Error(String(error)))
       toast.error("Failed to update image order")
       // Revert on error - refetch to get correct state from server
       fetchImages()
@@ -688,7 +699,7 @@ export default function ImagesPage() {
       }
     } catch (error) {
       toast.error("Failed to update image selection")
-      console.error(error)
+      logError("Failed to update image selection", { function: "toggleAISelection", imageId }, error instanceof Error ? error : new Error(String(error)))
     } finally {
       setTogglingAI(null)
     }
@@ -765,7 +776,7 @@ export default function ImagesPage() {
       // Rollback on error
       fetchImages()
       toast.error("Failed to update image")
-      console.error(error)
+      logError("Failed to update image", { function: "handleUpdate", imageId: editingImage?.id }, error instanceof Error ? error : new Error(String(error)))
     }
   }
 
@@ -843,7 +854,7 @@ export default function ImagesPage() {
               replaceItem(img.id, img)
             })
           } catch (updateError) {
-            console.error("Failed to update image order after deletion:", updateError)
+            logError("Failed to update image order after deletion", { function: "confirmDelete", imageId: imageToDelete?.id }, updateError instanceof Error ? updateError : new Error(String(updateError)))
             // If order update fails, refresh from server
             fetchImages()
           }
@@ -861,7 +872,7 @@ export default function ImagesPage() {
       // Rollback on error
       fetchImages()
       toast.error("Failed to delete image")
-      console.error(error)
+      logError("Failed to delete image", { function: "confirmDelete", imageId: imageToDelete?.id }, error instanceof Error ? error : new Error(String(error)))
     } finally {
       setDeleting(false)
     }
@@ -1414,7 +1425,7 @@ export default function ImagesPage() {
                     className="w-full h-full object-cover"
                     style={{ imageOrientation: 'none' }}
                     onError={(e) => {
-                      console.error("Image failed to load:", {
+                      logError("Image failed to load", {
                         id: image.id,
                         blob_url: image.blob_url,
                         title: image.title
@@ -1426,12 +1437,22 @@ export default function ImagesPage() {
                       if (parent && !parent.querySelector('.image-error')) {
                         const errorDiv = document.createElement('div')
                         errorDiv.className = 'image-error absolute inset-0 flex items-center justify-center bg-red-50 border-2 border-red-200'
-                        errorDiv.innerHTML = `
-                          <div class="text-center p-2">
-                            <p class="text-xs text-red-600 font-semibold">Failed to load</p>
-                            <p class="text-xs text-red-500 mt-1 break-all">${image.blob_url ? image.blob_url.substring(0, 30) + '...' : 'No URL'}</p>
-                          </div>
-                        `
+                        // CRITICAL: Create DOM elements directly instead of using innerHTML to prevent XSS
+                        const container = document.createElement('div')
+                        container.className = 'text-center p-2'
+                        
+                        const titleParagraph = document.createElement('p')
+                        titleParagraph.className = 'text-xs text-red-600 font-semibold'
+                        titleParagraph.textContent = 'Failed to load'
+                        
+                        const urlParagraph = document.createElement('p')
+                        urlParagraph.className = 'text-xs text-red-500 mt-1 break-all'
+                        const urlText = image.blob_url ? image.blob_url.substring(0, 30) + '...' : 'No URL'
+                        urlParagraph.textContent = urlText
+                        
+                        container.appendChild(titleParagraph)
+                        container.appendChild(urlParagraph)
+                        errorDiv.appendChild(container)
                         parent.appendChild(errorDiv)
                       }
                     }}

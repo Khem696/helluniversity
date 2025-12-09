@@ -142,11 +142,47 @@ export const GET = withVersioning(async (request: Request) => {
     const allTablesExist = existingTables.length === requiredTables.length
     const missingTables = requiredTables.filter(table => !existingTables.includes(table))
     
+    // Check booking_holds table schema to verify time columns have been removed
+    let bookingHoldsSchema: {
+      exists: boolean
+      hasTimeColumns: boolean
+      columns: string[]
+      migrationApplied: boolean
+    } = {
+      exists: false,
+      hasTimeColumns: false,
+      columns: [],
+      migrationApplied: false
+    }
+    
+    if (existingTables.includes('booking_holds')) {
+      bookingHoldsSchema.exists = true
+      
+      // Get column information
+      const columnsResult = await db.execute(`PRAGMA table_info(booking_holds)`)
+      const columns = columnsResult.rows.map((row: any) => row.name)
+      bookingHoldsSchema.columns = columns
+      bookingHoldsSchema.hasTimeColumns = columns.includes('start_time') || columns.includes('end_time')
+      
+      // Check if migration has been applied
+      try {
+        const migrationResult = await db.execute(`
+          SELECT COUNT(*) as count FROM migration_versions 
+          WHERE version = 'booking_holds_remove_time_columns' AND rolled_back_at IS NULL
+        `)
+        bookingHoldsSchema.migrationApplied = ((migrationResult.rows[0] as any)?.count || 0) > 0
+      } catch {
+        // Migration table might not exist yet
+        bookingHoldsSchema.migrationApplied = false
+      }
+    }
+    
     await logger.info('Database status checked', {
       allTablesExist,
       missingTablesCount: missingTables.length,
       checkConstraintValid,
-      checkConstraintMessage
+      checkConstraintMessage,
+      bookingHoldsSchema
     })
     
     return successResponse(
@@ -156,6 +192,7 @@ export const GET = withVersioning(async (request: Request) => {
         missingTables,
         checkConstraintValid,
         checkConstraintMessage,
+        bookingHoldsSchema,
       },
       { requestId }
     )

@@ -504,7 +504,19 @@ export default function EventsPage() {
       if (counter >= maxIterations) {
         // CRITICAL: Validate Math.random().toString(36) result before substring
         const randomStr = Math.random().toString(36)
-        const safeSubstring = randomStr.length >= 9 ? randomStr.substring(2, 9) : randomStr.substring(2) || Math.random().toString(36).substring(2, 5)
+        // CRITICAL: Ensure randomStr has at least 2 characters before calling substring(2)
+        // Math.random().toString(36) always returns a string starting with "0." so length >= 2 is guaranteed
+        // But add defensive check to prevent potential edge cases
+        let safeSubstring: string
+        if (randomStr.length >= 9) {
+          safeSubstring = randomStr.substring(2, 9)
+        } else if (randomStr.length >= 2) {
+          safeSubstring = randomStr.substring(2)
+        } else {
+          // Fallback: generate a new random string (should never happen, but defensive)
+          const fallbackStr = Math.random().toString(36)
+          safeSubstring = fallbackStr.length >= 5 ? fallbackStr.substring(2, 5) : fallbackStr.substring(2) || 'xyz'
+        }
         uniqueId = `${baseId}-${Date.now()}-${safeSubstring}`
       }
       baseId = uniqueId
@@ -868,21 +880,51 @@ export default function EventsPage() {
     if (upcomingFilter) {
       params.append("upcoming", "true")
     }
-    if (debouncedTitleFilter) {
-      params.append("title", debouncedTitleFilter)
+    // CRITICAL: Validate debouncedTitleFilter is a string before appending
+    if (debouncedTitleFilter && typeof debouncedTitleFilter === 'string' && debouncedTitleFilter.trim().length > 0) {
+      params.append("title", debouncedTitleFilter.trim())
     }
     if (useDateRange) {
-      if (eventDateFrom) {
-        params.append("eventDateFrom", eventDateFrom)
+      // CRITICAL: Validate eventDateFrom is a string before appending
+      if (eventDateFrom && typeof eventDateFrom === 'string' && eventDateFrom.trim().length > 0) {
+        // CRITICAL: Validate date range - from date should not be after to date (defensive check)
+        if (eventDateTo && typeof eventDateTo === 'string' && eventDateTo.trim().length > 0) {
+          if (eventDateFrom.trim() > eventDateTo.trim()) {
+            logWarn("Invalid date range in filter: from date is after to date", { function: "baseEndpoint", eventDateFrom, eventDateTo })
+            // Skip invalid date range - don't append either date to prevent API errors
+            // User will see no results, which is better than a broken API call
+          } else {
+            params.append("eventDateFrom", eventDateFrom.trim())
+            params.append("eventDateTo", eventDateTo.trim())
+          }
+        } else {
+          // Only from date is set - append it
+          params.append("eventDateFrom", eventDateFrom.trim())
+        }
+      } else if (eventDateTo && typeof eventDateTo === 'string' && eventDateTo.trim().length > 0) {
+        // Only to date is set - append it
+        params.append("eventDateTo", eventDateTo.trim())
       }
-      if (eventDateTo) {
-        params.append("eventDateTo", eventDateTo)
-      }
-    } else if (eventDateFilter) {
-      params.append("eventDate", eventDateFilter)
+    } else if (eventDateFilter && typeof eventDateFilter === 'string' && eventDateFilter.trim().length > 0) {
+      // CRITICAL: Validate eventDateFilter is a string before appending
+      params.append("eventDate", eventDateFilter.trim())
     }
+    // CRITICAL: Validate sortBy is a string before appending
+    if (sortBy && typeof sortBy === 'string') {
     params.append("sortBy", sortBy)
+    } else {
+      // Fallback to default if sortBy is invalid
+      params.append("sortBy", "created_at")
+      logWarn("Invalid sortBy value, using default", { function: "baseEndpoint", sortBy })
+    }
+    // CRITICAL: Validate sortOrder is a string before appending
+    if (sortOrder && typeof sortOrder === 'string' && (sortOrder === 'ASC' || sortOrder === 'DESC')) {
     params.append("sortOrder", sortOrder)
+    } else {
+      // Fallback to default if sortOrder is invalid
+      params.append("sortOrder", "DESC")
+      logWarn("Invalid sortOrder value, using default", { function: "baseEndpoint", sortOrder })
+    }
     // CRITICAL: Validate params.entries() before Object.fromEntries to prevent runtime errors
     try {
       const paramsObject = Object.fromEntries(params)
@@ -917,11 +959,22 @@ export default function EventsPage() {
     enablePolling: true,
     pollInterval: 30000,
     transformResponse: (json) => {
-      return Array.isArray(json.data?.events) 
-        ? json.data.events 
-        : Array.isArray(json.events) 
-          ? json.events 
-          : []
+      // CRITICAL: Validate json is an object before accessing properties
+      if (!json || typeof json !== 'object' || Array.isArray(json)) {
+        logWarn("Invalid JSON response structure in transformResponse", { function: "transformResponse", json })
+        return []
+      }
+      // CRITICAL: Check for json.data.events first (preferred structure)
+      if (json.data && typeof json.data === 'object' && !Array.isArray(json.data) && Array.isArray(json.data.events)) {
+        return json.data.events
+      }
+      // CRITICAL: Fallback to json.events (alternative structure)
+      if (Array.isArray(json.events)) {
+        return json.events
+      }
+      // CRITICAL: Return empty array if neither structure is found
+      logWarn("No events array found in response", { function: "transformResponse", json })
+      return []
     },
     isDialogOpen: () => createDialogOpen || editDialogOpen,
   })
@@ -960,6 +1013,12 @@ export default function EventsPage() {
         const status = response.status || 0
         const statusText = response.statusText || 'Unknown'
         logError("Failed to fetch event details", { function: "fetchEventDetails", eventId, status, statusText })
+        return null
+      }
+      
+      // CRITICAL: Check for 204 No Content (no body to parse)
+      if (response.status === 204) {
+        logError("Received 204 No Content response (no body to parse)", { function: "fetchEventDetails", eventId })
         return null
       }
       
@@ -1044,13 +1103,19 @@ export default function EventsPage() {
     // CRITICAL: Validate abortControllersRef.current is an array before using push
     if (Array.isArray(abortControllersRef.current)) {
       abortControllersRef.current.push(abortController)
+    } else {
+      logError("abortControllersRef.current is not an array", { function: "fetchEventDetails", abortControllersRef: abortControllersRef.current })
+      abortControllersRef.current = [abortController]
     }
     
     // Cleanup function for abort controller
     const cleanupAbortController = () => {
-      abortControllersRef.current = abortControllersRef.current.filter(
-        c => c !== abortController
-      )
+      // CRITICAL: Validate abortControllersRef.current is an array before using filter
+      if (Array.isArray(abortControllersRef.current)) {
+        abortControllersRef.current = abortControllersRef.current.filter(
+          c => c !== abortController
+        )
+      }
     }
 
     // CRITICAL: Check if component is still mounted before state updates
@@ -1179,7 +1244,12 @@ export default function EventsPage() {
             logWarn("Invalid quality, using default 0.85", { function: "handleBulkUploadPhotos", quality })
             quality = 0.85
           }
-      const format = (process.env.NEXT_PUBLIC_IMAGE_FORMAT || 'webp') as 'webp' | 'jpeg' | 'png'
+      // CRITICAL: Validate image format from environment variable
+      const formatValue = process.env.NEXT_PUBLIC_IMAGE_FORMAT || 'webp'
+      const validFormats = ['webp', 'jpeg', 'png']
+      const format = (typeof formatValue === 'string' && validFormats.includes(formatValue.toLowerCase())) 
+        ? formatValue.toLowerCase() as 'webp' | 'jpeg' | 'png'
+        : 'webp' // Default to webp if invalid format
       
       const processedImages = await processMultipleImages(
             filesToUpload,
@@ -1371,6 +1441,13 @@ export default function EventsPage() {
               // CRITICAL: Validate batch is an array
               if (!Array.isArray(batch) || batch.length === 0) {
                 logError("Invalid batch at index", { function: "handleBulkUploadPhotos", batchIndex: i, batch })
+                // CRITICAL: Update batchStartIndex even when skipping invalid batches to maintain correct indexing
+                // If batch is an empty array, length is 0, so no change to batchStartIndex
+                // If batch is not an array, we can't determine its length, but we'll use 0 as fallback
+                // This ensures subsequent batches maintain correct indexing even if one batch is invalid
+                const batchLength = Array.isArray(batch) ? batch.length : 0
+                batchStartIndex += batchLength
+                logWarn("Invalid batch detected and skipped - batchStartIndex updated", { function: "handleBulkUploadPhotos", batchIndex: i, batchStartIndex, batchLength })
                 continue // Skip invalid batches
               }
           
@@ -1416,8 +1493,17 @@ export default function EventsPage() {
                 
                 if (Array.isArray(result.images)) {
                   result.images.forEach((image: any, batchIndex: number) => {
+                    // CRITICAL: Validate batchIndex is within reasonable bounds
+                    if (typeof batchIndex !== 'number' || batchIndex < 0 || batchIndex >= batch.length) {
+                      logError("Invalid batchIndex in forEach", { function: "handleBulkUploadPhotos", batchIndex, batchLength: batch.length })
+                      return // Skip invalid batchIndex
+                    }
                     if (image?.id && typeof image.id === 'string') {
                       const globalIndex = batchStartIndex + batchIndex
+                      // CRITICAL: Validate globalIndex is within reasonable bounds
+                      if (typeof globalIndex !== 'number' || globalIndex < 0 || globalIndex >= processedImages.length) {
+                        logWarn("GlobalIndex out of bounds", { function: "handleBulkUploadPhotos", globalIndex, processedImagesLength: processedImages.length, batchStartIndex, batchIndex })
+                      }
                       // CRITICAL: Validate processedIndexToItemIdMap is a Map before using get
                       const itemId = processedIndexToItemIdMap instanceof Map ? processedIndexToItemIdMap.get(globalIndex) : undefined
                   uploadedImageIds.push(image.id)
@@ -1430,6 +1516,10 @@ export default function EventsPage() {
                     } else {
                       // Image object exists but has no ID - mark as failed
                       const globalIndex = batchStartIndex + batchIndex
+                      // CRITICAL: Validate globalIndex is within reasonable bounds
+                      if (typeof globalIndex !== 'number' || globalIndex < 0 || globalIndex >= processedImages.length) {
+                        logWarn("GlobalIndex out of bounds for failed image", { function: "handleBulkUploadPhotos", globalIndex, processedImagesLength: processedImages.length, batchStartIndex, batchIndex })
+                      }
                       // CRITICAL: Validate processedIndexToItemIdMap is a Map before using get
                       const itemId = processedIndexToItemIdMap instanceof Map ? processedIndexToItemIdMap.get(globalIndex) : undefined
                       if (itemId) {
@@ -1502,6 +1592,8 @@ export default function EventsPage() {
                     failedPreviewItems.add(itemId)
                   }
                 }
+                // CRITICAL: Update batchStartIndex even when batch fails to maintain correct indexing for subsequent batches
+                batchStartIndex += batch.length
               }
             }
         }
@@ -1572,8 +1664,16 @@ export default function EventsPage() {
                 }
                 const status = response.status || 0
                 const statusText = response.statusText || 'Unknown'
-                const errorText = await responseClone.text().catch(() => `HTTP ${status} ${statusText}`)
-                const errorMessage = `Failed to add photo to event: ${errorText}`
+                // CRITICAL: Validate responseClone.text() result is a string
+                let errorText: string
+                try {
+                  const textResult = await responseClone.text()
+                  errorText = typeof textResult === 'string' && textResult.length > 0 ? textResult : `HTTP ${status} ${statusText}`
+                } catch (textError) {
+                  errorText = `HTTP ${status} ${statusText}`
+                }
+                // CRITICAL: Validate errorText is a string before using in error message
+                const errorMessage = `Failed to add photo to event: ${typeof errorText === 'string' ? errorText : `HTTP ${status} ${statusText}`}`
                 addErrors.push(errorMessage)
               } catch (cloneError) {
                 const status = response.status || 0
@@ -1772,6 +1872,12 @@ export default function EventsPage() {
           const updatePromises = validOrderedItems.map((item, index) => {
             // CRITICAL: Validate index is within reasonable bounds (defensive check)
             const safeIndex = typeof index === 'number' && index >= 0 && index < 100000 ? index : 0
+            // CRITICAL: Validate item.eventImageId is a valid string before using in API call
+            if (!item || !item.eventImageId || typeof item.eventImageId !== 'string' || item.eventImageId.trim().length === 0) {
+              logError("Invalid eventImageId in validOrderedItems", { function: "handleDragEnd", item, index })
+              // Return a rejected promise to handle in Promise.allSettled
+              return Promise.reject(new Error(`Invalid eventImageId at index ${index}`))
+            }
             return fetch(API_PATHS.adminEventImage(eventId, item.eventImageId), {
               method: "PATCH",
               headers: { "Content-Type": "application/json" },
@@ -1851,11 +1957,23 @@ export default function EventsPage() {
                   }
                   const status = response.status || 0
                   const statusText = response.statusText || 'Unknown'
-                  const errorText = await responseClone.text().catch(() => `HTTP ${status} ${statusText}`)
-                  failedDetails.push(`Photo ${i + 1}: ${errorText}`)
+                  // CRITICAL: Validate responseClone.text() result is a string
+                  let errorText: string
+                  try {
+                    const textResult = await responseClone.text()
+                    errorText = typeof textResult === 'string' && textResult.length > 0 ? textResult : `HTTP ${status} ${statusText}`
+                  } catch (textError) {
+                    errorText = `HTTP ${status} ${statusText}`
+                  }
+                  // CRITICAL: Validate errorText is a string and i is a valid number before using in error message
+                  const safeIndex = typeof i === 'number' && i >= 0 && i < 100000 ? i + 1 : 1
+                  const safeErrorText = typeof errorText === 'string' ? errorText : `HTTP ${status} ${statusText}`
+                  failedDetails.push(`Photo ${safeIndex}: ${safeErrorText}`)
                 } catch (cloneError) {
                   const status = response.status || 0
-                  failedDetails.push(`Photo ${i + 1}: HTTP ${status}`)
+                  // CRITICAL: Validate i is a valid number before using in error message (consistent with try block above)
+                  const safeIndex = typeof i === 'number' && i >= 0 && i < 100000 ? i + 1 : 1
+                  failedDetails.push(`Photo ${safeIndex}: HTTP ${status}`)
                 }
               }
             }
@@ -1916,7 +2034,7 @@ export default function EventsPage() {
       if (isMountedRef.current && editingEvent) {
         try {
           // Check if aborted before fetching
-          if (signal.aborted) {
+          if (signal && signal.aborted) {
             cleanupAbortController()
             return
           }
@@ -1924,6 +2042,18 @@ export default function EventsPage() {
           const updated = await fetchEventDetails(eventId, signal)
           if (updated && isMountedRef.current && editingEvent && eventId) {
             setEditingEvent(updated)
+            // CRITICAL: Update snapshot after photo upload to include newly uploaded photos
+            // This ensures order comparison works correctly if photos are reordered after upload
+            if (eventSnapshot && isMountedRef.current) {
+              try {
+                setEventSnapshot(JSON.parse(JSON.stringify(updated)))
+              } catch (copyError) {
+                logError("Failed to update snapshot after photo upload", { function: "handleBulkUploadPhotos" }, copyError instanceof Error ? copyError : new Error(String(copyError)))
+                if (isMountedRef.current) {
+                  setEventSnapshot({ ...updated })
+                }
+              }
+            }
             // CRITICAL: Validate eventId before calling replaceItem
             if (eventId && typeof eventId === 'string' && eventId.trim().length > 0) {
             replaceItem(eventId, updated)
@@ -2072,12 +2202,18 @@ export default function EventsPage() {
     // CRITICAL: Validate abortControllersRef.current is an array before using push
     if (Array.isArray(abortControllersRef.current)) {
     abortControllersRef.current.push(abortController)
+    } else {
+      logError("abortControllersRef.current is not an array", { function: "handleBulkUploadPhotos", abortControllersRef: abortControllersRef.current })
+      abortControllersRef.current = [abortController]
     }
     
     const cleanupAbortController = () => {
+      // CRITICAL: Validate abortControllersRef.current is an array before using filter
+      if (Array.isArray(abortControllersRef.current)) {
       abortControllersRef.current = abortControllersRef.current.filter(
         c => c !== abortController
       )
+      }
     }
 
     try {
@@ -2115,7 +2251,7 @@ export default function EventsPage() {
         setReorderingPhotos(false)
         return
       }
-      
+
       // CRITICAL: Validate array length is reasonable before mapping
       if (reorderedPhotos.length > 10000) {
         logError("Reordered photos array is too large", { function: "handleDragEnd", arrayLength: reorderedPhotos.length })
@@ -2167,7 +2303,7 @@ export default function EventsPage() {
       // CRITICAL: Only update local state - do NOT make API calls
       // Order changes will be applied when "Save Changes" is pressed
       // This allows users to reorder photos without instant database updates
-      if (isMountedRef.current) {
+        if (isMountedRef.current) {
         toast.info("Photo order changed. Click 'Save Changes' to apply the new order.")
       }
     } catch (error) {
@@ -2246,12 +2382,18 @@ export default function EventsPage() {
     // CRITICAL: Validate abortControllersRef.current is an array before using push
     if (Array.isArray(abortControllersRef.current)) {
       abortControllersRef.current.push(abortController)
+    } else {
+      logError("abortControllersRef.current is not an array", { function: "handleDragEnd", abortControllersRef: abortControllersRef.current })
+      abortControllersRef.current = [abortController]
     }
     
     const cleanupAbortController = () => {
-      abortControllersRef.current = abortControllersRef.current.filter(
-        c => c !== abortController
-      )
+      // CRITICAL: Validate abortControllersRef.current is an array before using filter
+      if (Array.isArray(abortControllersRef.current)) {
+        abortControllersRef.current = abortControllersRef.current.filter(
+          c => c !== abortController
+        )
+      }
     }
 
     setRemovingPhoto(eventImageId)
@@ -2269,7 +2411,7 @@ export default function EventsPage() {
       })
       
       // CRITICAL: Check if request was aborted
-      if (signal.aborted) {
+      if (signal && signal.aborted) {
         cleanupAbortController()
         setRemovingPhoto(null)
         return
@@ -2355,22 +2497,31 @@ export default function EventsPage() {
           }
           
           const cleanupAbortController = () => {
+            // CRITICAL: Validate abortControllersRef.current is an array before using filter
+            if (Array.isArray(abortControllersRef.current)) {
             abortControllersRef.current = abortControllersRef.current.filter(
               c => c !== abortController
             )
+            }
           }
           
           // Update display_order in database for all remaining photos
           try {
-            const updatePromises = reorderedPhotos.map((photo, index) =>
-              fetch(API_PATHS.adminEventImage(eventId, photo.id), {
+            const updatePromises = reorderedPhotos.map((photo, index) => {
+              // CRITICAL: Validate photo.id is a valid string before using in API call
+              if (!photo || !photo.id || typeof photo.id !== 'string' || photo.id.trim().length === 0) {
+                logError("Invalid photo.id in reorderedPhotos", { function: "handleRemovePhoto", photo, index })
+                // Return a rejected promise to handle in Promise.allSettled
+                return Promise.reject(new Error(`Invalid photo.id at index ${index}`))
+              }
+              return fetch(API_PATHS.adminEventImage(eventId, photo.id), {
                 method: "PATCH",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({ display_order: index }),
                 signal, // Add abort signal for cancellation
               }).then(async (res) => {
                 // CRITICAL: Check if request was aborted
-                if (signal.aborted) {
+                if (signal && signal.aborted) {
                   throw new Error("Request aborted")
                 }
                 if (!res.ok) {
@@ -2379,7 +2530,7 @@ export default function EventsPage() {
                 }
                 return res
               })
-            )
+            })
             
             // CRITICAL: Use Promise.allSettled instead of Promise.all for better error handling
             const results = await Promise.allSettled(updatePromises)
@@ -2395,7 +2546,7 @@ export default function EventsPage() {
             const failed = results.filter(r => r && r.status === 'rejected').length
             
             // CRITICAL: Check if request was aborted
-            if (signal.aborted) {
+            if (signal && signal.aborted) {
               cleanupAbortController()
               return
             }
@@ -2422,12 +2573,14 @@ export default function EventsPage() {
             }
             
             // CRITICAL: Update snapshot to reflect the new state after removal
-            if (eventSnapshot) {
+            if (eventSnapshot && isMountedRef.current) {
               try {
                 setEventSnapshot(JSON.parse(JSON.stringify(updatedEvent)))
               } catch (copyError) {
                 logError("Failed to update snapshot", { function: "handleRemovePhoto" }, copyError instanceof Error ? copyError : new Error(String(copyError)))
+                if (isMountedRef.current) {
                 setEventSnapshot({ ...updatedEvent })
+                }
               }
             }
             
@@ -2571,7 +2724,7 @@ export default function EventsPage() {
     
     if (selectAll) {
       const allPhotoIds = new Set(editingEvent.in_event_photos
-        .filter(p => p?.id && typeof p.id === 'string' && !pendingDeletions.has(p.id))
+        .filter(p => p?.id && typeof p.id === 'string' && (pendingDeletions instanceof Set ? !pendingDeletions.has(p.id) : true))
         .map(p => p.id))
       setSelectedPhotoIds(allPhotoIds)
     } else {
@@ -2598,7 +2751,8 @@ export default function EventsPage() {
     }
     
     // Capture selected IDs immediately to avoid stale closure issues
-    const idsToDelete = Array.from(selectedPhotoIds)
+    // CRITICAL: Validate selectedPhotoIds is a Set before using Array.from
+    const idsToDelete = selectedPhotoIds instanceof Set ? Array.from(selectedPhotoIds) : []
     
     if (idsToDelete.length === 0) {
       if (isMountedRef.current) {
@@ -2631,7 +2785,9 @@ export default function EventsPage() {
     // Warn if some IDs were invalid
     if (validIdsToDelete.length < idsToDelete.length) {
       const invalidCount = idsToDelete.length - validIdsToDelete.length
+      if (isMountedRef.current) {
       toast.warning(`${invalidCount} invalid photo${invalidCount !== 1 ? 's' : ''} skipped`)
+      }
     }
 
     // Add selected photos to pending deletions
@@ -2709,7 +2865,7 @@ export default function EventsPage() {
         // CRITICAL: Validate in_event_photos is an array before using filter
         if (currentEditingEvent && Array.isArray(currentEditingEvent.in_event_photos)) {
           const availablePhotos = currentEditingEvent.in_event_photos.filter(
-            p => p?.id && !currentPendingDeletions.has(p.id)
+            p => p?.id && (currentPendingDeletions instanceof Set ? !currentPendingDeletions.has(p.id) : true)
           )
           const allSelected = currentSelectedPhotoIds.size === availablePhotos.length && availablePhotos.length > 0
           handleSelectAll(!allSelected)
@@ -2750,7 +2906,10 @@ export default function EventsPage() {
   }, [editDialogOpen, editingEvent, selectedPhotoIds instanceof Set ? selectedPhotoIds.size : 0, pendingDeletions instanceof Set ? pendingDeletions.size : 0, saving, reorderingPhotos, handleSelectAll, handleMarkForDeletion])
 
   // Fetch images for selection
-  const fetchImages = async (signal?: AbortSignal) => {
+  // CRITICAL: Wrap fetchImages in useCallback to prevent stale closure issues
+  // Since fetchImages only uses isMountedRef (which is stable) and setImages (which is stable),
+  // we can safely use an empty dependency array
+  const fetchImages = useCallback(async (signal?: AbortSignal) => {
     try {
       const response = await fetch(buildApiUrl(API_PATHS.adminImages, { limit: 1000 }), {
         signal, // Support abort signal for cancellation
@@ -2764,6 +2923,15 @@ export default function EventsPage() {
       // Simple fix: Check response is OK before parsing
       if (!response.ok) {
         logError("Failed to fetch images", { function: "fetchImages", status: response.status, statusText: response.statusText })
+        if (isMountedRef.current) {
+          setImages([])
+        }
+        return
+      }
+      
+      // CRITICAL: Check for 204 No Content (no body to parse)
+      if (response.status === 204) {
+        logError("Received 204 No Content response (no body to parse)", { function: "fetchImages" })
         if (isMountedRef.current) {
           setImages([])
         }
@@ -2810,11 +2978,12 @@ export default function EventsPage() {
       // Set to empty array on error to prevent undefined state
       if (isMountedRef.current) {
       setImages([])
-      }
     }
   }
+  }, []) // fetchImages only uses isMountedRef and setImages, both are stable
 
-  // Simple fix: Wrap fetchImages in useCallback to avoid stale closure
+  // CRITICAL: Wrap fetchImagesCallback in useCallback to avoid stale closure
+  // fetchImages is now also memoized, so we can safely reference it
   const fetchImagesCallback = useCallback(() => {
     // CRITICAL: Create abort controller for request cancellation
     const abortController = new AbortController()
@@ -2822,18 +2991,24 @@ export default function EventsPage() {
     // CRITICAL: Validate abortControllersRef.current is an array before using push
     if (Array.isArray(abortControllersRef.current)) {
       abortControllersRef.current.push(abortController)
+    } else {
+      logError("abortControllersRef.current is not an array", { function: "fetchImagesCallback", abortControllersRef: abortControllersRef.current })
+      abortControllersRef.current = [abortController]
     }
     
     const cleanupAbortController = () => {
-      abortControllersRef.current = abortControllersRef.current.filter(
-        c => c !== abortController
-      )
+      // CRITICAL: Validate abortControllersRef.current is an array before using filter
+      if (Array.isArray(abortControllersRef.current)) {
+        abortControllersRef.current = abortControllersRef.current.filter(
+          c => c !== abortController
+        )
+      }
     }
     
     fetchImages(signal).finally(() => {
       cleanupAbortController()
     })
-  }, []) // fetchImages doesn't depend on any props/state, so empty deps is fine
+  }, [fetchImages]) // Include fetchImages in dependency array since it's now memoized
 
   useEffect(() => {
     if (session) {
@@ -2848,18 +3023,32 @@ export default function EventsPage() {
     e.preventDefault()
     }
     
+    // CRITICAL: Prevent double submission
+    if (saving) {
+      if (isMountedRef.current) {
+        toast.info("Create operation already in progress. Please wait.")
+      }
+      return
+    }
+    
     // CRITICAL: Create abort controller for request cancellation
     const abortController = new AbortController()
     const signal = abortController.signal
     // CRITICAL: Validate abortControllersRef.current is an array before using push
     if (Array.isArray(abortControllersRef.current)) {
       abortControllersRef.current.push(abortController)
+    } else {
+      logError("abortControllersRef.current is not an array", { function: "fetchImagesCallback", abortControllersRef: abortControllersRef.current })
+      abortControllersRef.current = [abortController]
     }
     
     const cleanupAbortController = () => {
-      abortControllersRef.current = abortControllersRef.current.filter(
-        c => c !== abortController
-      )
+      // CRITICAL: Validate abortControllersRef.current is an array before using filter
+      if (Array.isArray(abortControllersRef.current)) {
+        abortControllersRef.current = abortControllersRef.current.filter(
+          c => c !== abortController
+        )
+      }
     }
     
     setSaving(true)
@@ -2912,7 +3101,7 @@ export default function EventsPage() {
         })
         
         // CRITICAL: Check if request was aborted
-        if (signal.aborted) {
+        if (signal && signal.aborted) {
           cleanupAbortController()
           setSaving(false)
           return
@@ -2922,6 +3111,11 @@ export default function EventsPage() {
         if (!uploadResponse.ok) {
           const errorText = await uploadResponse.text().catch(() => `HTTP ${uploadResponse.status}`)
           throw new Error(`Failed to upload poster: ${errorText}`)
+        }
+
+        // CRITICAL: Check for 204 No Content (no body to parse)
+        if (uploadResponse.status === 204) {
+          throw new Error("Invalid response from server (no content)")
         }
 
         // Simple fix: Add error handling for JSON parsing
@@ -2935,7 +3129,15 @@ export default function EventsPage() {
         if (uploadJson.success && uploadJson.data?.image?.id) {
           imageId = uploadJson.data.image.id
         } else {
-          const errorMessage = uploadJson.error?.message || uploadJson.error || "Failed to upload poster image"
+          // CRITICAL: Validate uploadJson.error structure before accessing properties
+          let errorMessage = "Failed to upload poster image"
+          if (uploadJson.error) {
+            if (typeof uploadJson.error === 'object' && uploadJson.error !== null && 'message' in uploadJson.error && typeof uploadJson.error.message === 'string') {
+              errorMessage = uploadJson.error.message
+            } else if (typeof uploadJson.error === 'string') {
+              errorMessage = uploadJson.error
+            }
+          }
           if (isMountedRef.current) {
           toast.error(errorMessage)
           }
@@ -3089,7 +3291,7 @@ export default function EventsPage() {
       })
       
       // CRITICAL: Check if request was aborted
-      if (signal.aborted) {
+      if (signal && signal.aborted) {
         cleanupAbortController()
         setSaving(false)
         return
@@ -3139,6 +3341,12 @@ export default function EventsPage() {
           }
         }
       } else {
+        // CRITICAL: Rollback optimistic update if creation failed
+        // Note: Since we haven't added the item yet (we only add on success), no rollback needed
+        // But we should refetch to ensure UI is in sync with server
+        if (isMountedRef.current) {
+          fetchEvents()
+        }
         // CRITICAL: Validate json.error structure before accessing properties
         let errorMessage = "Failed to create event"
         if (json.error) {
@@ -3163,11 +3371,16 @@ export default function EventsPage() {
         return
       }
       
+      // CRITICAL: Refetch events to ensure UI is in sync with server after error
+      if (isMountedRef.current) {
+        fetchEvents()
+      }
+      
       // Simple fix: Check if component is mounted before showing toast
       if (isMountedRef.current) {
       toast.error("Failed to create event")
       }
-      logError("Error in handleRemovePhoto", { function: "handleRemovePhoto" }, error instanceof Error ? error : new Error(String(error)))
+      logError("Error in handleCreate", { function: "handleCreate" }, error instanceof Error ? error : new Error(String(error)))
     } finally {
       cleanupAbortController()
       if (isMountedRef.current) {
@@ -3232,14 +3445,18 @@ export default function EventsPage() {
     // Fallback 2: Refetch from server (most reliable)
     try {
       const latest = await fetchEventDetails(eventId)
-      if (latest) {
+      if (latest && isMountedRef.current) {
         setEditingEvent(latest)
         setPendingDeletions(new Set())
         setSelectedPhotoIds(new Set())
         setEditPosterFile(null)
         setEditPosterPreview(null)
         // Force form remount to restore form field values
-        setFormKey(prev => prev + 1)
+        setFormKey(prev => {
+          // CRITICAL: Validate prev is a number before arithmetic
+          const safePrev = typeof prev === 'number' && !isNaN(prev) ? prev : 0
+          return safePrev + 1
+        })
         // CRITICAL: Validate eventId before calling replaceItem
         if (eventId && typeof eventId === 'string' && eventId.trim().length > 0) {
           replaceItem(eventId, latest)
@@ -3275,17 +3492,23 @@ export default function EventsPage() {
   const handleUpdate = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault()
     
-    // CRITICAL: Capture editingEvent at the start to avoid stale closure issues
+    // CRITICAL: Capture editingEvent and related state at the start to avoid stale closure issues
     // But also validate it exists and hasn't changed
     const currentEditingEvent = editingEvent
+    const currentPendingDeletions = pendingDeletions instanceof Set ? new Set(pendingDeletions) : new Set<string>()
+    const currentEventSnapshot = eventSnapshot
     if (!currentEditingEvent) {
+      if (isMountedRef.current) {
       toast.error("No event selected for editing")
+      }
       return
     }
 
     // CRITICAL: Prevent double submission
     if (saving) {
+      if (isMountedRef.current) {
       toast.info("Save operation already in progress. Please wait.")
+      }
       return
     }
 
@@ -3306,9 +3529,12 @@ export default function EventsPage() {
     
     // Cleanup function to remove from ref when done
     const cleanupAbortController = () => {
+      // CRITICAL: Validate abortControllersRef.current is an array before using filter
+      if (Array.isArray(abortControllersRef.current)) {
       abortControllersRef.current = abortControllersRef.current.filter(
         c => c !== abortController
       )
+      }
     }
     
     // CRITICAL: Extract form data immediately to capture current state
@@ -3326,11 +3552,18 @@ export default function EventsPage() {
     const updates: any = {}
 
     // CRITICAL: Extract form values - handle null/undefined properly
-    const title = formData.get("title") as string | null
-    const description = formData.get("description") as string | null
-    const eventDate = formData.get("event_date") as string | null
-    const startDate = formData.get("start_date") as string | null
-    const endDate = formData.get("end_date") as string | null
+    // CRITICAL: Validate FormData.get() results before type assertion
+    const titleFormValue = formData.get("title")
+    const descriptionFormValue = formData.get("description")
+    const eventDateFormValue = formData.get("event_date")
+    const startDateFormValue = formData.get("start_date")
+    const endDateFormValue = formData.get("end_date")
+    
+    const title = (titleFormValue && typeof titleFormValue === 'string') ? titleFormValue : null
+    const description = (descriptionFormValue && typeof descriptionFormValue === 'string') ? descriptionFormValue : null
+    const eventDate = (eventDateFormValue && typeof eventDateFormValue === 'string') ? eventDateFormValue : null
+    const startDate = (startDateFormValue && typeof startDateFormValue === 'string') ? startDateFormValue : null
+    const endDate = (endDateFormValue && typeof endDateFormValue === 'string') ? endDateFormValue : null
 
     // CRITICAL: Validate title - must not be empty
     // Handle null/undefined title from form
@@ -3352,7 +3585,9 @@ export default function EventsPage() {
       // CRITICAL: Validate title length (prevent database errors)
       if (trimmedTitle.length > 500) {
         cleanupAbortController()
+        if (isMountedRef.current) {
         toast.error("Event title is too long (maximum 500 characters)")
+        }
         setSaving(false)
         return
       }
@@ -3365,7 +3600,7 @@ export default function EventsPage() {
     // CRITICAL: Validate descriptionValue is a string before comparison
     const descriptionString = (descriptionValue && typeof descriptionValue === 'string') ? descriptionValue : ""
     if (descriptionString !== (currentEditingEvent.description || "")) {
-      if (descriptionValue && descriptionValue.length > 10000) {
+      if (descriptionString && typeof descriptionString === 'string' && descriptionString.length > 10000) {
         cleanupAbortController()
         toast.error("Event description is too long (maximum 10,000 characters)")
         setSaving(false)
@@ -3403,7 +3638,7 @@ export default function EventsPage() {
         })
         
         // CRITICAL: Check if request was aborted
-        if (signal.aborted) {
+        if (signal && signal.aborted) {
           cleanupAbortController()
           setSaving(false)
           return
@@ -3416,6 +3651,15 @@ export default function EventsPage() {
           const status = uploadResponse.status || 0
           const statusText = uploadResponse.statusText || 'Unknown'
           toast.error(`Failed to upload poster image: ${status} ${statusText}`)
+          setSaving(false)
+          return
+        }
+
+        // CRITICAL: Check for 204 No Content (no body to parse)
+        if (uploadResponse.status === 204) {
+          cleanupAbortController()
+          logError("Received 204 No Content response (no body to parse)", { function: "handleUpdate" })
+          toast.error("Invalid response from server (no content)")
           setSaving(false)
           return
         }
@@ -3506,7 +3750,9 @@ export default function EventsPage() {
       } catch (error) {
         cleanupAbortController()
         const errorMessage = error instanceof Error ? error.message : "Invalid event date format"
+        if (isMountedRef.current) {
         toast.error(errorMessage)
+        }
         setSaving(false)
         return
       }
@@ -3538,7 +3784,9 @@ export default function EventsPage() {
       } catch (error) {
         cleanupAbortController()
         const errorMessage = error instanceof Error ? error.message : "Invalid start date format"
+        if (isMountedRef.current) {
         toast.error(errorMessage)
+        }
         setSaving(false)
         return
       }
@@ -3573,7 +3821,9 @@ export default function EventsPage() {
       } catch (error) {
         cleanupAbortController()
         const errorMessage = error instanceof Error ? error.message : "Invalid end date format"
+        if (isMountedRef.current) {
         toast.error(errorMessage)
+        }
         setSaving(false)
         return
       }
@@ -3611,7 +3861,8 @@ export default function EventsPage() {
         // This prevents errors if photos were deleted externally
         // Use currentEditingEvent to avoid stale closure
         // CRITICAL: Capture pendingDeletions at this moment to avoid race conditions
-        const currentPendingDeletionsArray = Array.from(pendingDeletions)
+        // CRITICAL: Validate pendingDeletions is a Set before using Array.from
+        const currentPendingDeletionsArray = pendingDeletions instanceof Set ? Array.from(pendingDeletions) : []
         const validPendingDeletions = currentPendingDeletionsArray.filter(id => {
           // CRITICAL: Validate in_event_photos exists and is an array
           if (!Array.isArray(currentEditingEvent.in_event_photos)) {
@@ -3706,7 +3957,7 @@ export default function EventsPage() {
               })
 
               // CRITICAL: Check if request was aborted
-              if (signal.aborted) {
+              if (signal && signal.aborted) {
                 cleanupAbortController()
                 setSaving(false)
                 return
@@ -3725,7 +3976,32 @@ export default function EventsPage() {
                 }
                 deletionQueued = false
               } else {
-                // CRITICAL: Handle JSON parsing errors (only if response is OK)
+                // CRITICAL: Check for 204 No Content (no body to parse)
+                if (deleteResponse.status === 204) {
+                  // 204 No Content is a valid success response for DELETE operations
+                  logInfo("Photo deletion successful (204 No Content)", { function: "handleUpdate" })
+                  deletionQueued = true
+                  deletionSucceeded = true
+                  // Update UI optimistically for 204 response
+                  if (isMountedRef.current && currentEditingEvent && Array.isArray(currentEditingEvent.in_event_photos)) {
+                    const remainingPhotos = currentEditingEvent.in_event_photos.filter(
+                      p => p && !validPendingDeletions.includes(p.id)
+                    )
+                    setEditingEvent({
+                      ...currentEditingEvent,
+                      in_event_photos: remainingPhotos,
+                    })
+                  }
+                  // Clear pending deletions after successful deletion
+                  if (isMountedRef.current) {
+                    setPendingDeletions(new Set())
+                    setSelectedPhotoIds(new Set()) // Also clear selection
+                  }
+                  if (isMountedRef.current) {
+                    toast.success(`Successfully deleted ${validPendingDeletions.length} photo${validPendingDeletions.length !== 1 ? 's' : ''}`)
+                  }
+                } else {
+                  // CRITICAL: Handle JSON parsing errors (only if response is OK and not 204)
               let deleteJson: any
               try {
                 deleteJson = await deleteResponse.json()
@@ -3734,7 +4010,7 @@ export default function EventsPage() {
                 if (!isMountedRef.current) {
                   setSaving(false)
                   return
-                  }
+                }
                   logError("Failed to parse deletion response JSON", { function: "handleUpdate" }, parseError instanceof Error ? parseError : new Error(String(parseError)))
                   if (isMountedRef.current) {
                 toast.error("Invalid response from server. Please try again.")
@@ -3858,7 +4134,8 @@ export default function EventsPage() {
                   }
                 deletionQueued = false
                 // Don't fail the entire save if deletion fails - continue with other updates
-                }
+              }
+              }
               }
               }
             }
@@ -3868,7 +4145,7 @@ export default function EventsPage() {
         cleanupAbortController()
         
         // CRITICAL: Check if error is from abort (request cancelled)
-        if (error instanceof Error && error.name === 'AbortError') {
+        if (error instanceof Error && (error.name === 'AbortError' || (typeof DOMException !== "undefined" && error instanceof DOMException && error.code === DOMException.ABORT_ERR))) {
           // Request was aborted - don't show error, just return
           if (isMountedRef.current) {
             setSaving(false)
@@ -3895,20 +4172,31 @@ export default function EventsPage() {
     // CRITICAL: Validate pendingDeletions is a Set before using .size
     const hasDeletions = hadDeletionsAtStart && (deletionQueued || (pendingDeletions instanceof Set && pendingDeletions.size > 0))
     // Check for photo order changes by comparing current order with snapshot
+    // CRITICAL: Use captured state values to ensure consistency throughout the function
     let hasOrderChanges = false
-    if (eventSnapshot && editingEvent && Array.isArray(editingEvent.in_event_photos) && Array.isArray(eventSnapshot.in_event_photos)) {
+    if (currentEventSnapshot && currentEditingEvent && Array.isArray(currentEditingEvent.in_event_photos) && Array.isArray(currentEventSnapshot.in_event_photos)) {
       // Filter out pending deletions from both arrays for comparison
-      const currentPhotos = editingEvent.in_event_photos.filter(
-        p => p && p.id && (pendingDeletions instanceof Set ? !pendingDeletions.has(p.id) : true)
+      // Use captured pendingDeletions to ensure consistency
+      const currentPhotos = currentEditingEvent.in_event_photos.filter(
+        p => p && p.id && (currentPendingDeletions instanceof Set ? !currentPendingDeletions.has(p.id) : true)
       )
-      const snapshotPhotos = eventSnapshot.in_event_photos.filter(
-        p => p && p.id && (pendingDeletions instanceof Set ? !pendingDeletions.has(p.id) : true)
+      const snapshotPhotos = currentEventSnapshot.in_event_photos.filter(
+        p => p && p.id && (currentPendingDeletions instanceof Set ? !currentPendingDeletions.has(p.id) : true)
       )
       // Check if order has changed by comparing photo IDs in sequence
+      // CRITICAL: Validate photo IDs are strings before comparison
       hasOrderChanges = currentPhotos.length !== snapshotPhotos.length ||
         currentPhotos.some((photo, index) => {
+          // CRITICAL: Validate photo and photo.id exist and are strings
+          if (!photo || !photo.id || typeof photo.id !== 'string' || photo.id.trim().length === 0) {
+            return true // Invalid photo means order changed
+          }
           const snapshotPhoto = snapshotPhotos[index]
-          return !snapshotPhoto || photo.id !== snapshotPhoto.id
+          // CRITICAL: Validate snapshotPhoto and snapshotPhoto.id exist and are strings
+          if (!snapshotPhoto || !snapshotPhoto.id || typeof snapshotPhoto.id !== 'string' || snapshotPhoto.id.trim().length === 0) {
+            return true // Missing snapshot photo means order changed
+          }
+          return photo.id !== snapshotPhoto.id
         })
     }
     const hasAnyChanges = hasUpdates || hasDeletions || hasOrderChanges
@@ -3927,7 +4215,9 @@ export default function EventsPage() {
       // It might have been deleted externally
       if (!editingEvent || editingEvent.id !== currentEditingEvent.id) {
         cleanupAbortController()
+        if (isMountedRef.current) {
         toast.error("Event was modified or deleted. Please refresh and try again.")
+        }
         await restoreEventState(currentEditingEvent.id)
         setSaving(false)
         return
@@ -3956,6 +4246,31 @@ export default function EventsPage() {
           signal, // Add abort signal for cancellation
         })
 
+        // CRITICAL: Check if response is OK before parsing JSON
+        if (!response.ok) {
+          cleanupAbortController()
+          if (!isMountedRef.current) {
+            setSaving(false)
+            return
+          }
+          const status = response.status || 0
+          const statusText = response.statusText || 'Unknown'
+          let errorText: string
+          try {
+            const textResult = await response.text()
+            errorText = typeof textResult === 'string' && textResult.length > 0 ? textResult : `HTTP ${status} ${statusText}`
+          } catch (textError) {
+            errorText = `HTTP ${status} ${statusText}`
+          }
+          updateSuccess = false
+          if (isMountedRef.current) {
+            toast.error(`Failed to update event: ${errorText}`)
+          }
+          logError("Failed to update event", { function: "handleUpdate", status, statusText, errorText })
+          setSaving(false)
+          return
+        }
+
         // CRITICAL: Handle JSON parsing errors
         let json: any
         try {
@@ -3977,8 +4292,9 @@ export default function EventsPage() {
         // CRITICAL: Validate response.status is a number before comparison
         const responseStatus = typeof response.status === 'number' ? response.status : 0
         // CRITICAL: Validate json.error structure before accessing properties
-        const hasConflictCode = json.error && typeof json.error === 'object' && json.error !== null && 
-                                'code' in json.error && json.error.code === 'CONFLICT'
+        // CRITICAL: Validate json.error structure before accessing properties
+        const hasConflictCode = json && typeof json === 'object' && json.error && typeof json.error === 'object' && json.error !== null && 
+                                'code' in json.error && typeof json.error.code === 'string' && json.error.code === 'CONFLICT'
         if (responseStatus === 409 || hasConflictCode) {
           updateSuccess = false
           // CRITICAL: Validate json.error.message structure
@@ -3991,22 +4307,55 @@ export default function EventsPage() {
           toast.error(errorMessage)
           }
           // Refresh event data to get latest state
+          // CRITICAL: Create a new abort controller for refresh to avoid race condition
+          // The original signal might be aborted, which would cause the refresh to fail
           if (isMountedRef.current) {
-            const latest = await fetchEventDetails(currentEditingEvent.id, signal)
+            const refreshAbortController = new AbortController()
+            const refreshSignal = refreshAbortController.signal
+            // CRITICAL: Validate abortControllersRef.current is an array before using push
+            if (Array.isArray(abortControllersRef.current)) {
+              abortControllersRef.current.push(refreshAbortController)
+            } else {
+              logError("abortControllersRef.current is not an array", { function: "handleUpdate", abortControllersRef: abortControllersRef.current })
+              abortControllersRef.current = [refreshAbortController]
+            }
+            try {
+              const latest = await fetchEventDetails(currentEditingEvent.id, refreshSignal)
+              // Cleanup refresh abort controller
+              if (Array.isArray(abortControllersRef.current)) {
+                abortControllersRef.current = abortControllersRef.current.filter(c => c !== refreshAbortController)
+              }
             if (latest && isMountedRef.current) {
               setEditingEvent(latest)
               // CRITICAL: Use try-catch for deep copy
+                if (isMountedRef.current) {
               try {
                 setEventSnapshot(JSON.parse(JSON.stringify(latest)))
               } catch (copyError) {
-                logError("Failed to create snapshot", { function: "handleUpdate" }, copyError instanceof Error ? copyError : new Error(String(copyError)))
+                    logError("Failed to create snapshot", { function: "handleUpdate" }, copyError instanceof Error ? copyError : new Error(String(copyError)))
+                    if (isMountedRef.current) {
                 setEventSnapshot({ ...latest })
               }
-              if (currentEditingEvent?.id && typeof currentEditingEvent.id === 'string' && currentEditingEvent.id.trim().length > 0) {
+                  }
+                }
+                if (currentEditingEvent?.id && typeof currentEditingEvent.id === 'string' && currentEditingEvent.id.trim().length > 0) {
               replaceItem(currentEditingEvent.id, latest)
-              }
-              if (isMountedRef.current) {
+                }
+                if (isMountedRef.current) {
               toast.info("Event data has been refreshed with the latest changes.")
+                }
+              }
+            } catch (refreshError) {
+              // Cleanup refresh abort controller
+              if (Array.isArray(abortControllersRef.current)) {
+                abortControllersRef.current = abortControllersRef.current.filter(c => c !== refreshAbortController)
+              }
+              // Don't treat AbortError as a real error
+              if (refreshError instanceof Error && refreshError.name !== 'AbortError') {
+                logError("Failed to refresh event details after conflict", { function: "handleUpdate", eventId: currentEditingEvent.id }, refreshError)
+                if (isMountedRef.current) {
+                  toast.error("Failed to refresh event data. Please refresh the page manually.")
+                }
               }
             }
           }
@@ -4083,24 +4432,26 @@ export default function EventsPage() {
                       in_event_photos: Array.isArray(updatedEvent.in_event_photos) ? updatedEvent.in_event_photos : currentEditingEvent.in_event_photos || []
                     })
                   }
-                } catch (copyError) {
+              } catch (copyError) {
                   logError("Failed to update snapshot", { function: "handleUpdate" }, copyError instanceof Error ? copyError : new Error(String(copyError)))
                   // Fallback: use validated spread with only known Event properties
-                  const safeEvent: Event = {
-                    id: updatedEvent.id || currentEditingEvent.id,
-                    title: updatedEvent.title || currentEditingEvent.title,
-                    description: updatedEvent.description ?? currentEditingEvent.description ?? null,
-                    image_id: updatedEvent.image_id ?? currentEditingEvent.image_id ?? null,
-                    event_date: updatedEvent.event_date ?? currentEditingEvent.event_date ?? null,
-                    start_date: updatedEvent.start_date ?? currentEditingEvent.start_date ?? null,
-                    end_date: updatedEvent.end_date ?? currentEditingEvent.end_date ?? null,
-                    created_at: updatedEvent.created_at || currentEditingEvent.created_at,
-                    updated_at: updatedEvent.updated_at || currentEditingEvent.updated_at,
-                    image_url: updatedEvent.image_url ?? currentEditingEvent.image_url ?? null,
-                    image_title: updatedEvent.image_title ?? currentEditingEvent.image_title ?? null,
-                    in_event_photos: Array.isArray(updatedEvent.in_event_photos) ? updatedEvent.in_event_photos : currentEditingEvent.in_event_photos || []
+                  if (isMountedRef.current) {
+                    const safeEvent: Event = {
+                      id: updatedEvent.id || currentEditingEvent.id,
+                      title: updatedEvent.title || currentEditingEvent.title,
+                      description: updatedEvent.description ?? currentEditingEvent.description ?? null,
+                      image_id: updatedEvent.image_id ?? currentEditingEvent.image_id ?? null,
+                      event_date: updatedEvent.event_date ?? currentEditingEvent.event_date ?? null,
+                      start_date: updatedEvent.start_date ?? currentEditingEvent.start_date ?? null,
+                      end_date: updatedEvent.end_date ?? currentEditingEvent.end_date ?? null,
+                      created_at: updatedEvent.created_at || currentEditingEvent.created_at,
+                      updated_at: updatedEvent.updated_at || currentEditingEvent.updated_at,
+                      image_url: updatedEvent.image_url ?? currentEditingEvent.image_url ?? null,
+                      image_title: updatedEvent.image_title ?? currentEditingEvent.image_title ?? null,
+                      in_event_photos: Array.isArray(updatedEvent.in_event_photos) ? updatedEvent.in_event_photos : currentEditingEvent.in_event_photos || []
+                    }
+                    setEventSnapshot(safeEvent)
                   }
-                  setEventSnapshot(safeEvent)
                 }
               }
             }
@@ -4140,25 +4491,49 @@ export default function EventsPage() {
       }
 
       // Update display_order for in-event photos if order has changed
-      // Compare current order with snapshot to detect changes
+      // Use the same hasOrderChanges variable calculated earlier to ensure consistency
+      // CRITICAL: Use captured state values (currentEditingEvent, currentEventSnapshot, currentPendingDeletions)
+      // to ensure we're working with the same state throughout the function
       let orderUpdateSuccess = true
-      if (eventSnapshot && Array.isArray(editingEvent.in_event_photos) && Array.isArray(eventSnapshot.in_event_photos)) {
+      if (hasOrderChanges && currentEventSnapshot && Array.isArray(currentEditingEvent.in_event_photos) && Array.isArray(currentEventSnapshot.in_event_photos)) {
         // Filter out pending deletions from both arrays for comparison
-        const currentPhotos = editingEvent.in_event_photos.filter(
-          p => p && p.id && (pendingDeletions instanceof Set ? !pendingDeletions.has(p.id) : true)
+        // Use captured pendingDeletions to ensure consistency
+        const currentPhotos = currentEditingEvent.in_event_photos.filter(
+          p => p && p.id && (currentPendingDeletions instanceof Set ? !currentPendingDeletions.has(p.id) : true)
         )
-        const snapshotPhotos = eventSnapshot.in_event_photos.filter(
-          p => p && p.id && (pendingDeletions instanceof Set ? !pendingDeletions.has(p.id) : true)
+        const snapshotPhotos = currentEventSnapshot.in_event_photos.filter(
+          p => p && p.id && (currentPendingDeletions instanceof Set ? !currentPendingDeletions.has(p.id) : true)
         )
         
-        // Check if order has changed by comparing photo IDs in sequence
+        // Double-check order has changed (defensive check in case state changed)
+        // This ensures we only update if order actually changed
+        // CRITICAL: Validate photo IDs are strings before comparison
         const orderChanged = currentPhotos.length !== snapshotPhotos.length ||
           currentPhotos.some((photo, index) => {
+            // CRITICAL: Validate photo and photo.id exist and are strings
+            if (!photo || !photo.id || typeof photo.id !== 'string' || photo.id.trim().length === 0) {
+              return true // Invalid photo means order changed
+            }
             const snapshotPhoto = snapshotPhotos[index]
-            return !snapshotPhoto || photo.id !== snapshotPhoto.id
+            // CRITICAL: Validate snapshotPhoto and snapshotPhoto.id exist and are strings
+            if (!snapshotPhoto || !snapshotPhoto.id || typeof snapshotPhoto.id !== 'string' || snapshotPhoto.id.trim().length === 0) {
+              return true // Missing snapshot photo means order changed
+            }
+            return photo.id !== snapshotPhoto.id
           })
         
-        if (orderChanged && currentPhotos.length > 0) {
+        // CRITICAL: Only proceed if order actually changed (double-check passed)
+        // If orderChanged is false, it means state changed between checks and order is now the same
+        // In this case, we don't need to update, but we should still mark as success since no update is needed
+        if (!orderChanged) {
+          // Order didn't actually change (state changed between checks) - no update needed
+          logInfo("Order comparison shows no change - skipping order update", { function: "handleUpdate" })
+          orderUpdateSuccess = true // No update needed = success
+        } else if (currentPhotos.length === 0) {
+          // No photos to update order for (all photos were deleted)
+          logInfo("No photos remaining to update order - skipping order update", { function: "handleUpdate" })
+          orderUpdateSuccess = true // No update needed = success
+        } else if (currentPhotos.length > 0) {
           try {
             // CRITICAL: Check if component is still mounted before making requests
             if (!isMountedRef.current) {
@@ -4183,6 +4558,12 @@ export default function EventsPage() {
               const updatePromises = validPhotos.map((photo, index) => {
                 // CRITICAL: Validate index is within reasonable bounds
                 const safeIndex = typeof index === 'number' && index >= 0 && index < 100000 ? index : 0
+                // CRITICAL: Validate photo.id is a valid string before using in API call (double-check even though validPhotos is filtered)
+                if (!photo || !photo.id || typeof photo.id !== 'string' || photo.id.trim().length === 0) {
+                  logError("Invalid photo.id in validPhotos", { function: "handleUpdate", photo, index })
+                  // Return a rejected promise to handle in Promise.allSettled
+                  return Promise.reject(new Error(`Invalid photo.id at index ${index}`))
+                }
                 return fetch(API_PATHS.adminEventImage(currentEditingEvent.id, photo.id), {
                   method: "PATCH",
                   headers: { "Content-Type": "application/json" },
@@ -4307,7 +4688,7 @@ export default function EventsPage() {
       // Fallback: Restore from snapshot or refetch from server
       if (isMountedRef.current) {
       await restoreEventState(currentEditingEvent.id)
-        toast.error("Failed to update event")
+      toast.error("Failed to update event")
         logError("Failed to update event", { function: "handleUpdate" }, error instanceof Error ? error : new Error(String(error)))
       }
     } finally {
@@ -4344,9 +4725,18 @@ export default function EventsPage() {
       }
       
       // Check if sequence of IDs has changed
+      // CRITICAL: Validate photo IDs are strings before comparison
       const orderChanged = currentPhotos.some((photo, index) => {
+        // CRITICAL: Validate photo and photo.id exist and are strings
+        if (!photo || !photo.id || typeof photo.id !== 'string' || photo.id.trim().length === 0) {
+          return true // Invalid photo means order changed
+        }
         const snapshotPhoto = snapshotPhotos[index]
-        return !snapshotPhoto || photo.id !== snapshotPhoto.id
+        // CRITICAL: Validate snapshotPhoto and snapshotPhoto.id exist and are strings
+        if (!snapshotPhoto || !snapshotPhoto.id || typeof snapshotPhoto.id !== 'string' || snapshotPhoto.id.trim().length === 0) {
+          return true // Missing snapshot photo means order changed
+        }
+        return photo.id !== snapshotPhoto.id
       })
       
       if (orderChanged) return true
@@ -4376,12 +4766,18 @@ export default function EventsPage() {
     // CRITICAL: Validate abortControllersRef.current is an array before using push
     if (Array.isArray(abortControllersRef.current)) {
       abortControllersRef.current.push(abortController)
+    } else {
+      logError("abortControllersRef.current is not an array", { function: "handleDelete", abortControllersRef: abortControllersRef.current })
+      abortControllersRef.current = [abortController]
     }
     
     const cleanupAbortController = () => {
-      abortControllersRef.current = abortControllersRef.current.filter(
-        c => c !== abortController
-      )
+      // CRITICAL: Validate abortControllersRef.current is an array before using filter
+      if (Array.isArray(abortControllersRef.current)) {
+        abortControllersRef.current = abortControllersRef.current.filter(
+          c => c !== abortController
+        )
+      }
     }
     
     try {
@@ -4401,7 +4797,7 @@ export default function EventsPage() {
       })
       
       // CRITICAL: Check if request was aborted
-      if (signal.aborted) {
+      if (signal && signal.aborted) {
         cleanupAbortController()
         if (isMountedRef.current) {
           setDeleting(false)
@@ -4469,7 +4865,7 @@ export default function EventsPage() {
       // Rollback on error
       if (isMountedRef.current) {
       fetchEvents()
-        toast.error("Failed to delete event")
+      toast.error("Failed to delete event")
         logError("Failed to delete event", { function: "handleDelete" }, error instanceof Error ? error : new Error(String(error)))
       }
     } finally {
@@ -4854,10 +5250,19 @@ export default function EventsPage() {
                   id="event-date-from"
                   type="date"
                   value={eventDateFrom}
+                  max={eventDateTo || undefined}
                   onChange={(e) => {
                     // CRITICAL: Validate e.target exists and has value property
                     if (e.target && 'value' in e.target && typeof e.target.value === 'string') {
-                      setEventDateFrom(e.target.value)
+                      const newFromDate = e.target.value
+                      // CRITICAL: Validate date range - from date should not be after to date
+                      if (eventDateTo && newFromDate > eventDateTo) {
+                        if (isMountedRef.current) {
+                          toast.warning("Start date cannot be after end date. Please adjust the date range.")
+                        }
+                        return
+                      }
+                      setEventDateFrom(newFromDate)
                     }
                   }}
                   className="w-full"
@@ -4871,10 +5276,19 @@ export default function EventsPage() {
                   id="event-date-to"
                   type="date"
                   value={eventDateTo}
+                  min={eventDateFrom || undefined}
                   onChange={(e) => {
                     // CRITICAL: Validate e.target exists and has value property
                     if (e.target && 'value' in e.target && typeof e.target.value === 'string') {
-                      setEventDateTo(e.target.value)
+                      const newToDate = e.target.value
+                      // CRITICAL: Validate date range - to date should not be before from date
+                      if (eventDateFrom && newToDate < eventDateFrom) {
+                        if (isMountedRef.current) {
+                          toast.warning("End date cannot be before start date. Please adjust the date range.")
+                        }
+                        return
+                      }
+                      setEventDateTo(newToDate)
                     }
                   }}
                   className="w-full"
@@ -4909,7 +5323,7 @@ export default function EventsPage() {
       {/* Results Count */}
       {!loading && (
         <div className="mb-4 text-sm text-gray-600">
-          {total > 0 ? (
+          {typeof total === 'number' && total > 0 && Array.isArray(events) ? (
             <>
               Showing <span className="font-medium">{events.length}</span> of <span className="font-medium">{total}</span> event{total !== 1 ? 's' : ''}
               {(upcomingFilter || debouncedTitleFilter || eventDateFilter || eventDateFrom || eventDateTo) && (
@@ -4923,7 +5337,7 @@ export default function EventsPage() {
       )}
 
       {/* Events List - Table View */}
-      {events.length === 0 ? (
+      {!Array.isArray(events) || events.length === 0 ? (
         <div className="text-center py-12">
           <Calendar className="w-16 h-16 mx-auto text-gray-400 mb-4" />
           <p className="text-gray-600">No events found</p>
@@ -4957,13 +5371,18 @@ export default function EventsPage() {
                   </tr>
                 </thead>
                 <tbody className="bg-white divide-y divide-gray-200">
-                  {Array.isArray(events) ? events.map((event, index) => (
+                  {Array.isArray(events) ? events.map((event, index) => {
+                    // CRITICAL: Validate event exists before rendering
+                    if (!event || typeof event !== 'object') {
+                      return null
+                    }
+                    return (
                     <tr key={event?.id && typeof event.id === 'string' ? event.id : `event-${index}`} className="hover:bg-gray-50">
                       <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
                         {index + 1}
                       </td>
                       <td className="px-6 py-4">
-                        <div className="text-sm font-medium text-gray-900">{event.title}</div>
+                        <div className="text-sm font-medium text-gray-900">{event.title || 'Untitled Event'}</div>
                         {event.description && (
                           <div className="text-sm text-gray-500 mt-1 line-clamp-2">
                             {event.description}
@@ -5053,16 +5472,22 @@ export default function EventsPage() {
                                 // - image_id (poster)
                                 // - all other fields
                                 // CRITICAL: Use try-catch for deep copy (could fail on circular refs or large objects)
+                                if (isMountedRef.current) {
                                 try {
                                   setEventSnapshot(JSON.parse(JSON.stringify(eventToEdit)))
                                 } catch (copyError) {
-                                  logError("Failed to create event snapshot", { function: "EventsPage" }, copyError instanceof Error ? copyError : new Error(String(copyError)))
+                                    logError("Failed to create event snapshot", { function: "EventsPage" }, copyError instanceof Error ? copyError : new Error(String(copyError)))
                                   // Fallback: use shallow copy (less safe but better than nothing)
+                                    if (isMountedRef.current) {
                                   setEventSnapshot({ ...eventToEdit })
+                                    }
+                                  }
                                 }
                                 
+                                if (isMountedRef.current) {
                                 setSelectedPhotoIds(new Set())
                                 setPendingDeletions(new Set())
+                                }
                                 setEditPosterFile(null)
                                 setEditPosterPreview(null)
                                 setFormKey(0) // Reset form key
@@ -5089,14 +5514,15 @@ export default function EventsPage() {
                         </div>
                       </td>
                     </tr>
-                  )) : null}
+                    )
+                  }).filter(Boolean) : null}
                 </tbody>
               </table>
             </div>
             {/* Page size selector and total count */}
             <div className="px-6 py-3 bg-gray-50 border-t border-gray-200 flex items-center justify-between">
               <div className="text-sm text-gray-700">
-                Showing <span className="font-medium">{events.length}</span> of <span className="font-medium">{total}</span> events
+                Showing <span className="font-medium">{Array.isArray(events) ? events.length : 0}</span> of <span className="font-medium">{typeof total === 'number' ? total : 0}</span> events
               </div>
               <div className="flex items-center gap-2">
                 <span className="text-sm text-gray-700">Items per page:</span>
@@ -5148,7 +5574,12 @@ export default function EventsPage() {
 
           {/* Mobile Card View */}
           <div className="lg:hidden space-y-4">
-            {Array.isArray(events) ? events.map((event, index) => (
+            {Array.isArray(events) ? events.map((event, index) => {
+              // CRITICAL: Validate event exists before rendering
+              if (!event || typeof event !== 'object') {
+                return null
+              }
+              return (
               <div
                 key={event?.id && typeof event.id === 'string' ? event.id : `event-${index}`}
                 className="bg-white rounded-lg shadow-md overflow-hidden"
@@ -5282,19 +5713,31 @@ export default function EventsPage() {
                   </div>
                 </div>
               </div>
-            )) : null}
+              )
+            }).filter(Boolean) : null}
             {/* Page size selector and total count for mobile */}
             <div className="bg-white rounded-lg shadow px-4 py-3 border-t border-gray-200 flex items-center justify-between">
               <div className="text-sm text-gray-700">
                 Showing <span className="font-medium">{events.length}</span> of <span className="font-medium">{total}</span>
               </div>
               <Select
-                value={pageSize.toString()}
+                value={typeof pageSize === 'number' && !isNaN(pageSize) && pageSize > 0 ? pageSize.toString() : '25'}
                 onValueChange={(value) => {
+                  // CRITICAL: Validate value is a string before parsing
+                  if (!value || typeof value !== 'string') {
+                    return
+                  }
                   const parsed = parseInt(value, 10)
-                  if (!isNaN(parsed) && parsed > 0) {
+                  // CRITICAL: Validate parsed value is reasonable (prevent extremely large page sizes)
+                  if (!isNaN(parsed) && parsed > 0 && parsed <= 1000) {
                     setPageSize(parsed)
                   fetchEvents()
+                  } else if (parsed > 1000) {
+                    if (isMountedRef.current) {
+                      toast.warning("Page size cannot exceed 1000. Using maximum value.")
+                    }
+                    setPageSize(1000)
+                    fetchEvents()
                   }
                 }}
               >
@@ -5325,7 +5768,22 @@ export default function EventsPage() {
       )}
 
       {/* Edit Dialog - Streamlined for Dates and Images */}
-      <Dialog open={editDialogOpen} onOpenChange={setEditDialogOpen}>
+      <Dialog open={editDialogOpen} onOpenChange={(open) => {
+        if (!open && saving) {
+          // CRITICAL: If dialog is being closed while saving, abort all ongoing operations
+          if (Array.isArray(abortControllersRef.current)) {
+            abortControllersRef.current.forEach(controller => {
+              try {
+                controller.abort()
+              } catch (error) {
+                logError("Failed to abort controller on dialog close", { function: "onOpenChange" }, error instanceof Error ? error : new Error(String(error)))
+              }
+            })
+            abortControllersRef.current = []
+          }
+        }
+        setEditDialogOpen(open)
+      }}>
         <DialogContent className="max-w-[95vw] sm:max-w-2xl lg:max-w-3xl max-h-[90vh] overflow-y-auto w-full">
           <DialogHeader>
             <DialogTitle>Edit Event: {editingEvent?.title}</DialogTitle>
@@ -5596,9 +6054,6 @@ export default function EventsPage() {
                           {selectedPhotoIds.size} selected
                         </span>
                       )}
-                      <span className="text-xs text-gray-500 ml-auto">
-                        Keyboard shortcuts: Ctrl+A (select all), Delete (delete selected), Esc (clear)
-                      </span>
                     </div>
                     <DndContext
                       sensors={stableSensors}
@@ -5681,7 +6136,11 @@ export default function EventsPage() {
                       setEditPosterFile(null)
                       setEditPosterPreview(null)
                       // Force form remount to restore form field values
-                      setFormKey(prev => prev + 1)
+                      setFormKey(prev => {
+                        // CRITICAL: Validate prev is a number before arithmetic
+                        const safePrev = typeof prev === 'number' && !isNaN(prev) ? prev : 0
+                        return safePrev + 1
+                      })
                     }
                     // Close dialog and clear all state
                     setEditDialogOpen(false)
@@ -5977,7 +6436,7 @@ export default function EventsPage() {
                 <div className="space-y-2">
                   <div className="flex items-center justify-between text-sm">
                     <span>Uploading photos...</span>
-                    <span>{uploadProgress.uploaded} / {uploadProgress.total}</span>
+                    <span>{typeof uploadProgress.uploaded === 'number' ? uploadProgress.uploaded : 0} / {typeof uploadProgress.total === 'number' ? uploadProgress.total : 0}</span>
                   </div>
                   <div className="w-full bg-gray-200 rounded-full h-2">
                     <div
@@ -5989,11 +6448,11 @@ export default function EventsPage() {
               )}
 
               {/* Unified photo list with drag-and-drop */}
-              {unifiedPhotoList.length > 0 && (
+              {Array.isArray(unifiedPhotoList) && unifiedPhotoList.length > 0 && (
                 <div className="space-y-2">
                   <div className="flex items-center justify-between">
                     <Label>
-                      Photos ({unifiedPhotoList.filter(p => p.isSelected).length} selected / {unifiedPhotoList.length} total)
+                      Photos ({Array.isArray(unifiedPhotoList) ? unifiedPhotoList.filter(p => p && typeof p.isSelected === 'boolean' && p.isSelected).length : 0} selected / {Array.isArray(unifiedPhotoList) ? unifiedPhotoList.length : 0} total)
                     </Label>
                     <div className="flex items-center gap-2">
                       <button
@@ -6001,7 +6460,7 @@ export default function EventsPage() {
                           onClick={() => {
                           // CRITICAL: Validate unifiedPhotoList is an array before using every
                           const allSelected = Array.isArray(unifiedPhotoList) && unifiedPhotoList.length > 0
-                            ? unifiedPhotoList.every(p => p?.isSelected)
+                            ? unifiedPhotoList.every(p => p && typeof p.isSelected === 'boolean' && p.isSelected)
                             : false
                           setUnifiedPhotoList(prev => {
                             // CRITICAL: Validate prev is an array before using map
@@ -6015,7 +6474,7 @@ export default function EventsPage() {
                         className="text-sm text-blue-600 hover:text-blue-800 flex items-center gap-1"
                           disabled={uploadingPhotos}
                         >
-                        {Array.isArray(unifiedPhotoList) && unifiedPhotoList.length > 0 && unifiedPhotoList.every(p => p?.isSelected) ? (
+                        {Array.isArray(unifiedPhotoList) && unifiedPhotoList.length > 0 && unifiedPhotoList.every(p => p && typeof p.isSelected === 'boolean' && p.isSelected) ? (
                           <CheckSquare className="w-4 h-4" />
                         ) : (
                           <Square className="w-4 h-4" />
@@ -6139,7 +6598,7 @@ export default function EventsPage() {
                   ) : (
                     <>
                       <Plus className="w-4 h-4 mr-1" />
-                      Save ({unifiedPhotoList.filter(p => p.isSelected && !p.isExisting).length} new, {unifiedPhotoList.filter(p => p.isSelected && p.isExisting).length} existing)
+                      Save ({Array.isArray(unifiedPhotoList) ? unifiedPhotoList.filter(p => p && typeof p.isSelected === 'boolean' && p.isSelected && typeof p.isExisting === 'boolean' && !p.isExisting).length : 0} new, {Array.isArray(unifiedPhotoList) ? unifiedPhotoList.filter(p => p && typeof p.isSelected === 'boolean' && p.isSelected && typeof p.isExisting === 'boolean' && p.isExisting).length : 0} existing)
                     </>
                   )}
                 </Button>

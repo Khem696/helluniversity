@@ -86,6 +86,7 @@ export const DefaultRateLimits = {
   'admin-images': { limit: 20, windowSeconds: 60 }, // 20 requests per minute
   'admin-events': { limit: 50, windowSeconds: 60 }, // 50 requests per minute
   'admin-email-queue': { limit: 30, windowSeconds: 60 }, // 30 requests per minute
+  'admin-booking-holds': { limit: 30, windowSeconds: 60 }, // 30 requests per minute
   
   // Default
   default: { limit: 10, windowSeconds: 60 }, // 10 requests per minute
